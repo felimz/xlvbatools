@@ -53,6 +53,8 @@ def main():
     _register_modify(subparsers)
     _register_debug(subparsers)
     _register_search(subparsers)
+    _register_fmt(subparsers)
+    _register_graph(subparsers)
 
     args = parser.parse_args()
 
@@ -209,6 +211,23 @@ def _register_search(subparsers):
     p.add_argument("--regex", "-r", action="store_true", help="Treat pattern as regex")
     p.add_argument("--context", "-C", type=int, default=0, help="Context lines")
     p.set_defaults(func=_cmd_search)
+
+
+def _register_fmt(subparsers):
+    p = subparsers.add_parser("fmt", help="Format VBA source code")
+    p.add_argument("--source", "-s", help="Source directory or file")
+    p.add_argument("--dry-run", action="store_true", help="Show diff without modifying")
+    p.add_argument("--indent", type=int, default=4, help="Indent size (default 4)")
+    p.set_defaults(func=_cmd_fmt)
+
+
+def _register_graph(subparsers):
+    p = subparsers.add_parser("graph", help="Generate VBA call dependency graph")
+    p.add_argument("--source", "-s", help="Source directory")
+    p.add_argument("--format", choices=["mermaid", "dot", "json"], default="mermaid",
+                   help="Output format (default: mermaid)")
+    p.add_argument("--output", "-o", help="Output file (default: stdout)")
+    p.set_defaults(func=_cmd_graph)
 
 
 # ── Command handlers ──
@@ -526,6 +545,65 @@ def _cmd_search(args):
     for m in matches:
         print(f"  {m.file}:{m.line_num}: {m.line}")
     print(f"\n{len(matches)} match(es)")
+
+
+def _cmd_fmt(args):
+    """Format VBA source files."""
+    from xlvbatools.config.loader import load_config
+    cfg = load_config()
+    src = args.source or cfg.vba_source
+
+    if os.path.isfile(src):
+        from xlvbatools.vba.formatter import format_file
+        result = format_file(src, dry_run=args.dry_run, indent_size=args.indent)
+        if result.get("changed"):
+            if args.dry_run:
+                print(result.get("diff", ""))
+            else:
+                print(f"Formatted: {src} ({result['lines_changed']} lines changed)")
+        else:
+            print(f"No changes: {src}")
+    elif os.path.isdir(src):
+        from xlvbatools.vba.formatter import format_directory
+        results = format_directory(src, dry_run=args.dry_run, indent_size=args.indent)
+        changed = [r for r in results if r.get("changed")]
+        for r in changed:
+            if args.dry_run:
+                print(r.get("diff", ""))
+            else:
+                print(f"  Formatted: {r['file']} ({r['lines_changed']} lines)")
+        print(f"\n{len(changed)}/{len(results)} file(s) {'would be ' if args.dry_run else ''}changed")
+    else:
+        print(f"Not found: {src}")
+        sys.exit(1)
+
+
+def _cmd_graph(args):
+    """Generate VBA call dependency graph."""
+    from xlvbatools.config.loader import load_config
+    cfg = load_config()
+    src = args.source or cfg.vba_source
+
+    from xlvbatools.vba.dependency import build_call_graph, render_mermaid, render_dot
+    graph = build_call_graph(src)
+
+    fmt = getattr(args, "format", "mermaid")
+    if fmt == "mermaid":
+        output = render_mermaid(graph)
+    elif fmt == "dot":
+        output = render_dot(graph)
+    else:
+        import json
+        output = json.dumps(graph.to_dict(), indent=2)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(output)
+        print(f"Graph written to: {args.output}")
+    else:
+        print(output)
+
+    print(f"\n{len(graph.procedures)} procedures, {len(graph.edges)} call edges")
 
 
 def _cmd_stub(args):
