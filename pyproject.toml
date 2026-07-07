@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xlvbatools"
+version = "0.1.0"
+description = "General-purpose Python toolkit for headless Excel VBA automation, debugging, and version control"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Felipe Muñoz"},
+]
+readme = "README.md"
+keywords = ["excel", "vba", "automation", "com", "headless"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+
+dependencies = [
+    "pywin32; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+screenshots = ["Pillow"]
+lint-offline = ["oletools"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "Pillow",
+    "oletools",
+]
+all = [
+    "Pillow",
+    "oletools",
+]
+
+[project.scripts]
+xlvba = "cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/felimz/xlvbatools"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["xlvbatools*", "cli*"]
+
+[tool.setuptools.package-dir]
+xlvbatools = "src/xlvbatools"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-v --tb=short"
+markers = [
+    "unit: Pure Python unit tests, no COM required",
+    "com: Requires Excel COM automation (Windows only, slower)",
+    "e2e: Full end-to-end pipeline tests (slowest)",
+]

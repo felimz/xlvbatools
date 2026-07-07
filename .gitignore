@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Workbook backups and snapshots (user-generated, not tracked)
+workbook/backups/
+workbook/snapshots/
+
+# Screenshots and dumps (generated artifacts)
+docs/screenshots/
+docs/dumps/
