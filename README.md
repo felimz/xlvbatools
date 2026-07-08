@@ -7,7 +7,7 @@
 - **Excel COM Session Management** -- Safe context manager with automatic process cleanup and dialog protection
 - **Dialog Watchdog** -- Background thread that captures and auto-dismisses modal dialogs during headless automation
 - **VBA Source Control** -- Extract, inject, and diff VBA code between workbooks and git-tracked source files
-- **Static Analysis** -- 23-rule VBA linter catching Dim hoisting, block declarations, unused/dead code, hardcoded secrets, absolute paths, Hungarian suffixes, fragile Select/Selection, and silent error suppression
+- **Static Analysis** -- 30-rule VBA linter catching Dim hoisting, block declarations, unused/dead code, reserved keyword variable names, invalid class/typed object members, executable code outside procedures, hardcoded secrets, absolute paths, Hungarian suffixes, fragile Select/Selection, and silent error suppression
 - **VBA Code Formatter** -- Non-destructive indentation normalizer with dry-run and directory-wide support
 - **Call Dependency Graph** -- Parses Sub/Function definitions and call sites, outputs Mermaid/DOT/JSON
 - **Workbook Inspection** -- Screenshot worksheets, dump cell values/formulas, inspect named ranges and shapes
@@ -77,7 +77,7 @@ xlvbatools/
 │   │   ├── dependency.py        # Call graph analysis
 │   │   └── manifest.py          # Component manifest tracking
 │   ├── analysis/                # Static analysis
-│   │   ├── rules.py             # 23 configurable lint rules
+│   │   ├── rules.py             # 30 configurable lint rules
 │   │   ├── preflight.py         # Top-level lint API
 │   │   └── issue.py             # VBAIssue dataclass
 │   ├── macro/                   # Macro execution
@@ -161,6 +161,10 @@ disabled_rules = ["PF001", "PF003"]
 | DC003 | WARNING | Dead procedure (0 incoming calls, graph-level analysis) |
 | SD015 | STYLE | Multiple consecutive blank lines |
 | SD016 | STYLE | Double-spaced code blocks (alternating blank lines) |
+| RK001 | WARNING | Variable/parameter name is a VBA reserved keyword |
+| IP001 | ERROR | Executable code found outside procedure block |
+| DP001 | ERROR | Duplicate public procedure declared across modules |
+| SM001 | WARNING | Invalid property/method referenced on class or typed object |
 | CT001 | ERROR | VBE compile test failed (synthetic, COM-only) |
 
 ## Agent Integration

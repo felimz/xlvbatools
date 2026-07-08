@@ -36,6 +36,10 @@ The linter scans VBA code offline (without Excel or COM dependencies) to enforce
 | **DC003** | WARNING | Dead procedure (0 incoming calls) | Procedures that are never called from any other part of the project should be deleted or implemented. *(Requires call graph analysis).* |
 | **SD015** | STYLE | Multiple consecutive blank lines | Excess blank lines increase vertical scrolling and clutter code readability. |
 | **SD016** | STYLE | Double-spaced code blocks | Alternating blank lines after every line of code degrades vertical readability. |
+| **RK001** | WARNING | Reserved keyword variable name | Declaring variables or parameters with the same name as a VBA reserved keyword (e.g. `Optional`, `Date`, `Error`, `Next`) leads to compilation errors or unexpected runtime behavior. |
+| **IP001** | ERROR | Executable code outside procedure | Executable statements (calls, assignments, loops) must be placed inside a `Sub`, `Function`, or `Property` block. Only declarations are valid at module scope. |
+| **DP001** | ERROR | Duplicate public procedure | Declaring multiple public procedures with the same name across different standard modules violates naming uniqueness and causes Excel compile errors. |
+| **SM001** | WARNING | Invalid class or typed object member | Referencing a property or method that does not exist on a user-defined class module or a built-in typed object (e.g., calling `.SheetName` instead of `.Name` on a `Worksheet`) will fail at compile/runtime. |
 | **CT001** | ERROR | VBE Compile Test failure | *(COM only)* Excel VBE compiler failed to compile the project. Includes code line context. |
 
 ---

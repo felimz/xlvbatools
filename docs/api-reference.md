@@ -75,3 +75,51 @@ Dumps cell values, formulas, formatted texts, interactive shapes, and named rang
 
 ### `xlvbatools.workbook.dumper.export_screenshots(workbook_path: str, sheets: list[str], output_dir: str, custom_range: str | None = None) -> dict[str, str]`
 Exports PNG screenshots of the specified worksheets with Pillow-composited column and row headers.
+
+---
+
+## Snapshot Management
+
+### `xlvbatools.snapshot.manager.SnapshotManager`
+A dual-layer timestamped checkpoint and rollback system for Excel workbook binaries and VBA text source modules.
+
+```python
+from xlvbatools.snapshot import SnapshotManager
+
+mgr = SnapshotManager(
+    workbook_path="workbook.xlsm",
+    vba_source_dir="workbook/vba_source/",
+    snapshots_dir="workbook/snapshots/",
+    rolling_limit=10
+)
+
+# Create a snapshot
+sid = mgr.create(description="before risky feature", milestone=False)
+
+# List all snapshots
+log = mgr.list()
+
+# Restore a snapshot
+mgr.restore("latest")
+```
+
+#### Parameters
+* **`workbook_path` (str):** Path to the target `.xlsm` workbook.
+* **`vba_source_dir` (str):** Path to the directory containing git-tracked VBA modules.
+* **`snapshots_dir` (str):** Directory where snapshot backups and logs will be stored.
+* **`rolling_limit` (int, default `10`):** Maximum number of rolling (non-milestone) snapshots to keep before auto-pruning.
+
+#### Methods
+* **`create(description: str = "", milestone: bool = False) -> str`:**
+  Creates a new snapshot of the current workbook and VBA source files. Auto-prunes older rolling snapshots if the limit is exceeded. Returns the generated snapshot ID.
+* **`list() -> list[dict]`:**
+  Lists all created snapshots sorted oldest to newest.
+* **`info(identifier: str) -> dict | None`:**
+  Retrieves detailed metadata for a specific snapshot by ID, index (e.g., `-1`), or description search.
+* **`restore(identifier: str, safety_snapshot: bool = True) -> bool`:**
+  Restores both the workbook binary and VBA source modules to the snapshot's state. Creates a safety snapshot first unless `safety_snapshot=False`.
+* **`diff(identifier: str) -> str`:**
+  Generates a git-style line-by-line diff of the VBA changes between the snapshot and current state.
+* **`prune(keep: int = 10) -> int`:**
+  Manually prunes old rolling snapshots, keeping the specified number of most recent entries. Returns the number of snapshots pruned.
+
