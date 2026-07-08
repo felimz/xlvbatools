@@ -37,6 +37,9 @@ def __getattr__(name):
     if name == "DialogEvent":
         from xlvbatools.core.watchdog import DialogEvent
         return DialogEvent
+    if name == "SnapshotManager":
+        from xlvbatools.snapshot.manager import SnapshotManager
+        return SnapshotManager
     raise AttributeError(f"module 'xlvbatools' has no attribute {name!r}")
 
 
@@ -44,5 +47,6 @@ __all__ = [
     "ExcelSession",
     "DialogWatchdog",
     "DialogEvent",
+    "SnapshotManager",
     "__version__",
 ]
