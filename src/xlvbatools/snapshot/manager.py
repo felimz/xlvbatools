@@ -79,8 +79,10 @@ class SnapshotManager:
         # Copy workbook binary
         wb_filename = f"{snapshot_id}.xlsm"
         wb_snapshot = os.path.join(self.snapshots_dir, wb_filename)
+        wb_size = 0
         if os.path.exists(self.workbook_path):
             shutil.copy2(self.workbook_path, wb_snapshot)
+            wb_size = os.path.getsize(self.workbook_path)
 
         # Copy VBA source
         vba_dir_name = f"{snapshot_id}_vba"
@@ -95,6 +97,7 @@ class SnapshotManager:
             "description": description,
             "workbook_file": wb_filename,
             "workbook_hash": self._hash_file(self.workbook_path),
+            "workbook_size_bytes": wb_size,
             "vba_source_dir": vba_dir_name if os.path.isdir(vba_snapshot) else None,
             "vba_hash": self._hash_vba_source(),
             "milestone": milestone,
