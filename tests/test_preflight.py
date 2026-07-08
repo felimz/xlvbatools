@@ -31,6 +31,9 @@ from xlvbatools.analysis.rules import (
     check_empty_procedures,
     check_consecutive_blank_lines,
     check_double_spacing,
+    check_reserved_keywords,
+    check_invalid_outside_procedure,
+    check_class_members,
     run_all_rules,
     _is_entry_point,
 )
@@ -783,3 +786,145 @@ class TestEntryPointWhitelist:
     def test_named_entry_points_recognized(self):
         assert _is_entry_point("OnRetrieve") is True
         assert _is_entry_point("Main") is True
+
+
+@pytest.mark.unit
+class TestReservedKeywords:
+    """RK001: Reserved keywords in variable/parameter declarations."""
+
+    def test_normal_variable_passes(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim myVal As Long\n",
+            "End Sub\n",
+        ]
+        issues = check_reserved_keywords("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_reserved_variable_fails(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim double As Double\n",
+            "End Sub\n",
+        ]
+        issues = check_reserved_keywords("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "RK001"
+        assert "double" in issues[0].message.lower()
+
+    def test_reserved_parameter_fails(self):
+        lines = [
+            "Public Sub Test(ByVal string As String)\n",
+            "End Sub\n",
+        ]
+        issues = check_reserved_keywords("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "RK001"
+        assert "string" in issues[0].message.lower()
+
+
+@pytest.mark.unit
+class TestInvalidOutsideProcedure:
+    """IP001: Executable statement outside procedure."""
+
+    def test_valid_declarations_pass(self):
+        lines = [
+            "Option Explicit\n",
+            "Dim x As Long\n",
+            "Const MY_CONST As Double = 1.0\n",
+            "Type MyType\n",
+            "    member As String\n",
+            "End Type\n",
+            "Public Sub Test()\n",
+            "    x = 42\n",
+            "End Sub\n",
+        ]
+        issues = check_invalid_outside_procedure("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_executable_outside_fails(self):
+        lines = [
+            "Option Explicit\n",
+            "Dim x As Long\n",
+            "x = 42\n",
+            "Public Sub Test()\n",
+            "End Sub\n",
+        ]
+        issues = check_invalid_outside_procedure("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "IP001"
+
+
+@pytest.mark.unit
+class TestDuplicateProcedures:
+    """DP001: Duplicate public procedures."""
+
+    def test_duplicate_public_procedures_fails(self, tmp_path):
+        from xlvbatools.analysis.preflight import lint_files
+        
+        # Create temporary modules
+        mod1 = tmp_path / "mod1.bas"
+        mod1.write_text("Public Sub DuplicateProc()\nEnd Sub\n", encoding="utf-8")
+        mod2 = tmp_path / "mod2.bas"
+        mod2.write_text("Public Sub DuplicateProc()\nEnd Sub\n", encoding="utf-8")
+        
+        issues = lint_files(str(tmp_path))
+        dup_issues = [i for i in issues if i.rule_id == "DP001"]
+        assert len(dup_issues) == 1
+        assert dup_issues[0].rule_id == "DP001"
+        assert "DuplicateProc" in dup_issues[0].message
+
+    def test_duplicate_private_procedures_passes(self, tmp_path):
+        from xlvbatools.analysis.preflight import lint_files
+        
+        mod1 = tmp_path / "mod1.bas"
+        mod1.write_text("Private Sub DuplicateProc()\nEnd Sub\n", encoding="utf-8")
+        mod2 = tmp_path / "mod2.bas"
+        mod2.write_text("Private Sub DuplicateProc()\nEnd Sub\n", encoding="utf-8")
+        
+        issues = lint_files(str(tmp_path))
+        dup_issues = [i for i in issues if i.rule_id == "DP001"]
+        assert len(dup_issues) == 0
+
+
+@pytest.mark.unit
+class TestClassMembers:
+    """SM001/SM002: Class member validation."""
+
+    def test_valid_member_call_passes(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim model As MyClass\n",
+            "    model.Calculate\n",
+            "End Sub\n",
+        ]
+        class_registry = {"myclass": {"calculate"}}
+        issues = check_class_members("test.bas", lines, class_registry=class_registry)
+        assert len(issues) == 0
+
+    def test_invalid_member_call_fails(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim model As MyClass\n",
+            "    model.InvalidMethod\n",
+            "End Sub\n",
+        ]
+        class_registry = {"myclass": {"calculate"}}
+        issues = check_class_members("test.bas", lines, class_registry=class_registry)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SM001"
+        assert "InvalidMethod" in issues[0].message
+        assert "myclass" in issues[0].message
+
+    def test_invalid_member_under_resume_next_raises_sm002(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim model As MyClass\n",
+            "    On Error Resume Next\n",
+            "    model.InvalidMethod\n",
+            "End Sub\n",
+        ]
+        class_registry = {"myclass": {"calculate"}}
+        issues = check_class_members("test.bas", lines, class_registry=class_registry)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SM002"

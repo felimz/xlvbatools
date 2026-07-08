@@ -1217,6 +1217,197 @@ def check_filedialog_guard(rel_path: str, lines: List[str]) -> List[VBAIssue]:
     return issues
 
 
+def check_reserved_keywords(rel_path: str, lines: List[str]) -> List[VBAIssue]:
+    """RK001: Declaring reserved keywords as variable/parameter names."""
+    issues = []
+    logical_lines = _get_logical_lines(lines)
+    for i, raw_line in logical_lines:
+        line = raw_line.strip()
+        if line.startswith("'") or line.lower().startswith("rem "):
+            continue
+        # Extract variables from Dim/Private/Public etc
+        for var_name, _ in _parse_vba_declarations(line):
+            if var_name.lower() in VBA_RESERVED:
+                issues.append(VBAIssue(
+                    rule_id="RK001",
+                    severity="ERROR",
+                    module=rel_path,
+                    line_num=i,
+                    message=f"Reserved keyword '{var_name}' used as variable name in declaration. VBA reserved keywords cannot be declared as variables.",
+                ))
+
+        # Check procedure parameter names
+        m = _PROC_START_RE.match(line)
+        if m:
+            start_idx = line.find("(")
+            end_idx = line.rfind(")")
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                args_str = line[start_idx + 1:end_idx]
+                for arg in args_str.split(","):
+                    arg = arg.strip()
+                    if not arg:
+                        continue
+                    arg_clean = re.sub(r"^(ByVal|ByRef|Optional|ParamArray)\s+", "", arg, flags=re.IGNORECASE).strip()
+                    # Name is the first word
+                    parts = arg_clean.split()
+                    if parts:
+                        param_name = parts[0].rstrip("()").strip()
+                        if param_name.lower() in VBA_RESERVED:
+                            issues.append(VBAIssue(
+                                rule_id="RK001",
+                                severity="ERROR",
+                                module=rel_path,
+                                line_num=i,
+                                message=f"Reserved keyword '{param_name}' used as parameter name. VBA reserved keywords cannot be used as procedure arguments.",
+                            ))
+    return issues
+
+
+def check_invalid_outside_procedure(rel_path: str, lines: List[str]) -> List[VBAIssue]:
+    """IP001: Executable statements outside any Sub/Function/Property."""
+    issues = []
+    logical_lines = _get_logical_lines(lines)
+    in_procedure = False
+    in_type_or_enum = False
+
+    module_level_patterns = [
+        r"^\s*$",  # blank
+        r"^\s*'",  # comment
+        r"^\s*Rem\b",  # Rem comment
+        r"^\s*Option\s+",  # Option Explicit/Compare/Base
+        r"^\s*(?:Public\s+|Private\s+)?(?:Dim|Const)\s+",  # variable/const declarations
+        r"^\s*(?:Public|Private)\s+\w+",  # Public/Private member vars
+        r"^\s*(?:Public\s+|Private\s+)?(?:Sub|Function|Property)\s+",  # proc start
+        r"^\s*(?:Public\s+|Private\s+)?(?:Type|Enum)\s+",  # Type/Enum start
+        r"^\s*End\s+(?:Type|Enum)",  # Type/Enum end
+        r"^\s*Declare\s+",  # API declares
+        r"^\s*(?:Public\s+|Private\s+)?Event\s+",  # Event declarations
+        r"^\s*Implements\s+",  # Implements
+        r"^\s*Attribute\s+",  # VB Attributes (internal)
+        r"^\s*#",  # Compiler directives (#If, #Const)
+    ]
+
+    for i, raw_line in logical_lines:
+        stripped = raw_line.strip()
+
+        # Track procedure boundaries
+        if _PROC_START_RE.match(stripped):
+            in_procedure = True
+            continue
+        if _PROC_END_RE.match(stripped):
+            in_procedure = False
+            continue
+
+        # Track Type/Enum blocks
+        if re.match(
+            r"^\s*(?:Public\s+|Private\s+)?(?:Type|Enum)\s+", stripped, re.IGNORECASE
+        ):
+            in_type_or_enum = True
+            continue
+        if re.match(r"^\s*End\s+(?:Type|Enum)", stripped, re.IGNORECASE):
+            in_type_or_enum = False
+            continue
+
+        if in_procedure or in_type_or_enum:
+            continue
+
+        if not stripped:
+            continue
+
+        is_valid = False
+        for pattern in module_level_patterns:
+            if re.match(pattern, stripped, re.IGNORECASE):
+                is_valid = True
+                break
+
+        if not is_valid:
+            issues.append(
+                VBAIssue(
+                    rule_id="IP001",
+                    severity="ERROR",
+                    module=rel_path,
+                    line_num=i,
+                    message=f"Executable statement outside procedure (Invalid outside procedure): '{stripped[:60]}'",
+                )
+            )
+
+    return issues
+
+
+def check_class_members(
+    rel_path: str,
+    lines: List[str],
+    class_registry: dict[str, set[str]] | None = None,
+) -> List[VBAIssue]:
+    """SM001/SM002: Class member validation."""
+    if not class_registry:
+        return []
+
+    issues = []
+    logical_lines = _get_logical_lines(lines)
+
+    # 1. Track local variable declaration types and procedure param types
+    var_types = {}
+    for i, raw_line in logical_lines:
+        line = raw_line.strip()
+        if line.startswith("'") or line.lower().startswith("rem "):
+            continue
+        for var_name, var_type in _parse_vba_declarations(line):
+            if var_type:
+                var_types[var_name.lower()] = var_type.lower()
+        # Parse procedure parameters
+        m = _PROC_START_RE.match(line)
+        if m:
+            for param_m in re.finditer(r"\b(\w+)\s+As\s+(\w+)\b", line, re.IGNORECASE):
+                var_types[param_m.group(1).lower()] = param_m.group(2).lower()
+
+    # 2. Scan for obj.Member references
+    in_on_error_resume = False
+    for i, raw_line in logical_lines:
+        line = raw_line.strip()
+        if line.startswith("'") or line.lower().startswith("rem "):
+            continue
+
+        # Track On Error Resume Next scope
+        if re.match(r"On\s+Error\s+Resume\s+Next", line, re.IGNORECASE):
+            in_on_error_resume = True
+        if re.match(r"On\s+Error\s+GoTo\s+0", line, re.IGNORECASE):
+            in_on_error_resume = False
+
+        for m in re.finditer(r"\b(\w+)\.(\w+)\b", line):
+            obj_name = m.group(1).lower()
+            member_name = m.group(2).lower()
+
+            # Skip built-ins
+            skip = {"sheets", "thisworkbook", "activeworkbook", "application", "err", "debug", "excel"}
+            if obj_name in skip:
+                continue
+
+            if obj_name in var_types:
+                cls_name = var_types[obj_name]
+                if cls_name in class_registry:
+                    cls_members = class_registry[cls_name]
+                    if member_name not in cls_members:
+                        if in_on_error_resume:
+                            issues.append(VBAIssue(
+                                rule_id="SM002",
+                                severity="ERROR",
+                                module=rel_path,
+                                line_num=i,
+                                message=f"On Error Resume Next does NOT protect against compile errors. '{m.group(1)}.{m.group(2)}' will fail at compile time because '{m.group(2)}' is not a member of class '{cls_name}'.",
+                            ))
+                        else:
+                            issues.append(VBAIssue(
+                                rule_id="SM001",
+                                severity="ERROR",
+                                module=rel_path,
+                                line_num=i,
+                                message=f"Invalid member call '{m.group(1)}.{m.group(2)}'. Member '{m.group(2)}' is not defined in class '{cls_name}'.",
+                            ))
+
+    return issues
+
+
 # ── Rule Registry ──
 
 ALL_RULES: dict[str, Callable] = {
@@ -1247,6 +1438,9 @@ ALL_RULES: dict[str, Callable] = {
     "DC002": check_empty_procedures,
     "SD015": check_consecutive_blank_lines,
     "SD016": check_double_spacing,
+    "RK001": check_reserved_keywords,
+    "IP001": check_invalid_outside_procedure,
+    "SM001": check_class_members,
 }
 
 
@@ -1255,12 +1449,14 @@ def run_all_rules(
     lines: List[str],
     disabled_rules: List[str] | None = None,
     global_names: set[str] | None = None,
+    class_registry: dict[str, set[str]] | None = None,
 ) -> List[VBAIssue]:
     """Run all enabled rules against a file's lines.
 
     Args:
         global_names: Optional set of lowercase variable names known to be
                       declared as Public in other modules (for UV001 cross-module check).
+        class_registry: Optional dict mapping lowercase class names to sets of lowercase member names.
     """
     disabled = set(disabled_rules or [])
     issues = []
@@ -1270,6 +1466,8 @@ def run_all_rules(
         # UV001 needs cross-module context
         if rule_id == "UV001" and global_names is not None:
             issues.extend(check_fn(rel_path, lines, global_names))
+        elif rule_id == "SM001":
+            issues.extend(check_fn(rel_path, lines, class_registry))
         else:
             issues.extend(check_fn(rel_path, lines))
 

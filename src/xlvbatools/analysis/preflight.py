@@ -58,12 +58,19 @@ def lint_files(
         r"^(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+\w+)\s+",
         re.IGNORECASE,
     )
+    global_public_names = set()
+    seen_public_procs = {}
+    class_registry = {}
+
     for root, _, files in os.walk(src_dir):
         for fname in sorted(files):
             if not fname.endswith(extensions):
                 continue
             filepath = os.path.join(root, fname)
+            rel_path = os.path.relpath(filepath, src_dir)
             file_lines = _read_file_lines(filepath)
+            
+            # Extract public names from header
             for fline in file_lines:
                 stripped = fline.strip()
                 if _proc_start_re.match(stripped):
@@ -81,6 +88,55 @@ def lint_files(
                     for var_name, _ in _parse_vba_declarations(stripped):
                         global_public_names.add(var_name.lower())
 
+            # Extract class members if this is a class module
+            if fname.endswith(".cls"):
+                cls_name = os.path.splitext(fname)[0].lower()
+                cls_members = set()
+                for fline in file_lines:
+                    stripped = fline.strip()
+                    if stripped.startswith("'") or stripped.lower().startswith("rem "):
+                        continue
+                    m = re.match(
+                        r"^(Public\s+)?(?:Sub|Function|Property\s+(?:Get|Let|Set))\s+(\w+)",
+                        stripped,
+                        re.IGNORECASE,
+                    )
+                    if m:
+                        cls_members.add(m.group(2).lower())
+                    m_var = re.match(r"^Public\s+(\w+)", stripped, re.IGNORECASE)
+                    if m_var:
+                        cls_members.add(m_var.group(1).lower())
+                class_registry[cls_name] = cls_members
+
+            # Check duplicate public procedures
+            disabled = set(disabled_rules or [])
+            if "DP001" not in disabled:
+                from xlvbatools.analysis.rules import _PROC_START_RE, _extract_proc_name
+                for i, fline in enumerate(file_lines, 1):
+                    stripped = fline.strip()
+                    if _PROC_START_RE.match(stripped):
+                        is_private = False
+                        for prefix in ("private ", "friend "):
+                            if stripped.lower().startswith(prefix):
+                                is_private = True
+                                break
+                        if not is_private:
+                            proc_name = _extract_proc_name(stripped)
+                            proc_key = proc_name.lower()
+                            is_sheet = "sheets" in rel_path.lower() or fname.lower().startswith("sheet")
+                            if not is_sheet and proc_key:
+                                if proc_key in seen_public_procs:
+                                    prev_path, prev_line = seen_public_procs[proc_key]
+                                    all_issues.append(VBAIssue(
+                                        rule_id="DP001",
+                                        severity="ERROR",
+                                        module=rel_path,
+                                        line_num=i,
+                                        message=f"Duplicate public procedure '{proc_name}' found in both '{rel_path}' and '{prev_path}' (L{prev_line}). VBA raises a compile error (Ambiguous name detected) for duplicate public names.",
+                                    ))
+                                else:
+                                    seen_public_procs[proc_key] = (rel_path, i)
+
     # Second pass: run all rules with cross-module context
     for root, _, files in os.walk(src_dir):
         for fname in sorted(files):
@@ -90,7 +146,11 @@ def lint_files(
             rel_path = os.path.relpath(filepath, src_dir)
 
             lines = _read_file_lines(filepath)
-            issues = run_all_rules(rel_path, lines, disabled_rules, global_names=global_public_names)
+            issues = run_all_rules(
+                rel_path, lines, disabled_rules,
+                global_names=global_public_names,
+                class_registry=class_registry
+            )
             all_issues.extend(issues)
 
     disabled = set(disabled_rules or [])
