@@ -26,7 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-TS_FORMAT = "%Y%m%dT%H%M%S%f"
+TS_FORMAT = "%Y%m%dT%H%M%S"
 
 
 class SnapshotManager:
@@ -70,6 +70,10 @@ class SnapshotManager:
         Returns the snapshot ID (timestamp string).
         """
         snapshot_id = datetime.datetime.now().strftime(TS_FORMAT)
+        while os.path.exists(os.path.join(self.snapshots_dir, f"{snapshot_id}.xlsm")):
+            import time
+            time.sleep(0.2)
+            snapshot_id = datetime.datetime.now().strftime(TS_FORMAT)
         os.makedirs(self.snapshots_dir, exist_ok=True)
 
         # Copy workbook binary
