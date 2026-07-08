@@ -12,6 +12,23 @@ Built-in rules:
     PF002  Implicit Variant (Dim without As clause)
     PF003  ActiveSheet/ActiveCell usage (fragile, prefer explicit references)
     OE001  Option Explicit missing
+    BK001  Block-level variable declaration (hoisting vulnerability)
+    SD002  Multiple variable declarations on a single line
+    PF004  Avoid Integer data type (use Long to avoid silent promotion)
+    SD005  Parameter passing modifier missing (explicit ByVal/ByRef required)
+    SD006  Access modifier missing on procedure (implicitly Public)
+    SD010  Line exceeds maximum length limit
+    SD014  Avoid obsolete Call keyword for procedure invocation
+    SC001  Hardcoded secret or credential literal warning
+    SC002  Absolute file path usage
+    CL001  Avoid obsolete Hungarian type suffixes (%, &, $, etc.)
+    CL002  Fragile Selection/Select code patterns
+    SF001  Silent error suppression (On Error Resume Next with no check)
+    DC001  Unused local variable declaration
+    DC002  Empty Sub or Function body
+    DC003  Dead procedure with zero incoming calls (graph-level rule)
+    SD015  Multiple consecutive blank lines
+    SD016  Double-spaced code blocks (alternating blank lines)
 """
 
 import re

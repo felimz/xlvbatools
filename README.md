@@ -7,7 +7,7 @@
 - **Excel COM Session Management** -- Safe context manager with automatic process cleanup and dialog protection
 - **Dialog Watchdog** -- Background thread that captures and auto-dismisses modal dialogs during headless automation
 - **VBA Source Control** -- Extract, inject, and diff VBA code between workbooks and git-tracked source files
-- **Static Analysis** -- 7-rule VBA linter catching Dim placement, implicit typing, MsgBox, ActiveSheet, and more
+- **Static Analysis** -- 23-rule VBA linter catching Dim hoisting, block declarations, unused/dead code, hardcoded secrets, absolute paths, Hungarian suffixes, fragile Select/Selection, and silent error suppression
 - **VBA Code Formatter** -- Non-destructive indentation normalizer with dry-run and directory-wide support
 - **Call Dependency Graph** -- Parses Sub/Function definitions and call sites, outputs Mermaid/DOT/JSON
 - **Workbook Inspection** -- Screenshot worksheets, dump cell values/formulas, inspect named ranges and shapes
@@ -98,14 +98,14 @@ xlvbatools/
 │       ├── AGENTS.md            # VBA development rules
 │       ├── skills/              # xlvba-toolchain skill
 │       └── workflows/           # vba-edit, vba-debug workflows
-├── tests/                       # 88 unit tests
-│   ├── test_preflight.py        # Lint rules (18 tests)
+├── tests/                       # 118 unit & integration tests
+│   ├── test_preflight.py        # Lint rules (37 tests)
 │   ├── test_search.py           # VBA search (9 tests)
 │   ├── test_snapshot.py         # Snapshot + manifest (12 tests)
 │   ├── test_config.py           # Config loading (8 tests)
 │   ├── test_formatter.py        # Code formatting (9 tests)
 │   ├── test_dependency.py       # Call graph (5 tests)
-│   └── ...                      # Core tests (26 tests)
+│   └── ...                      # Core tests (38 tests)
 ├── docs/                        # Documentation
 │   └── agent-integration.md     # Agent usage guide
 ├── pyproject.toml               # Package config
@@ -144,6 +144,23 @@ disabled_rules = ["PF001", "PF003"]
 | PF002 | WARNING | Implicit Variant (Dim without As clause) |
 | PF003 | WARNING | ActiveSheet/ActiveCell usage (fragile) |
 | OE001 | WARNING | Option Explicit missing |
+| BK001 | WARNING | Block-level variable declaration (hoisting risk) |
+| SD002 | STYLE | Multiple variable declarations on one line |
+| PF004 | STYLE | Avoid Integer data type (prefer Long) |
+| SD005 | STYLE | Missing parameter modifier (explicit ByVal/ByRef required) |
+| SD006 | STYLE | Missing access modifier (Sub/Function should declare Public/Private) |
+| SD010 | STYLE | Line exceeds maximum length limit (120 characters) |
+| SD014 | STYLE | Obsolete 'Call' keyword used for procedure call |
+| SC001 | WARNING | Hardcoded password or secret string |
+| SC002 | WARNING | Absolute file path literal detected |
+| CL001 | STYLE | Hungarian type suffix used (%, &, $, etc.) |
+| CL002 | STYLE | Selection or ActiveWindow dependency pattern |
+| SF001 | WARNING | Silent error suppression (On Error Resume Next with no check) |
+| DC001 | WARNING | Unused local variable |
+| DC002 | WARNING | Empty procedure declaration |
+| DC003 | WARNING | Dead procedure (0 incoming calls, graph-level analysis) |
+| SD015 | STYLE | Multiple consecutive blank lines |
+| SD016 | STYLE | Double-spaced code blocks (alternating blank lines) |
 | CT001 | ERROR | VBE compile test failed (synthetic, COM-only) |
 
 ## Agent Integration
