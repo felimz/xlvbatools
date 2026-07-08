@@ -1188,15 +1188,20 @@ def check_filedialog_guard(rel_path: str, lines: List[str]) -> List[VBAIssue]:
         if line.startswith("'") or line.lower().startswith("rem "):
             continue
         if _fd_re.search(line):
-            # Check if UserControl guard exists in preceding lines
+            # Scan backwards to the start of the current procedure for a UserControl guard
             is_guarded = False
-            for lookback in range(1, 8):
-                prev_idx = i - 1 - lookback
-                if prev_idx >= 0:
-                    prev_line = lines[prev_idx].strip()
-                    if "Application.UserControl" in prev_line:
-                        is_guarded = True
-                        break
+            for prev_idx in range(i - 2, -1, -1):  # i is 1-indexed, so lines[i-2] is the preceding line
+                prev_line = lines[prev_idx].strip()
+                if "Application.UserControl" in prev_line:
+                    is_guarded = True
+                    break
+                if re.match(
+                    r"^\s*((?:Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+(Get|Let|Set)))\b",
+                    prev_line,
+                    re.IGNORECASE
+                ):
+                    break  # Stop search at procedure boundary
+
             if not is_guarded:
                 issues.append(VBAIssue(
                     rule_id="FD001",
