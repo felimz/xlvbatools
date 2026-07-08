@@ -60,10 +60,10 @@ xlvba debug                         # Open Excel + VBE visibly
 
 ```text
 xlvbatools/
-├── cli/                         # CLI entry point (xlvba command)
-│   ├── main.py                  # 13 subcommands
-│   └── init_cmd.py              # Project initialization
 ├── src/xlvbatools/              # Python library
+│   ├── cli/                     # CLI entry point (xlvba command)
+│   │   ├── main.py              # 13 subcommands
+│   │   └── init_cmd.py          # Project initialization
 │   ├── core/                    # Excel COM automation
 │   │   ├── session.py           # ExcelSession context manager
 │   │   ├── watchdog.py          # DialogWatchdog background thread
@@ -77,7 +77,7 @@ xlvbatools/
 │   │   ├── dependency.py        # Call graph analysis
 │   │   └── manifest.py          # Component manifest tracking
 │   ├── analysis/                # Static analysis
-│   │   ├── rules.py             # 7 configurable lint rules
+│   │   ├── rules.py             # 23 configurable lint rules
 │   │   ├── preflight.py         # Top-level lint API
 │   │   └── issue.py             # VBAIssue dataclass
 │   ├── macro/                   # Macro execution
