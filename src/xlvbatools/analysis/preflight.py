@@ -12,6 +12,7 @@ Usage:
 
 import logging
 import os
+import re
 from typing import List
 
 from xlvbatools.analysis.issue import VBAIssue
@@ -49,6 +50,38 @@ def lint_files(
 
     all_issues = []
 
+    # First pass: collect all Public module-level variable names across all files
+    # so UV001 can recognize cross-module scope.
+    global_public_names = set()
+    _public_re = re.compile(r"^(Public|Global)\s+", re.IGNORECASE)
+    _proc_start_re = re.compile(
+        r"^(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+\w+)\s+",
+        re.IGNORECASE,
+    )
+    for root, _, files in os.walk(src_dir):
+        for fname in sorted(files):
+            if not fname.endswith(extensions):
+                continue
+            filepath = os.path.join(root, fname)
+            file_lines = _read_file_lines(filepath)
+            for fline in file_lines:
+                stripped = fline.strip()
+                if _proc_start_re.match(stripped):
+                    break  # Stop at first procedure (module-level scope ends)
+                if _public_re.match(stripped):
+                    # Skip Public Sub/Function/Property/Const declarations
+                    if re.match(r"^(Public\s+)?(Sub|Function|Property|Const)\s+", stripped, re.IGNORECASE):
+                        # But extract Const names
+                        const_m = re.match(r"^Public\s+Const\s+(\w+)", stripped, re.IGNORECASE)
+                        if const_m:
+                            global_public_names.add(const_m.group(1).lower())
+                        continue
+                    # Extract variable names from Public declarations
+                    from xlvbatools.analysis.rules import _parse_vba_declarations
+                    for var_name, _ in _parse_vba_declarations(stripped):
+                        global_public_names.add(var_name.lower())
+
+    # Second pass: run all rules with cross-module context
     for root, _, files in os.walk(src_dir):
         for fname in sorted(files):
             if not fname.endswith(extensions):
@@ -57,12 +90,13 @@ def lint_files(
             rel_path = os.path.relpath(filepath, src_dir)
 
             lines = _read_file_lines(filepath)
-            issues = run_all_rules(rel_path, lines, disabled_rules)
+            issues = run_all_rules(rel_path, lines, disabled_rules, global_names=global_public_names)
             all_issues.extend(issues)
 
     disabled = set(disabled_rules or [])
     if "DC003" not in disabled:
         from xlvbatools.vba.dependency import build_call_graph
+        from xlvbatools.analysis.rules import _is_entry_point
         try:
             cg = build_call_graph(src_dir)
             called_qnames = {edge[1].lower() for edge in cg.edges}
@@ -75,7 +109,8 @@ def lint_files(
             for qname, proc in cg.procedures.items():
                 if qname.lower() in called_qnames:
                     continue
-                if "_" in proc.name or proc.name.lower() in ("workbook_open", "workbook_beforeclose", "userform_initialize"):
+                # Skip known entry-point patterns (event handlers, button clicks, etc.)
+                if _is_entry_point(proc.name):
                     continue
                 parent_dir = module_dirs.get(proc.module, "")
                 is_internal = (
@@ -176,6 +211,7 @@ def lint_workbook(
             import tempfile
             import shutil
             from xlvbatools.vba.dependency import build_call_graph
+            from xlvbatools.analysis.rules import _is_entry_point
             temp_dir = tempfile.mkdtemp()
             try:
                 # Write component codes directly to temp directory without calling extract_all
@@ -197,7 +233,8 @@ def lint_workbook(
                 for qname, proc in cg.procedures.items():
                     if qname.lower() in called_qnames:
                         continue
-                    if "_" in proc.name or proc.name.lower() in ("workbook_open", "workbook_beforeclose", "userform_initialize"):
+                    # Skip known entry-point patterns (event handlers, button clicks, etc.)
+                    if _is_entry_point(proc.name):
                         continue
                     parent_dir = module_dirs.get(proc.module, "")
                     is_internal = (

@@ -6,12 +6,14 @@ that receives lines + context and yields VBAIssue instances.
 
 Built-in rules:
     DS001  Dim after executable statement (VBA requires all Dim at top)
+    CS001  Const after executable statement (same principle as DS001)
     LC001  Orphaned line continuation (missing space before _)
     SB001  Unbalanced Sub/Function...End blocks
     PF001  MsgBox call (should use Debug.Print or logging in headless mode)
-    PF002  Implicit Variant (Dim without As clause)
+    PF002  Implicit Variant (Dim/Const without As clause)
     PF003  ActiveSheet/ActiveCell usage (fragile, prefer explicit references)
-    OE001  Option Explicit missing
+    OE001  Option Explicit missing (with impact assessment)
+    UV001  Undeclared variable usage (compile error with Option Explicit)
     BK001  Block-level variable declaration (hoisting vulnerability)
     SD002  Multiple variable declarations on a single line
     PF004  Avoid Integer data type (use Long to avoid silent promotion)
@@ -24,9 +26,11 @@ Built-in rules:
     CL001  Avoid obsolete Hungarian type suffixes (%, &, $, etc.)
     CL002  Fragile Selection/Select code patterns
     SF001  Silent error suppression (On Error Resume Next with no check)
+    EH001  Missing error handler in Public procedure
+    FD001  FileDialog without UserControl guard
     DC001  Unused local variable declaration
     DC002  Empty Sub or Function body
-    DC003  Dead procedure with zero incoming calls (graph-level rule)
+    DC003  Dead procedure with zero incoming calls (entry-point aware)
     SD015  Multiple consecutive blank lines
     SD016  Double-spaced code blocks (alternating blank lines)
 """
@@ -190,7 +194,7 @@ def check_dim_after_exec(rel_path: str, lines: List[str]) -> List[VBAIssue]:
     issues = []
     in_proc = False
     proc_name = ""
-    dim_after_exec = False
+    saw_exec = False
 
     logical_lines = _get_logical_lines(lines)
 
@@ -200,14 +204,14 @@ def check_dim_after_exec(rel_path: str, lines: List[str]) -> List[VBAIssue]:
         if _PROC_START_RE.match(line):
             in_proc = True
             proc_name = _extract_proc_name(line)
-            dim_after_exec = False
+            saw_exec = False
 
         if _PROC_END_RE.match(line):
             in_proc = False
             proc_name = ""
             continue
 
-        if in_proc and _DIM_RE.match(line) and dim_after_exec:
+        if in_proc and _DIM_RE.match(line) and saw_exec:
             issues.append(VBAIssue(
                 rule_id="DS001",
                 severity="WARNING",
@@ -220,10 +224,53 @@ def check_dim_after_exec(rel_path: str, lines: List[str]) -> List[VBAIssue]:
 
         if in_proc and line and not _DIM_RE.match(line) and not line.startswith("'") and not line.lower().startswith("rem "):
             if not line.startswith("ReDim ") and not _PROC_END_RE.match(line):
-                # Ignore Const definitions at procedure level
+                # Const is also a declaration -- don't count it as executable
                 if not re.match(r"^(Public\s+|Private\s+)?Const\s+", line, re.IGNORECASE):
                     if not _PROC_START_RE.match(line):
-                        dim_after_exec = True
+                        saw_exec = True
+
+    return issues
+
+
+def check_const_after_exec(rel_path: str, lines: List[str]) -> List[VBAIssue]:
+    """CS001: Const statement after executable code in a procedure."""
+    issues = []
+    in_proc = False
+    proc_name = ""
+    saw_exec = False
+    _const_re = re.compile(r"^(Public\s+|Private\s+)?Const\s+", re.IGNORECASE)
+
+    logical_lines = _get_logical_lines(lines)
+
+    for i, raw_line in logical_lines:
+        line = raw_line.strip()
+
+        if _PROC_START_RE.match(line):
+            in_proc = True
+            proc_name = _extract_proc_name(line)
+            saw_exec = False
+
+        if _PROC_END_RE.match(line):
+            in_proc = False
+            proc_name = ""
+            continue
+
+        if in_proc and _const_re.match(line) and saw_exec:
+            issues.append(VBAIssue(
+                rule_id="CS001",
+                severity="WARNING",
+                module=rel_path,
+                line_num=i,
+                message=f"Const after executable statement in procedure '{proc_name}'. "
+                        f"Like Dim, Const declarations belong at the top of a procedure for clarity. "
+                        f"ACTION: Move this Const to the top of the '{proc_name}' procedure before any executable statements.",
+            ))
+
+        if in_proc and line and not _DIM_RE.match(line) and not _const_re.match(line):
+            if not line.startswith("'") and not line.lower().startswith("rem "):
+                if not line.startswith("ReDim ") and not _PROC_END_RE.match(line):
+                    if not _PROC_START_RE.match(line):
+                        saw_exec = True
 
     return issues
 
@@ -315,7 +362,7 @@ def check_msgbox(rel_path: str, lines: List[str]) -> List[VBAIssue]:
 
 
 def check_implicit_variant(rel_path: str, lines: List[str]) -> List[VBAIssue]:
-    """PF002: Dim without explicit type (creates implicit Variant)."""
+    """PF002: Dim or Const without explicit type (creates implicit Variant)."""
     issues = []
     logical_lines = _get_logical_lines(lines)
     for i, raw_line in logical_lines:
@@ -324,18 +371,42 @@ def check_implicit_variant(rel_path: str, lines: List[str]) -> List[VBAIssue]:
             continue
 
         is_redim = re.match(r"^\s*ReDim\b", line, re.IGNORECASE) is not None
+        if is_redim:
+            continue
+
+        # Check Const without type: "Const X = 1" (missing As clause)
         is_const = re.match(r"^\s*(Public\s+|Private\s+)?Const\b", line, re.IGNORECASE) is not None
-        if not is_redim and not is_const:
-            for var_name, var_type in _parse_vba_declarations(line):
-                if var_type is None and var_name.lower() not in VBA_RESERVED:
+        if is_const:
+            # Extract const name(s) -- pattern: Const Name [As Type] = Value
+            const_match = re.match(
+                r"^\s*(?:Public\s+|Private\s+)?Const\s+(\w+)\s*(As\s+\w+)?\s*=",
+                line, re.IGNORECASE,
+            )
+            if const_match and const_match.group(2) is None:
+                const_name = const_match.group(1)
+                if const_name.lower() not in VBA_RESERVED:
                     issues.append(VBAIssue(
                         rule_id="PF002",
                         severity="WARNING",
                         module=rel_path,
                         line_num=i,
-                        message=f"Implicit Variant declaration: Variable '{var_name}' lacks an explicit 'As' type clause and will default to Variant. "
-                                f"This increases memory overhead and slows execution. ACTION: Declare the variable with an explicit type (e.g., 'Dim {var_name} As Long' or 'Dim {var_name} As Double').",
+                        message=f"Implicit type on Const: '{const_name}' lacks an explicit 'As' type clause. "
+                                f"VBA will infer a type from the literal value, but explicit typing prevents ambiguity. "
+                                f"ACTION: Add an explicit type (e.g., 'Const {const_name} As Long = ...').",
                     ))
+            continue
+
+        # Check Dim without type
+        for var_name, var_type in _parse_vba_declarations(line):
+            if var_type is None and var_name.lower() not in VBA_RESERVED:
+                issues.append(VBAIssue(
+                    rule_id="PF002",
+                    severity="WARNING",
+                    module=rel_path,
+                    line_num=i,
+                    message=f"Implicit Variant declaration: Variable '{var_name}' lacks an explicit 'As' type clause and will default to Variant. "
+                            f"This increases memory overhead and slows execution. ACTION: Declare the variable with an explicit type (e.g., 'Dim {var_name} As Long' or 'Dim {var_name} As Double').",
+                ))
     return issues
 
 
@@ -428,20 +499,44 @@ def check_block_declarations(rel_path: str, lines: List[str]) -> List[VBAIssue]:
 
 
 def check_option_explicit(rel_path: str, lines: List[str]) -> List[VBAIssue]:
-    """OE001: Option Explicit missing."""
+    """OE001: Option Explicit missing (with impact assessment)."""
     has_option_explicit = any(_OPTION_EXPLICIT_RE.match(line.strip()) for line in lines)
-    has_dim = any(_DIM_RE.match(line.strip()) for line in lines)
 
-    if not has_option_explicit and has_dim:
-        return [VBAIssue(
-            rule_id="OE001",
-            severity="ERROR",
-            module=rel_path,
-            line_num=0,
-            message="Option Explicit statement is missing. VBA implicitly creates variables upon first assignment, allowing typos to compile silently and cause runtime bugs. "
-                    "ACTION: Add 'Option Explicit' at the absolute top of the module.",
-        )]
-    return []
+    if has_option_explicit:
+        return []
+
+    # Check if module has any variable usage (Dim, assignments, For loops)
+    has_vars = False
+    for line in lines:
+        stripped = line.strip()
+        if _DIM_RE.match(stripped):
+            has_vars = True
+            break
+        if re.match(r"^\w+\s*=", stripped) and not re.match(r"^(Sub|Function|Property|End|If|Do|For|While|Set|Let|Const|Dim|Public|Private|Option|Attribute)\b", stripped, re.IGNORECASE):
+            has_vars = True
+            break
+        if re.match(r"^For\s+\w+\s*=", stripped, re.IGNORECASE):
+            has_vars = True
+            break
+
+    if not has_vars:
+        return []
+
+    # Impact assessment: find undeclared variables
+    undeclared = _find_undeclared_variables(lines)
+    impact = ""
+    if undeclared:
+        var_list = ", ".join(sorted(undeclared)[:10])
+        impact = f" IMPACT: {len(undeclared)} undeclared variable(s) found ({var_list}) that will need Dim statements before Option Explicit can be safely added."
+
+    return [VBAIssue(
+        rule_id="OE001",
+        severity="ERROR",
+        module=rel_path,
+        line_num=0,
+        message="Option Explicit statement is missing. VBA implicitly creates variables upon first assignment, allowing typos to compile silently and cause runtime bugs. "
+                f"ACTION: Add 'Option Explicit' at the absolute top of the module.{impact}",
+    )]
 
 
 def check_one_declaration_per_line(rel_path: str, lines: List[str]) -> List[VBAIssue]:
@@ -955,16 +1050,180 @@ def check_double_spacing(rel_path: str, lines: List[str]) -> List[VBAIssue]:
     return issues
 
 
+# ── Entry-point patterns for DC003 whitelist ──
+
+_ENTRY_POINT_PATTERNS = [
+    re.compile(r"^(Worksheet_|Workbook_|CommandButton\d*_|UserForm_)", re.IGNORECASE),
+    re.compile(r"_Click$", re.IGNORECASE),
+    re.compile(r"_Change$", re.IGNORECASE),
+    re.compile(r"_Initialize$", re.IGNORECASE),
+    re.compile(r"_Terminate$", re.IGNORECASE),
+    re.compile(r"_Open$", re.IGNORECASE),
+    re.compile(r"_Close$", re.IGNORECASE),
+    re.compile(r"_BeforeClose$", re.IGNORECASE),
+    re.compile(r"_BeforeSave$", re.IGNORECASE),
+    re.compile(r"_Activate$", re.IGNORECASE),
+    re.compile(r"_Deactivate$", re.IGNORECASE),
+    re.compile(r"_SelectionChange$", re.IGNORECASE),
+    re.compile(r"_BeforeDoubleClick$", re.IGNORECASE),
+    re.compile(r"_BeforeRightClick$", re.IGNORECASE),
+]
+
+# Common entry-point names called via Application.Run
+_ENTRY_POINT_NAMES = {
+    "main", "auto_open", "auto_close", "onretrieve", "oncalculate",
+    "onvalidate", "initialize", "cleanup", "setup", "teardown",
+}
+
+
+def _is_entry_point(proc_name: str) -> bool:
+    """Check if a procedure name matches known entry-point patterns."""
+    for pattern in _ENTRY_POINT_PATTERNS:
+        if pattern.search(proc_name):
+            return True
+    return proc_name.lower() in _ENTRY_POINT_NAMES
+
+
+def check_undeclared_variables(rel_path: str, lines: List[str], global_names: set[str] | None = None) -> List[VBAIssue]:
+    """UV001: Variables used but not declared (compile error with Option Explicit).
+
+    Args:
+        global_names: Optional set of lowercase variable names known to be
+                      declared as Public in other modules (cross-module scope).
+    """
+    issues = []
+    has_option_explicit = any(_OPTION_EXPLICIT_RE.match(line.strip()) for line in lines)
+
+    # Only meaningful when Option Explicit is present
+    if not has_option_explicit:
+        return []
+
+    undeclared_by_proc = _find_undeclared_variables_detailed(lines)
+    known_globals = global_names or set()
+    for proc_name, var_set in undeclared_by_proc.items():
+        for var_name, line_num in sorted(var_set, key=lambda x: x[1]):
+            # Skip variables known to be Public in other modules
+            if var_name.lower() in known_globals:
+                continue
+            issues.append(VBAIssue(
+                rule_id="UV001",
+                severity="ERROR",
+                module=rel_path,
+                line_num=line_num,
+                message=f"Undeclared variable '{var_name}' used in procedure '{proc_name}'. "
+                        f"With Option Explicit enabled, this will cause a compile error. "
+                        f"ACTION: Add 'Dim {var_name} As <Type>' at the top of the procedure.",
+            ))
+
+    return issues
+
+
+def check_error_handler(rel_path: str, lines: List[str]) -> List[VBAIssue]:
+    """EH001: Public procedures should have an error handler."""
+    issues = []
+    in_proc = False
+    proc_name = ""
+    proc_start_line = 0
+    is_public = False
+    has_error_handler = False
+
+    logical_lines = _get_logical_lines(lines)
+
+    for i, raw_line in logical_lines:
+        line = raw_line.strip()
+
+        if _PROC_START_RE.match(line):
+            # Check previous proc
+            if in_proc and is_public and not has_error_handler:
+                if not _is_entry_point(proc_name) or True:  # Flag all public procs
+                    issues.append(VBAIssue(
+                        rule_id="EH001",
+                        severity="WARNING",
+                        module=rel_path,
+                        line_num=proc_start_line,
+                        message=f"Public procedure '{proc_name}' has no error handler. "
+                                f"Unhandled errors in COM automation become modal dialogs that hang headless sessions. "
+                                f"ACTION: Add 'On Error GoTo ErrHandler' at the top and an error handler block at the bottom.",
+                    ))
+
+            in_proc = True
+            proc_name = _extract_proc_name(line)
+            proc_start_line = i
+            first_word = line.split()[0].lower()
+            is_public = first_word not in ("private", "friend")
+            has_error_handler = False
+            continue
+
+        if _PROC_END_RE.match(line):
+            if in_proc and is_public and not has_error_handler:
+                issues.append(VBAIssue(
+                    rule_id="EH001",
+                    severity="WARNING",
+                    module=rel_path,
+                    line_num=proc_start_line,
+                    message=f"Public procedure '{proc_name}' has no error handler. "
+                            f"Unhandled errors in COM automation become modal dialogs that hang headless sessions. "
+                            f"ACTION: Add 'On Error GoTo ErrHandler' at the top and an error handler block at the bottom.",
+                ))
+            in_proc = False
+            continue
+
+        if in_proc:
+            if re.match(r"^On\s+Error\s+GoTo\b", line, re.IGNORECASE):
+                has_error_handler = True
+            elif re.match(r"^On\s+Error\s+Resume\s+Next", line, re.IGNORECASE):
+                has_error_handler = True
+
+    return issues
+
+
+def check_filedialog_guard(rel_path: str, lines: List[str]) -> List[VBAIssue]:
+    """FD001: FileDialog usage without UserControl guard."""
+    issues = []
+    _fd_re = re.compile(r"\bApplication\.FileDialog\b|\bFileDialog\b", re.IGNORECASE)
+
+    logical_lines = _get_logical_lines(lines)
+    for i, raw_line in logical_lines:
+        line = raw_line.strip()
+        if line.startswith("'") or line.lower().startswith("rem "):
+            continue
+        if _fd_re.search(line):
+            # Check if UserControl guard exists in preceding lines
+            is_guarded = False
+            for lookback in range(1, 8):
+                prev_idx = i - 1 - lookback
+                if prev_idx >= 0:
+                    prev_line = lines[prev_idx].strip()
+                    if "Application.UserControl" in prev_line:
+                        is_guarded = True
+                        break
+            if not is_guarded:
+                issues.append(VBAIssue(
+                    rule_id="FD001",
+                    severity="WARNING",
+                    module=rel_path,
+                    line_num=i,
+                    message="Application.FileDialog call without UserControl guard. "
+                            "File dialogs freeze headless COM automation because there is no desktop user to interact. "
+                            "ACTION: Add 'If Not Application.UserControl Then Exit Sub' before this line.",
+                ))
+                break  # Only flag once per module to avoid noise
+
+    return issues
+
+
 # ── Rule Registry ──
 
 ALL_RULES: dict[str, Callable] = {
     "DS001": check_dim_after_exec,
+    "CS001": check_const_after_exec,
     "LC001": check_line_continuation,
     "SB001": check_unbalanced_blocks,
     "PF001": check_msgbox,
     "PF002": check_implicit_variant,
     "PF003": check_active_refs,
     "OE001": check_option_explicit,
+    "UV001": check_undeclared_variables,
     "BK001": check_block_declarations,
     "SD002": check_one_declaration_per_line,
     "PF004": check_avoid_integer,
@@ -977,6 +1236,8 @@ ALL_RULES: dict[str, Callable] = {
     "CL001": check_type_suffixes,
     "CL002": check_fragile_selection,
     "SF001": check_silent_error_suppression,
+    "EH001": check_error_handler,
+    "FD001": check_filedialog_guard,
     "DC001": check_unused_local_variables,
     "DC002": check_empty_procedures,
     "SD015": check_consecutive_blank_lines,
@@ -988,14 +1249,24 @@ def run_all_rules(
     rel_path: str,
     lines: List[str],
     disabled_rules: List[str] | None = None,
+    global_names: set[str] | None = None,
 ) -> List[VBAIssue]:
-    """Run all enabled rules against a file's lines."""
+    """Run all enabled rules against a file's lines.
+
+    Args:
+        global_names: Optional set of lowercase variable names known to be
+                      declared as Public in other modules (for UV001 cross-module check).
+    """
     disabled = set(disabled_rules or [])
     issues = []
     for rule_id, check_fn in ALL_RULES.items():
         if rule_id in disabled:
             continue
-        issues.extend(check_fn(rel_path, lines))
+        # UV001 needs cross-module context
+        if rule_id == "UV001" and global_names is not None:
+            issues.extend(check_fn(rel_path, lines, global_names))
+        else:
+            issues.extend(check_fn(rel_path, lines))
 
     # Map line numbers to containing procedures
     proc_map = {}
@@ -1075,3 +1346,215 @@ def _strip_trailing_comment(line: str) -> str:
             return line[:i].rstrip()
         i += 1
     return line.rstrip()
+
+
+# Common VBA built-in functions/objects NOT to treat as user variables
+_VBA_BUILTINS = {
+    "abs", "asc", "atn", "cbool", "cbyte", "ccur", "cdate", "cdbl", "chr",
+    "cint", "clng", "cos", "csng", "cstr", "cvar", "date", "dateadd",
+    "datediff", "datepart", "dateserial", "datevalue", "day", "dir", "eof",
+    "err", "exp", "fix", "format", "freefile", "hex", "hour", "iif",
+    "instr", "instrrev", "int", "isarray", "isdate", "isempty", "iserror",
+    "ismissing", "isnull", "isnumeric", "isobject", "join", "lbound",
+    "lcase", "left", "len", "log", "ltrim", "mid", "minute", "month",
+    "now", "oct", "replace", "right", "rnd", "round", "rtrim",
+    "second", "sgn", "sin", "space", "split", "sqr", "str", "strcomp",
+    "string", "strreverse", "switch", "tab", "tan", "time", "timer",
+    "timeserial", "timevalue", "trim", "typename", "ubound", "ucase",
+    "val", "vartype", "weekday", "year",
+    # Statements and keywords
+    "debug", "print", "open", "close", "get", "put", "input", "write",
+    "redim", "erase", "set", "let", "call", "exit", "on", "resume",
+    "goto", "gosub", "return", "stop", "end", "nothing", "true", "false",
+    "me", "new", "byval", "byref",
+    # Common Excel objects
+    "application", "thisworkbook", "activeworkbook", "activesheet",
+    "activecell", "sheets", "worksheets", "range", "cells",
+    "selection", "columns", "rows", "names",
+}
+
+
+def _find_undeclared_variables(lines: List[str]) -> set[str]:
+    """Find variables used but not declared across all procedures.
+
+    Returns a set of undeclared variable names.
+    """
+    all_undeclared = set()
+    detailed = _find_undeclared_variables_detailed(lines)
+    for proc_name, var_set in detailed.items():
+        for var_name, _ in var_set:
+            all_undeclared.add(var_name)
+    return all_undeclared
+
+
+def _find_undeclared_variables_detailed(lines: List[str]) -> dict[str, set[tuple[str, int]]]:
+    """Find undeclared variables per procedure.
+
+    Returns dict of proc_name -> set of (var_name, first_line_num).
+    """
+    result = {}
+    in_proc = False
+    proc_name = ""
+    proc_declared = set()  # lowercase names
+    proc_used = {}  # name -> first_line
+
+    # First pass: collect module-level declarations (Public/Private/Dim outside procedures)
+    module_level_names = set()
+    in_any_proc = False
+    _mod_decl_re = re.compile(
+        r"^(Public|Private|Dim|Global)\s+", re.IGNORECASE
+    )
+    for raw_line in lines:
+        line = raw_line.strip()
+        if _PROC_START_RE.match(line):
+            in_any_proc = True
+        if _PROC_END_RE.match(line):
+            in_any_proc = False
+            continue
+        if not in_any_proc and _mod_decl_re.match(line):
+            # Skip Const at module level (handled separately)
+            if re.match(r"^(Public\s+|Private\s+)?Const\s+", line, re.IGNORECASE):
+                const_m = re.match(r"^(?:Public\s+|Private\s+)?Const\s+(\w+)", line, re.IGNORECASE)
+                if const_m:
+                    module_level_names.add(const_m.group(1).lower())
+            else:
+                for var_name, _ in _parse_vba_declarations(line):
+                    module_level_names.add(var_name.lower())
+
+    for i, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+
+        if _PROC_START_RE.match(line):
+            # Process previous proc
+            if in_proc and proc_name:
+                undeclared = set()
+                for name, first_line in proc_used.items():
+                    if name.lower() not in proc_declared:
+                        undeclared.add((name, first_line))
+                if undeclared:
+                    result[proc_name] = undeclared
+
+            in_proc = True
+            proc_name = _extract_proc_name(line)
+            proc_declared = set(module_level_names)  # Seed with module-level declarations
+            proc_used = {}
+
+            # In VBA Functions and Property Gets, assigning to the function
+            # name is the return-value idiom (e.g., "MyFunc = 42").
+            # Treat the function name as implicitly declared.
+            line_lower = line.lower().lstrip()
+            for prefix in ("public ", "private ", "friend "):
+                if line_lower.startswith(prefix):
+                    line_lower = line_lower[len(prefix):]
+                    break
+            if line_lower.startswith("function ") or line_lower.startswith("property get "):
+                proc_declared.add(proc_name.lower())
+
+            # Extract parameter names as declared -- handle multi-line signatures
+            # Join continuation lines to get the full procedure declaration
+            full_sig = raw_line.rstrip()
+            line_idx = i - 1  # 0-based index into lines array
+            while full_sig.rstrip().endswith(" _") and line_idx + 1 < len(lines):
+                line_idx += 1
+                full_sig = full_sig.rstrip()[:-1] + " " + lines[line_idx].strip()
+            first_paren = full_sig.find("(")
+            last_paren = full_sig.rfind(")")
+            if first_paren != -1 and last_paren != -1:
+                params_str = full_sig[first_paren + 1:last_paren]
+                for param in params_str.split(","):
+                    param = param.strip()
+                    for prefix in ("optional ", "paramarray ", "byval ", "byref "):
+                        if param.lower().startswith(prefix):
+                            param = param[len(prefix):].strip()
+                    pname = param.split()[0] if param.split() else ""
+                    # Strip array brackets: shiftNodes() -> shiftNodes
+                    pname = pname.rstrip("()")
+                    if pname:
+                        proc_declared.add(pname.lower())
+            continue
+
+        if _PROC_END_RE.match(line):
+            if in_proc and proc_name:
+                undeclared = set()
+                for name, first_line in proc_used.items():
+                    if name.lower() not in proc_declared:
+                        undeclared.add((name, first_line))
+                if undeclared:
+                    result[proc_name] = undeclared
+            in_proc = False
+            proc_name = ""
+            proc_declared = set()
+            proc_used = {}
+            continue
+
+        if not in_proc:
+            continue
+
+        # Skip comments
+        if line.startswith("'") or line.lower().startswith("rem "):
+            continue
+
+        # VBA uses : as a statement separator. Split the line into sub-statements
+        # but respect string literals (colons inside strings are not separators).
+        sub_stmts = _split_colon_statements(line)
+
+        for sub_stmt in sub_stmts:
+            sub = sub_stmt.strip()
+            if not sub or sub.startswith("'"):
+                continue
+
+            # Track declarations
+            if _DIM_RE.match(sub) or re.match(r"^(Public\s+|Private\s+)?Const\s+", sub, re.IGNORECASE):
+                for var_name, _ in _parse_vba_declarations(sub):
+                    proc_declared.add(var_name.lower())
+                # Also handle Const Name = Value
+                const_m = re.match(r"^(?:Public\s+|Private\s+)?Const\s+(\w+)", sub, re.IGNORECASE)
+                if const_m:
+                    proc_declared.add(const_m.group(1).lower())
+                continue
+
+            # Track assignments: variable = ...
+            assign_m = re.match(r"^(\w+)\s*=", sub)
+            if assign_m:
+                vname = assign_m.group(1)
+                vlow = vname.lower()
+                if (vlow not in VBA_RESERVED and vlow not in _VBA_BUILTINS
+                        and vlow not in proc_declared
+                        and vname not in proc_used):
+                    proc_used[vname] = i
+
+            # Track For loop variables: For x = ...
+            for_m = re.match(r"^For\s+(\w+)\s*=", sub, re.IGNORECASE)
+            if for_m:
+                vname = for_m.group(1)
+                vlow = vname.lower()
+                if (vlow not in VBA_RESERVED and vlow not in _VBA_BUILTINS
+                        and vlow not in proc_declared
+                        and vname not in proc_used):
+                    proc_used[vname] = i
+
+    return result
+
+
+def _split_colon_statements(line: str) -> list[str]:
+    """Split a VBA line by colon statement separators, respecting string literals.
+
+    In VBA, ':' separates multiple statements on one line, but colons
+    inside string literals are not separators.
+    """
+    parts = []
+    current = []
+    in_string = False
+    for ch in line:
+        if ch == '"':
+            in_string = not in_string
+            current.append(ch)
+        elif ch == ':' and not in_string:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current))
+    return parts
+

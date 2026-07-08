@@ -5,12 +5,14 @@ Tests for xlvbatools.analysis.rules -- VBA static analysis rules.
 import pytest
 from xlvbatools.analysis.rules import (
     check_dim_after_exec,
+    check_const_after_exec,
     check_line_continuation,
     check_unbalanced_blocks,
     check_msgbox,
     check_implicit_variant,
     check_active_refs,
     check_option_explicit,
+    check_undeclared_variables,
     check_block_declarations,
     check_one_declaration_per_line,
     check_avoid_integer,
@@ -23,11 +25,14 @@ from xlvbatools.analysis.rules import (
     check_type_suffixes,
     check_fragile_selection,
     check_silent_error_suppression,
+    check_error_handler,
+    check_filedialog_guard,
     check_unused_local_variables,
     check_empty_procedures,
     check_consecutive_blank_lines,
     check_double_spacing,
     run_all_rules,
+    _is_entry_point,
 )
 
 
@@ -526,3 +531,255 @@ class TestAdvancedLinterRules:
         assert len(issues) == 1
         assert issues[0].rule_id == "SD016"
         assert issues[0].line_num == 3
+
+
+@pytest.mark.unit
+class TestConstAfterExec:
+    """CS001: Const after executable statement."""
+
+    def test_const_at_top_passes(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Const MAX_VAL As Long = 100\n",
+            "    Dim x As Long\n",
+            "    x = MAX_VAL\n",
+            "End Sub\n",
+        ]
+        issues = check_const_after_exec("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_const_after_exec_warns(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "    Const MAX_VAL As Long = 100\n",
+            "End Sub\n",
+        ]
+        issues = check_const_after_exec("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "CS001"
+
+
+@pytest.mark.unit
+class TestUndeclaredVariables:
+    """UV001: Undeclared variable usage."""
+
+    def test_all_declared_passes(self):
+        lines = [
+            "Option Explicit\n",
+            "Public Sub Test()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "End Sub\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_undeclared_variable_errors(self):
+        lines = [
+            "Option Explicit\n",
+            "Public Sub Test()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "    filePath = \"test\"\n",
+            "End Sub\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "UV001"
+        assert "filePath" in issues[0].message
+
+    def test_no_option_explicit_skips(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    filePath = \"test\"\n",
+            "End Sub\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_for_loop_variable_detected(self):
+        lines = [
+            "Option Explicit\n",
+            "Public Sub Test()\n",
+            "    For ii = 1 To 10\n",
+            "    Next ii\n",
+            "End Sub\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        assert len(issues) == 1
+        assert "ii" in issues[0].message
+
+    def test_parameter_not_flagged(self):
+        lines = [
+            "Option Explicit\n",
+            "Public Sub Test(ByVal x As Long)\n",
+            "    x = x + 1\n",
+            "End Sub\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_function_return_value_not_flagged(self):
+        """Assigning to the function name is the VBA return idiom, not an undeclared var."""
+        lines = [
+            "Option Explicit\n",
+            "Public Function SafeDbl(ByVal val As Variant) As Double\n",
+            "    SafeDbl = CDbl(val)\n",
+            "End Function\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_property_get_return_not_flagged(self):
+        """Property Get also uses name = value for return."""
+        lines = [
+            "Option Explicit\n",
+            "Public Property Get Name() As String\n",
+            "    Name = m_name\n",
+            "End Property\n",
+        ]
+        issues = check_undeclared_variables("test.bas", lines)
+        # m_name might be flagged (module-level), but Name should not
+        flagged_names = [i.message for i in issues]
+        assert not any("'Name'" in m for m in flagged_names)
+
+
+@pytest.mark.unit
+class TestErrorHandler:
+    """EH001: Missing error handler."""
+
+    def test_public_with_handler_passes(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    On Error GoTo ErrHandler\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "    Exit Sub\n",
+            "ErrHandler:\n",
+            "    Err.Raise Err.Number\n",
+            "End Sub\n",
+        ]
+        issues = check_error_handler("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_public_without_handler_warns(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "End Sub\n",
+        ]
+        issues = check_error_handler("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "EH001"
+
+    def test_private_without_handler_passes(self):
+        lines = [
+            "Private Sub Helper()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "End Sub\n",
+        ]
+        issues = check_error_handler("test.bas", lines)
+        assert len(issues) == 0
+
+
+@pytest.mark.unit
+class TestFileDialogGuard:
+    """FD001: FileDialog without UserControl guard."""
+
+    def test_guarded_filedialog_passes(self):
+        lines = [
+            "Private Sub Test()\n",
+            "    If Not Application.UserControl Then Exit Sub\n",
+            "    Application.FileDialog(msoFileDialogOpen).Show\n",
+            "End Sub\n",
+        ]
+        issues = check_filedialog_guard("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_unguarded_filedialog_warns(self):
+        lines = [
+            "Private Sub Test()\n",
+            "    Application.FileDialog(msoFileDialogOpen).Show\n",
+            "End Sub\n",
+        ]
+        issues = check_filedialog_guard("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "FD001"
+
+
+@pytest.mark.unit
+class TestImprovedOptionExplicit:
+    """OE001 improvements: no Dim required, impact assessment."""
+
+    def test_module_with_assignments_but_no_dim(self):
+        """OE001 should fire even without Dim statements."""
+        lines = [
+            "Public Sub Test()\n",
+            "    filePath = \"test\"\n",
+            "End Sub\n",
+        ]
+        issues = check_option_explicit("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "OE001"
+
+    def test_impact_assessment_in_message(self):
+        """OE001 should list undeclared variables in IMPACT note."""
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "    filePath = \"test\"\n",
+            "End Sub\n",
+        ]
+        issues = check_option_explicit("test.bas", lines)
+        assert len(issues) == 1
+        assert "IMPACT" in issues[0].message
+        assert "filePath" in issues[0].message
+
+
+@pytest.mark.unit
+class TestImprovedImplicitVariant:
+    """PF002 improvements: now catches Const without type."""
+
+    def test_const_without_type_warns(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Const ForReading = 1\n",
+            "End Sub\n",
+        ]
+        issues = check_implicit_variant("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "PF002"
+        assert "ForReading" in issues[0].message
+
+    def test_const_with_type_passes(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Const ForReading As Long = 1\n",
+            "End Sub\n",
+        ]
+        issues = check_implicit_variant("test.bas", lines)
+        assert len(issues) == 0
+
+
+@pytest.mark.unit
+class TestEntryPointWhitelist:
+    """DC003 entry-point detection."""
+
+    def test_event_handlers_recognized(self):
+        assert _is_entry_point("Worksheet_Change") is True
+        assert _is_entry_point("Workbook_Open") is True
+        assert _is_entry_point("CommandButton1_Click") is True
+        assert _is_entry_point("Worksheet_SelectionChange") is True
+
+    def test_regular_procs_not_entry_points(self):
+        assert _is_entry_point("CalculateWeight") is False
+        assert _is_entry_point("ParseLine") is False
+
+    def test_named_entry_points_recognized(self):
+        assert _is_entry_point("OnRetrieve") is True
+        assert _is_entry_point("Main") is True
