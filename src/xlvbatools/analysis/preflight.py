@@ -123,17 +123,23 @@ def lint_files(
                         if not is_private:
                             proc_name = _extract_proc_name(stripped)
                             proc_key = proc_name.lower()
-                            is_sheet = "sheets" in rel_path.lower() or fname.lower().startswith("sheet")
-                            if not is_sheet and proc_key:
+                            is_standard_module = (
+                                fname.endswith(".bas") and 
+                                "sheets" not in rel_path.lower() and 
+                                not fname.lower().startswith("sheet") and 
+                                not fname.lower().startswith("thisworkbook")
+                            )
+                            if is_standard_module and proc_key:
                                 if proc_key in seen_public_procs:
                                     prev_path, prev_line = seen_public_procs[proc_key]
-                                    all_issues.append(VBAIssue(
-                                        rule_id="DP001",
-                                        severity="ERROR",
-                                        module=rel_path,
-                                        line_num=i,
-                                        message=f"Duplicate public procedure '{proc_name}' found in both '{rel_path}' and '{prev_path}' (L{prev_line}). VBA raises a compile error (Ambiguous name detected) for duplicate public names.",
-                                    ))
+                                    if prev_path != rel_path:
+                                        all_issues.append(VBAIssue(
+                                            rule_id="DP001",
+                                            severity="ERROR",
+                                            module=rel_path,
+                                            line_num=i,
+                                            message=f"Duplicate public procedure '{proc_name}' found in both '{rel_path}' and '{prev_path}' (L{prev_line}). VBA raises a compile error (Ambiguous name detected) for duplicate public names.",
+                                        ))
                                 else:
                                     seen_public_procs[proc_key] = (rel_path, i)
 
