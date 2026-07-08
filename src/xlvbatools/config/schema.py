@@ -60,20 +60,27 @@ class XlvbaConfig:
     snapshots: SnapshotConfig = field(default_factory=SnapshotConfig)
     backups: BackupConfig = field(default_factory=BackupConfig)
     lint: LintConfig = field(default_factory=LintConfig)
+    config_dir: Optional[str] = None
 
     @property
     def workbook_path(self) -> str:
         """Resolve workbook path to absolute."""
+        if self.config_dir and not os.path.isabs(self.workbook):
+            return os.path.abspath(os.path.join(self.config_dir, self.workbook))
         return os.path.abspath(self.workbook)
 
     @property
     def vba_source_path(self) -> str:
         """Resolve vba_source path to absolute."""
+        if self.config_dir and not os.path.isabs(self.vba_source):
+            return os.path.abspath(os.path.join(self.config_dir, self.vba_source))
         return os.path.abspath(self.vba_source)
 
     @property
     def snapshots_path(self) -> str:
         """Resolve snapshots directory to absolute."""
+        if self.config_dir and not os.path.isabs(self.snapshots_dir):
+            return os.path.abspath(os.path.join(self.config_dir, self.snapshots_dir))
         return os.path.abspath(self.snapshots_dir)
 
     def validate(self) -> list[str]:

@@ -60,6 +60,46 @@ def lint_files(
             issues = run_all_rules(rel_path, lines, disabled_rules)
             all_issues.extend(issues)
 
+    disabled = set(disabled_rules or [])
+    if "DC003" not in disabled:
+        from xlvbatools.vba.dependency import build_call_graph
+        try:
+            cg = build_call_graph(src_dir)
+            called_qnames = {edge[1].lower() for edge in cg.edges}
+            module_dirs = {}
+            for root, _, files in os.walk(src_dir):
+                for fname in files:
+                    if fname.endswith(extensions):
+                        mod_name = os.path.splitext(fname)[0]
+                        module_dirs[mod_name] = os.path.basename(root)
+            for qname, proc in cg.procedures.items():
+                if qname.lower() in called_qnames:
+                    continue
+                if "_" in proc.name or proc.name.lower() in ("workbook_open", "workbook_beforeclose", "userform_initialize"):
+                    continue
+                parent_dir = module_dirs.get(proc.module, "")
+                is_internal = (
+                    proc.access.lower() == "private" or 
+                    parent_dir in ("classes", "sheets")
+                )
+                if is_internal:
+                    rel_file_path = ""
+                    for root_dir, _, sub_files in os.walk(src_dir):
+                        for sub_f in sub_files:
+                            if os.path.splitext(sub_f)[0] == proc.module:
+                                rel_file_path = os.path.relpath(os.path.join(root_dir, sub_f), src_dir)
+                                break
+                    all_issues.append(VBAIssue(
+                        rule_id="DC003",
+                        severity="WARNING",
+                        module=rel_file_path or proc.module,
+                        line_num=proc.line_num,
+                        message=f"Dead procedure '{proc.name}' in module '{proc.module}'. This procedure has zero incoming calls and is not a known event handler. ACTION: Delete or implement calls to this procedure to clean up dead code.",
+                        procedure=proc.name
+                    ))
+        except Exception as e:
+            logger.warning(f"Failed to run DC003 dead code analysis: {e}")
+
     all_issues.sort(key=lambda i: (i.module, i.line_num))
     return all_issues
 
@@ -96,6 +136,7 @@ def lint_workbook(
 
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
         # Run rules against each component's code
+        component_codes = {}
         for comp in session.wb.VBProject.VBComponents:
             name = comp.Name
             type_info = get_type_info(comp.Type)
@@ -105,11 +146,16 @@ def lint_workbook(
                 continue
 
             code = cm.Lines(1, cm.CountOfLines)
+            component_codes[name] = (code, type_info)
             lines = code.split("\r\n") if "\r\n" in code else code.split("\n")
             rel_path = f"{type_info['dir']}/{name}{type_info['ext']}"
 
             issues = run_all_rules(rel_path, lines, disabled_rules)
             all_issues.extend(issues)
+        if "comp" in locals():
+            del comp
+        if "cm" in locals():
+            del cm
 
         # Optional compile test
         if compile_test:
@@ -123,6 +169,56 @@ def lint_workbook(
                         line_num=result.get("error_line", 0),
                         message=f"Compile error: {err.get('message', err.get('text', str(err)))}",
                     ))
+
+        # Optional dead code analysis (DC003)
+        disabled = set(disabled_rules or [])
+        if "DC003" not in disabled:
+            import tempfile
+            import shutil
+            from xlvbatools.vba.dependency import build_call_graph
+            temp_dir = tempfile.mkdtemp()
+            try:
+                # Write component codes directly to temp directory without calling extract_all
+                for name, (code, type_info) in component_codes.items():
+                    subdir = os.path.join(temp_dir, type_info["dir"])
+                    os.makedirs(subdir, exist_ok=True)
+                    filepath = os.path.join(subdir, f"{name}{type_info['ext']}")
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(code)
+
+                cg = build_call_graph(temp_dir)
+                called_qnames = {edge[1].lower() for edge in cg.edges}
+                module_dirs = {}
+                for root, _, files in os.walk(temp_dir):
+                    for fname in files:
+                        if fname.endswith((".bas", ".cls")):
+                            mod_name = os.path.splitext(fname)[0]
+                            module_dirs[mod_name] = os.path.basename(root)
+                for qname, proc in cg.procedures.items():
+                    if qname.lower() in called_qnames:
+                        continue
+                    if "_" in proc.name or proc.name.lower() in ("workbook_open", "workbook_beforeclose", "userform_initialize"):
+                        continue
+                    parent_dir = module_dirs.get(proc.module, "")
+                    is_internal = (
+                        proc.access.lower() == "private" or 
+                        parent_dir in ("classes", "sheets")
+                    )
+                    if is_internal:
+                        ext = ".bas" if parent_dir == "modules" else ".cls"
+                        rel_file_path = f"{parent_dir}/{proc.module}{ext}" if parent_dir else f"{proc.module}{ext}"
+                        all_issues.append(VBAIssue(
+                            rule_id="DC003",
+                            severity="WARNING",
+                            module=rel_file_path,
+                            line_num=proc.line_num,
+                            message=f"Dead procedure '{proc.name}' in module '{proc.module}'. This procedure has zero incoming calls and is not a known event handler. ACTION: Delete or implement calls to this procedure to clean up dead code.",
+                            procedure=proc.name
+                        ))
+            except Exception as e:
+                logger.warning(f"Failed to run DC003 dead code analysis on workbook: {e}")
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     all_issues.sort(key=lambda i: (i.module, i.line_num))
     return all_issues
@@ -150,9 +246,5 @@ def print_report(issues: List[VBAIssue]) -> str:
 
 def _read_file_lines(filepath: str) -> list[str]:
     """Read a file's lines, handling encoding gracefully."""
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return f.readlines()
-    except UnicodeDecodeError:
-        with open(filepath, "r", encoding="windows-1252") as f:
-            return f.readlines()
+    from xlvbatools.vba._io import read_vba_lines
+    return read_vba_lines(filepath)

@@ -33,6 +33,7 @@ import gc
 import os
 import time
 import logging
+from typing import Any, Optional
 
 from xlvbatools._compat import require_windows
 from xlvbatools.core.process import (
@@ -47,6 +48,17 @@ logger = logging.getLogger(__name__)
 
 
 class ExcelSession:
+    workbook_path: str
+    visible: bool
+    save_on_exit: bool
+    kill_on_enter: bool
+    init_delay: float
+    enable_watchdog: bool
+    watchdog_poll_interval: float
+    excel: Any
+    wb: Any
+    watchdog: Optional["DialogWatchdog"]
+    excel_pid: Optional[int]
     """
     Context manager for safe Excel COM automation sessions with dialog protection.
 
@@ -119,6 +131,8 @@ class ExcelSession:
             from xlvbatools.core.watchdog import DialogWatchdog
             self.watchdog = DialogWatchdog(
                 poll_interval=self.watchdog_poll_interval,
+                # 600s (10 min) instead of watchdog default (300s) because
+                # sessions with macro execution may run longer than 5 minutes.
                 timeout=600.0,
                 auto_dismiss=True,
                 dismiss_strategy="ok",
@@ -138,6 +152,9 @@ class ExcelSession:
             import win32process
             _, self.excel_pid = win32process.GetWindowThreadProcessId(self.excel.Hwnd)
             logger.info(f"Spawned Excel process with PID: {self.excel_pid}")
+            # Wire PID into watchdog so it only monitors our Excel instance
+            if self.watchdog is not None:
+                self.watchdog.target_pid = self.excel_pid
         except Exception as e:
             self.excel_pid = None
             logger.warning(f"Could not retrieve Excel PID: {e}")
@@ -170,6 +187,9 @@ class ExcelSession:
                 logger.info("Workbook closed")
         except Exception as e:
             logger.warning(f"Error closing workbook: {e}")
+        finally:
+            self.wb = None
+            gc.collect()
 
         try:
             if self.excel is not None:
@@ -177,11 +197,9 @@ class ExcelSession:
                 logger.info("Excel quit")
         except Exception as e:
             logger.warning(f"Error quitting Excel: {e}")
-
-        # Explicitly release COM references and collect garbage before taskkill
-        self.wb = None
-        self.excel = None
-        gc.collect()
+        finally:
+            self.excel = None
+            gc.collect()
 
         # Final safety: target only our spawned Excel process for final cleanup if still running
         if self.excel_pid is not None:
@@ -228,11 +246,17 @@ class ExcelSession:
         the watchdog dismisses it and the method returns with error details
         instead of hanging forever.
 
+        Note: The ``timeout`` parameter is reserved for future use. Excel's
+        ``Application.Run`` is a blocking COM call that cannot be externally
+        interrupted. The dialog watchdog handles the most common hang scenario
+        (modal dialogs blocking the COM thread).
+
         Returns
         -------
         dict
             Keys: success, elapsed_seconds, error, dialog_events
         """
+        pre_count = 0
         if self.watchdog:
             pre_count = len(self.watchdog.events)
 

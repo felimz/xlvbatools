@@ -27,6 +27,8 @@ class SearchMatch:
     line_num: int   # 1-indexed line number
     line: str       # Full line content (stripped)
     module: str     # Module name (derived from filename)
+    context_before: List[str] | None = None  # Lines before the match
+    context_after: List[str] | None = None   # Lines after the match
 
     def __str__(self) -> str:
         return f"{self.file}:{self.line_num}: {self.line}"
@@ -54,7 +56,7 @@ def search_vba(
     case_sensitive : bool
         If True, perform case-sensitive matching (default False).
     context_lines : int
-        Number of context lines to include around each match (future use).
+        Number of context lines to include around each match (like grep -C).
     extensions : tuple
         File extensions to search.
 
@@ -91,20 +93,27 @@ def search_vba(
             rel_path = os.path.relpath(filepath, src_dir)
             module_name = os.path.splitext(fname)[0]
 
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-            except UnicodeDecodeError:
-                with open(filepath, "r", encoding="windows-1252") as f:
-                    lines = f.readlines()
+            from xlvbatools.vba._io import read_vba_lines as _read_lines
+            lines = _read_lines(filepath)
 
             for i, line in enumerate(lines, start=1):
                 if compiled.search(line):
+                    # Gather context lines if requested
+                    ctx_before = None
+                    ctx_after = None
+                    if context_lines > 0:
+                        start_idx = max(0, i - 1 - context_lines)
+                        end_idx = min(len(lines), i + context_lines)
+                        ctx_before = [l.rstrip() for l in lines[start_idx:i - 1]]
+                        ctx_after = [l.rstrip() for l in lines[i:end_idx]]
+
                     matches.append(SearchMatch(
                         file=rel_path,
                         line_num=i,
                         line=line.rstrip(),
                         module=module_name,
+                        context_before=ctx_before,
+                        context_after=ctx_after,
                     ))
 
     return matches

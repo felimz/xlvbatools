@@ -14,14 +14,14 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-# VBA component type constants (from VBE type enum)
-VB_COMP_TYPES = {
-    1: {"name": "standard_module", "dir": "modules", "ext": ".bas"},
-    2: {"name": "class_module", "dir": "classes", "ext": ".cls"},
-    3: {"name": "userform", "dir": "forms", "ext": ".frm"},
-    11: {"name": "activex_designer", "dir": "designers", "ext": ".dsr"},
-    100: {"name": "document_module", "dir": "sheets", "ext": ".bas"},
-}
+from xlvbatools.vba.constants import (
+    TYPE_STD_MODULE,
+    TYPE_CLASS_MODULE,
+    TYPE_USERFORM,
+    TYPE_ACTIVEX_DESIGNER,
+    TYPE_DOCUMENT,
+    VB_COMP_TYPES,
+)
 
 
 def get_type_info(vb_type: int) -> dict:
@@ -59,7 +59,9 @@ class Manifest:
 
     def save(self, manifest_path: str):
         """Write the manifest to a JSON file."""
-        os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+        parent = os.path.dirname(manifest_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
         logger.info(f"Manifest written: {manifest_path} ({len(self.components)} components)")

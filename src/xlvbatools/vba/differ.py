@@ -22,10 +22,7 @@ from xlvbatools.vba.manifest import get_type_info
 
 logger = logging.getLogger(__name__)
 
-# VBE header lines that should be stripped for comparison
-_VBE_HEADER_RE = re.compile(
-    r"^(Attribute VB_|VERSION \d|BEGIN|END|  MultiUse =)", re.IGNORECASE
-)
+from xlvbatools.vba.constants import VBE_HEADER_STRIP_RE as _VBE_HEADER_RE
 
 
 def diff_all(workbook_path: str, source_dir: str) -> list[dict]:
@@ -178,12 +175,9 @@ def _get_component_code(comp) -> list[str]:
 
 def _read_source_file(filepath: str, vbe_type: int) -> list[str]:
     """Read a source file, stripping VBE headers for clean comparison."""
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            lines = f.read().split("\n")
-    except UnicodeDecodeError:
-        with open(filepath, "r", encoding="windows-1252") as f:
-            lines = f.read().split("\n")
+    from xlvbatools.vba._io import read_vba_text
+    content = read_vba_text(filepath)
+    lines = content.split("\n")
 
     # Strip \r from line endings
     lines = [line.rstrip("\r") for line in lines]

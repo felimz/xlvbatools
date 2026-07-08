@@ -112,6 +112,7 @@ def _parse_toml(config_path: str) -> XlvbaConfig:
             protected_sheets=lint_data.get("protected_sheets", []),
             disabled_rules=lint_data.get("disabled_rules", []),
         ),
+        config_dir=os.path.dirname(os.path.abspath(config_path)),
     )
 
     errors = cfg.validate()

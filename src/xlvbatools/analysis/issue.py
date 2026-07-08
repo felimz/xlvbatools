@@ -16,10 +16,16 @@ class VBAIssue:
     module: str         # Module/file name where issue was found
     line_num: int       # 1-indexed line number (0 if not applicable)
     message: str        # Human-readable description
+    procedure: str | None = None  # Containing procedure/method name
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def __str__(self) -> str:
-        loc = f"{self.module}:{self.line_num}" if self.line_num else self.module
+        loc_parts = [self.module]
+        if self.procedure:
+            loc_parts.append(f"In procedure '{self.procedure}'")
+        if self.line_num:
+            loc_parts.append(f"line {self.line_num}")
+        loc = " -> ".join(loc_parts)
         return f"{self.severity} [{self.rule_id}] {loc}: {self.message}"

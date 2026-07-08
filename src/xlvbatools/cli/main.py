@@ -21,14 +21,19 @@ Commands:
 """
 
 import argparse
+import os
 import sys
+from typing import List, Optional, Any
 
 
-def main():
+def main(args: Optional[List[str]] = None) -> None:
     """Main entry point for the xlvba CLI."""
     if sys.platform == "win32":
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stderr.reconfigure(encoding="utf-8")
+        except AttributeError:
+            pass  # In some testing environments stdout/stderr might not support reconfigure
 
     parser = argparse.ArgumentParser(
         prog="xlvba",
@@ -56,17 +61,36 @@ def main():
     _register_fmt(subparsers)
     _register_graph(subparsers)
 
-    args = parser.parse_args()
+    args = parser.parse_args(args)
 
     if args.command is None:
         parser.print_help()
         sys.exit(0)
 
     # Dispatch to the command handler
-    if hasattr(args, "func"):
-        args.func(args)
-    else:
-        parser.print_help()
+    try:
+        if hasattr(args, "func"):
+            args.func(args)
+        else:
+            parser.print_help()
+    except Exception as e:
+        is_com = False
+        try:
+            import pywintypes
+            if isinstance(e, pywintypes.com_error):
+                is_com = True
+        except ImportError:
+            pass
+
+        if is_com:
+            sys.stderr.write(f"\n[Error] Excel COM automation failure: {e}\n")
+            sys.stderr.write("Please check:\n")
+            sys.stderr.write("  1. Excel is installed and can open the workbook.\n")
+            sys.stderr.write("  2. Trust Center Macro Settings allow access to the VBA project object model.\n")
+            sys.stderr.write("  3. No other instance of Excel is blocking the file.\n")
+            sys.exit(1)
+        else:
+            raise
 
 
 def _get_version() -> str:
@@ -85,6 +109,7 @@ def _register_init(subparsers):
     p = subparsers.add_parser("init", help="Initialize xlvbatools.toml in current directory")
     p.add_argument("--workbook", "-w", help="Path to the .xlsm workbook")
     p.add_argument("--agents", action="store_true", help="Also install .agents/ template")
+    p.add_argument("--force", "-f", action="store_true", help="Overwrite existing xlvbatools.toml")
     p.set_defaults(func=_cmd_init)
 
 
@@ -142,6 +167,8 @@ def _register_run(subparsers):
 
 def _register_snapshot(subparsers):
     p = subparsers.add_parser("snapshot", help="Checkpoint and rollback system")
+    p.add_argument("--workbook", "-w", help="Path to the .xlsm workbook")
+    p.add_argument("--source", "-s", help="Path to vba_source/ directory")
     sp = p.add_subparsers(dest="snapshot_command")
 
     c = sp.add_parser("create", help="Create a new snapshot")
@@ -234,7 +261,7 @@ def _register_graph(subparsers):
 
 def _cmd_init(args):
     """Initialize xlvbatools.toml in the current directory."""
-    from cli.init_cmd import run_init
+    from xlvbatools.cli.init_cmd import run_init
     run_init(args)
 
 
@@ -352,6 +379,7 @@ def _cmd_lint(args):
     """Run static analysis."""
     from xlvbatools.config.loader import load_config
     from xlvbatools.logging import setup_logging
+    from xlvbatools.analysis.preflight import print_report
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="lint",
                   log_dir=cfg.log_dir, log_name=cfg.log_name)
@@ -359,26 +387,25 @@ def _cmd_lint(args):
     disabled = cfg.lint.disabled_rules
 
     if args.source:
-        from xlvbatools.analysis.preflight import lint_files, print_report
+        from xlvbatools.analysis.preflight import lint_files
         issues = lint_files(args.source, disabled_rules=disabled)
     elif args.workbook:
-        from xlvbatools.analysis.preflight import lint_workbook, print_report
+        from xlvbatools.analysis.preflight import lint_workbook
         issues = lint_workbook(args.workbook, disabled_rules=disabled)
     else:
         # Try source dir first (no COM needed), then workbook
         src = cfg.vba_source
         if os.path.isdir(src):
-            from xlvbatools.analysis.preflight import lint_files, print_report
+            from xlvbatools.analysis.preflight import lint_files
             issues = lint_files(src, disabled_rules=disabled)
         else:
-            from xlvbatools.analysis.preflight import lint_workbook, print_report
+            from xlvbatools.analysis.preflight import lint_workbook
             issues = lint_workbook(cfg.workbook, disabled_rules=disabled)
 
     if getattr(args, "json", False):
         import json
         print(json.dumps([i.to_dict() for i in issues], indent=2))
     else:
-        from xlvbatools.analysis.preflight import print_report
         print(print_report(issues))
 
     errors = [i for i in issues if i.severity == "ERROR"]
@@ -419,9 +446,12 @@ def _cmd_snapshot(args):
     cfg = load_config()
     setup_logging(tool_name="snapshot", log_dir=cfg.log_dir, log_name=cfg.log_name)
 
+    wb = getattr(args, "workbook", None) or cfg.workbook
+    src = getattr(args, "source", None) or cfg.vba_source
+
     from xlvbatools.snapshot.manager import SnapshotManager
     mgr = SnapshotManager(
-        cfg.workbook, cfg.vba_source, cfg.snapshots_dir,
+        wb, src, cfg.snapshots_dir,
         rolling_limit=cfg.snapshots.rolling_limit,
     )
 
@@ -535,15 +565,23 @@ def _cmd_search(args):
     setup_logging(tool_name="search", log_dir=cfg.log_dir, log_name=cfg.log_name)
 
     src = args.source or cfg.vba_source
+    ctx = getattr(args, "context", 0)
     from xlvbatools.vba.search import search_vba
-    matches = search_vba(src, args.pattern, regex=args.regex)
+    matches = search_vba(src, args.pattern, regex=args.regex, context_lines=ctx)
 
     if not matches:
         print(f"No matches for: {args.pattern}")
         sys.exit(0)
 
     for m in matches:
+        if m.context_before:
+            for cl in m.context_before:
+                print(f"  {m.file}-         {cl}")
         print(f"  {m.file}:{m.line_num}: {m.line}")
+        if m.context_after:
+            for cl in m.context_after:
+                print(f"  {m.file}-         {cl}")
+            print("  --")
     print(f"\n{len(matches)} match(es)")
 
 

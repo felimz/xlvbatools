@@ -46,11 +46,7 @@ _INDENT_DECREASE = re.compile(
     re.IGNORECASE,
 )
 
-# VBE header lines (skip indentation)
-_VBE_HEADER = re.compile(
-    r"^(Attribute\s+VB_|VERSION\s+\d|BEGIN|END|  MultiUse\s*=|Option\s+)",
-    re.IGNORECASE,
-)
+from xlvbatools.vba.constants import VBE_HEADER_FORMAT_RE as _VBE_HEADER
 
 # Module-level declarations (no indent)
 _MODULE_LEVEL = re.compile(
@@ -188,8 +184,8 @@ def format_file(
     """
     import difflib
 
-    with open(filepath, "r", encoding="utf-8") as f:
-        original = f.read()
+    from xlvbatools.vba._io import read_vba_text
+    original = read_vba_text(filepath)
 
     formatted = format_vba(original, indent_size=indent_size)
 

@@ -24,14 +24,12 @@ import tempfile
 from xlvbatools.core.session import ExcelSession
 from xlvbatools.vba.manifest import (
     ComponentInfo, Manifest, get_type_info, compute_file_hash,
+    TYPE_STD_MODULE as _TYPE_STD_MODULE,
+    TYPE_CLASS_MODULE as _TYPE_CLASS_MODULE,
+    TYPE_DOCUMENT as _TYPE_DOCUMENT,
 )
 
 logger = logging.getLogger(__name__)
-
-# VBE component type codes
-_TYPE_STD_MODULE = 1
-_TYPE_CLASS_MODULE = 2
-_TYPE_DOCUMENT = 100
 
 
 def list_components(workbook_path: str) -> list[dict]:
@@ -54,6 +52,8 @@ def list_components(workbook_path: str) -> list[dict]:
                 "type_name": type_info["name"],
                 "line_count": line_count,
             })
+        if "comp" in locals():
+            del comp
 
     return sorted(components, key=lambda c: (c["type_code"], c["name"]))
 
@@ -80,9 +80,16 @@ def extract_component(
                 break
 
         if comp is None:
+            if "c" in locals():
+                del c
+            del vb_project
             return None
 
         info = _extract_single(comp, out_dir)
+        if "c" in locals():
+            del c
+        del comp
+        del vb_project
         return info.to_dict() if info else None
 
 
@@ -118,6 +125,9 @@ def extract_all(
             info = _extract_single(comp, out_dir)
             if info:
                 components.append(info)
+        if "comp" in locals():
+            del comp
+        del vb_project
 
     # Build and save manifest
     manifest = Manifest(
@@ -206,8 +216,8 @@ def _export_code_module(comp, filepath: str):
             f.write("")
         return
 
-    # Read all lines at once
-    code = cm.Lines(1, total_lines)
+    # Read all lines at once and normalize line endings to prevent '\r\r\n' translation issues
+    code = cm.Lines(1, total_lines).replace("\r\n", "\n").replace("\r", "\n")
     with open(filepath, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(code)
         if not code.endswith("\n"):

@@ -98,7 +98,7 @@ xlvbatools/
 │       ├── AGENTS.md            # VBA development rules
 │       ├── skills/              # xlvba-toolchain skill
 │       └── workflows/           # vba-edit, vba-debug workflows
-├── tests/                       # 87 unit tests
+├── tests/                       # 88 unit tests
 │   ├── test_preflight.py        # Lint rules (18 tests)
 │   ├── test_search.py           # VBA search (9 tests)
 │   ├── test_snapshot.py         # Snapshot + manifest (12 tests)
@@ -144,6 +144,7 @@ disabled_rules = ["PF001", "PF003"]
 | PF002 | WARNING | Implicit Variant (Dim without As clause) |
 | PF003 | WARNING | ActiveSheet/ActiveCell usage (fragile) |
 | OE001 | WARNING | Option Explicit missing |
+| CT001 | ERROR | VBE compile test failed (synthetic, COM-only) |
 
 ## Agent Integration
 

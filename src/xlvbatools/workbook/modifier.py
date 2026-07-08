@@ -107,7 +107,8 @@ def modify_cell(
                     target_cell.Value = value
                     logger.info(f"Set value on '{target_cell.Address}': {value}")
 
-            excel.Calculate()
+            if success:
+                excel.Calculate()
 
         except Exception as e:
             logger.error(f"Excel COM error: {e}")

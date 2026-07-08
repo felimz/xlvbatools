@@ -11,6 +11,22 @@ from xlvbatools.analysis.rules import (
     check_implicit_variant,
     check_active_refs,
     check_option_explicit,
+    check_block_declarations,
+    check_one_declaration_per_line,
+    check_avoid_integer,
+    check_explicit_param_passing,
+    check_explicit_access_modifiers,
+    check_line_length,
+    check_no_call_keyword,
+    check_hardcoded_secrets,
+    check_absolute_paths,
+    check_type_suffixes,
+    check_fragile_selection,
+    check_silent_error_suppression,
+    check_unused_local_variables,
+    check_empty_procedures,
+    check_consecutive_blank_lines,
+    check_double_spacing,
     run_all_rules,
 )
 
@@ -41,7 +57,7 @@ class TestDimAfterExec:
         issues = check_dim_after_exec("test.bas", lines)
         assert len(issues) == 1
         assert issues[0].rule_id == "DS001"
-        assert issues[0].severity == "ERROR"
+        assert issues[0].severity == "WARNING"
         assert issues[0].line_num == 4
 
     def test_dim_in_separate_procs_passes(self):
@@ -101,7 +117,7 @@ class TestUnbalancedBlocks:
         ]
         issues = check_unbalanced_blocks("test.bas", lines)
         assert len(issues) == 1
-        assert "no matching End" in issues[0].message
+        assert "lacks a corresponding 'End Sub' or 'End Function'" in issues[0].message
 
     def test_extra_end_sub_fails(self):
         lines = [
@@ -109,7 +125,7 @@ class TestUnbalancedBlocks:
         ]
         issues = check_unbalanced_blocks("test.bas", lines)
         assert len(issues) == 1
-        assert "without matching start" in issues[0].message
+        assert "without a matching start statement" in issues[0].message
 
     def test_nested_function_balanced(self):
         lines = [
@@ -198,6 +214,117 @@ class TestOptionExplicit:
         issues = check_option_explicit("test.bas", lines)
         assert len(issues) == 1
         assert issues[0].rule_id == "OE001"
+        assert issues[0].severity == "ERROR"
+
+
+@pytest.mark.unit
+class TestBlockDeclarations:
+    """BK001: Local variable declaration inside control-flow blocks."""
+
+    def test_block_declarations_warns(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    If True Then\n",
+            "        Dim x As Long\n",
+            "    End If\n",
+            "End Sub\n",
+        ]
+        issues = check_block_declarations("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "BK001"
+        assert issues[0].severity == "WARNING"
+        assert "inside a 'If' block" in issues[0].message
+
+    def test_block_declarations_passes(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    Dim x As Long\n",
+            "    If True Then\n",
+            "        x = 5\n",
+            "    End If\n",
+            "End Sub\n",
+        ]
+        issues = check_block_declarations("test.bas", lines)
+        assert len(issues) == 0
+
+
+@pytest.mark.unit
+class TestLinterStyleGuideRules:
+    """Test cases for the newly introduced style guide rules."""
+
+    def test_one_declaration_per_line(self):
+        # Commas inside dim are forbidden
+        lines = ["    Dim a, b As Long\n"]
+        issues = check_one_declaration_per_line("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD002"
+        assert issues[0].severity == "STYLE"
+
+        # Safe for single var or array parens
+        lines = ["    Dim arr(1 to 5, 1 to 2) As Long\n"]
+        issues = check_one_declaration_per_line("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_avoid_integer(self):
+        lines = ["    Dim count As Integer\n"]
+        issues = check_avoid_integer("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "PF004"
+        assert issues[0].severity == "WARNING"
+
+        lines = ["    Dim count As Long\n"]
+        issues = check_avoid_integer("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_explicit_param_passing(self):
+        lines = ["Public Sub Run(x As Long, ByVal y As Double)\n"]
+        issues = check_explicit_param_passing("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD005"
+        assert "Argument 'x' does not specify ByVal or ByRef" in issues[0].message
+
+        # Test Optional parameters
+        lines = ["Public Sub Run(Optional cnt As Long, ParamArray args() As Variant)\n"]
+        issues = check_explicit_param_passing("test.bas", lines)
+        assert len(issues) == 2
+        assert "Argument 'cnt' does not specify" in issues[0].message
+        assert "Argument 'args()' does not specify" in issues[1].message
+
+        lines = ["Public Sub Run(ByRef x As Long, ByVal y As Double)\n"]
+        issues = check_explicit_param_passing("test.bas", lines)
+        assert len(issues) == 0
+
+    def test_explicit_access_modifiers(self):
+        # Procedure missing modifier
+        lines = [
+            "Sub Calculate()\n",
+            "End Sub\n",
+        ]
+        issues = check_explicit_access_modifiers("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD006"
+
+        # Module-level variable missing modifier (bare Dim)
+        lines = [
+            "Dim moduleVar As Long\n",
+            "Public Sub Test()\n",
+            "End Sub\n",
+        ]
+        issues = check_explicit_access_modifiers("test.bas", lines)
+        assert len(issues) == 1
+        assert "Module-level variable declaration lacks" in issues[0].message
+
+    def test_line_length(self):
+        lines = ["    " + "x" * 120 + "\n"]
+        issues = check_line_length("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD010"
+
+    def test_no_call_keyword(self):
+        lines = ["    Call SaveFile(filepath)\n"]
+        issues = check_no_call_keyword("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD014"
 
 
 @pytest.mark.unit
@@ -230,3 +357,172 @@ class TestRunAllRules:
         rule_ids = {i.rule_id for i in issues}
         assert "PF001" not in rule_ids
         assert "PF002" not in rule_ids
+
+
+@pytest.mark.unit
+class TestAdvancedLinterRules:
+    """Test cases for the newly introduced advanced security and dead code rules."""
+
+    def test_hardcoded_secrets(self):
+        lines = [
+            "Dim pass As String\n",
+            'pass = "secret123"\n',
+            'apiKey = "AB125"\n',
+            '\' Hardcoded password in comment should be ignored: pass = "secret123"\n',
+            'x = 1 \' inline comment: pwd = "xyz"\n',
+        ]
+        issues = check_hardcoded_secrets("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SC001"
+        assert issues[0].severity == "WARNING"
+
+    def test_absolute_paths(self):
+        lines = [
+            'Dim path As String\n',
+            'path = "C:\\Users\\felim\\Documents\\file.txt"\n',
+            '\' Commented path: "C:\\Users\\felim\\Documents\\file.txt"\n',
+            'y = 2 \' inline: "C:\\Users\\felim\\file.txt"\n',
+        ]
+        issues = check_absolute_paths("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SC002"
+        assert issues[0].severity == "WARNING"
+
+    def test_type_suffixes(self):
+        lines = [
+            "Dim count%\n",
+            "Dim name$\n",
+            "' Comment: Dim test%\n",
+            "Dim x As String ' inline suffix Dim y%\n",
+        ]
+        issues = check_type_suffixes("test.bas", lines)
+        assert len(issues) == 2
+        assert issues[0].rule_id == "CL001"
+        assert "Obsolete type declaration suffix" in issues[0].message
+
+    def test_fragile_selection(self):
+        lines = [
+            "    Range(\"A1\").Select\n",
+            "    Selection.Value = 5\n",
+            "    ' Commented: Range(\"A1\").Select\n",
+            "    x = 1 ' inline: Range(\"A1\").Select\n",
+        ]
+        issues = check_fragile_selection("test.bas", lines)
+        assert len(issues) == 2
+        assert all(i.rule_id == "CL002" for i in issues)
+
+    def test_silent_error_suppression(self):
+        # Unverified (no Err check or reset in 5 lines)
+        lines1 = [
+            "On Error Resume Next\n",
+            "x = 1 / 0\n",
+            "y = 2\n",
+        ]
+        assert len(check_silent_error_suppression("test.bas", lines1)) == 1
+
+        # Verified by GoTo 0
+        lines2 = [
+            "On Error Resume Next\n",
+            "x = 1 / 0\n",
+            "On Error GoTo 0\n",
+        ]
+        assert len(check_silent_error_suppression("test.bas", lines2)) == 0
+
+        # Verified by checking Err.Number
+        lines3 = [
+            "On Error Resume Next\n",
+            "x = 1 / 0\n",
+            "If Err.Number <> 0 Then\n",
+        ]
+        assert len(check_silent_error_suppression("test.bas", lines3)) == 0
+
+    def test_unused_local_variables(self):
+        lines = [
+            "Public Sub Run()\n",
+            "    Dim x As Long\n",
+            "    Dim y As String\n",
+            '    y = "test"\n',
+            "End Sub\n",
+        ]
+        issues = check_unused_local_variables("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "DC001"
+        assert "Unused local variable 'x'" in issues[0].message
+
+    def test_empty_procedures(self):
+        lines = [
+            "Public Sub EmptySub()\n",
+            "End Sub\n",
+            "Public Sub NonEmptySub()\n",
+            "    Dim x As Long\n",
+            "    x = 1\n",
+            "End Sub\n",
+        ]
+        issues = check_empty_procedures("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "DC002"
+        assert "Empty procedure 'EmptySub'" in issues[0].message
+
+    def test_dead_procedures(self, tmp_path):
+        from xlvbatools.analysis.preflight import lint_files
+        
+        modules_dir = tmp_path / "modules"
+        classes_dir = tmp_path / "classes"
+        modules_dir.mkdir()
+        classes_dir.mkdir()
+        
+        mod_content = (
+            "Attribute VB_Name = \"modTest\"\n"
+            "Option Explicit\n"
+            "Public Sub MainEntryPoint()\n"
+            "    Call HelperUsed\n"
+            "End Sub\n"
+            "Private Sub HelperUsed()\n"
+            "    Dim x As Long\n"
+            "    x = 1\n"
+            "End Sub\n"
+            "Private Sub UnusedHelper()\n"
+            "    Dim y As Long\n"
+            "    y = 2\n"
+            "End Sub\n"
+        )
+        with open(modules_dir / "modTest.bas", "w", encoding="utf-8") as f:
+            f.write(mod_content)
+            
+        issues = lint_files(str(tmp_path))
+        rule_ids = {i.rule_id for i in issues}
+        assert "DC003" in rule_ids
+        
+        dead_procs = [i.procedure for i in issues if i.rule_id == "DC003"]
+        assert "UnusedHelper" in dead_procs
+        assert "HelperUsed" not in dead_procs
+        assert "MainEntryPoint" not in dead_procs
+
+    def test_consecutive_blank_lines(self):
+        lines = [
+            "Option Explicit\n",
+            "\n",
+            "\n",  # Line 3 (second consecutive blank line)
+            "Public Sub Test()\n",
+            "End Sub\n",
+        ]
+        issues = check_consecutive_blank_lines("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD015"
+        assert issues[0].line_num == 3
+
+    def test_double_spacing(self):
+        lines = [
+            "Public Sub Test()\n",
+            "    x = 1\n",
+            "\n",  # line 3
+            "    y = 2\n",
+            "\n",  # line 5
+            "    z = 3\n",
+            "\n",  # line 7
+            "    End Sub\n",
+        ]
+        issues = check_double_spacing("test.bas", lines)
+        assert len(issues) == 1
+        assert issues[0].rule_id == "SD016"
+        assert issues[0].line_num == 3

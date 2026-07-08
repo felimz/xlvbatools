@@ -22,14 +22,14 @@ import shutil
 import tempfile
 
 from xlvbatools.core.session import ExcelSession
-from xlvbatools.vba.manifest import Manifest, get_type_info
+from xlvbatools.vba.manifest import (
+    Manifest, get_type_info,
+    TYPE_STD_MODULE as _TYPE_STD_MODULE,
+    TYPE_CLASS_MODULE as _TYPE_CLASS_MODULE,
+    TYPE_DOCUMENT as _TYPE_DOCUMENT,
+)
 
 logger = logging.getLogger(__name__)
-
-# VBE component type codes
-_TYPE_STD_MODULE = 1
-_TYPE_CLASS_MODULE = 2
-_TYPE_DOCUMENT = 100
 
 # Default backup limit
 _DEFAULT_BACKUP_LIMIT = 5
@@ -212,8 +212,7 @@ def _inject_document_module(vb_project, name: str, filepath: str):
             break
 
     if comp is None:
-        logger.warning(f"Document module not found in workbook: {name}")
-        return
+        raise ValueError(f"Document module not found in workbook: {name}")
 
     # Read the new source
     with open(filepath, "r", encoding="utf-8") as f:
@@ -278,12 +277,14 @@ def _scan_source_dir(source_dir: str) -> Manifest:
                 continue
             name = os.path.splitext(fname)[0]
             filepath = os.path.join(dir_path, fname)
+            with open(filepath, encoding="utf-8") as fh:
+                line_count = sum(1 for _ in fh)
             components.append(ComponentInfo(
                 name=name,
                 type_code=type_code,
                 type_name=type_name,
                 file=os.path.join(dirname, fname),
-                line_count=sum(1 for _ in open(filepath, encoding="utf-8")),
+                line_count=line_count,
                 sha256=compute_file_hash(filepath),
             ))
 

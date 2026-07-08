@@ -70,7 +70,7 @@ def elegant_close_excel() -> bool:
 
     logger.info("Attempting elegant closure of existing Excel instances...")
     try:
-        while True:
+        for _attempt in range(20):  # Safety limit to prevent infinite loop
             try:
                 excel = win32com.client.GetActiveObject("Excel.Application")
             except Exception:

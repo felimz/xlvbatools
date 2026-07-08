@@ -259,12 +259,8 @@ def render_dot(graph: CallGraph) -> str:
 # ── Helpers ──
 
 def _read_lines(filepath: str) -> list[str]:
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return f.readlines()
-    except UnicodeDecodeError:
-        with open(filepath, "r", encoding="windows-1252") as f:
-            return f.readlines()
+    from xlvbatools.vba._io import read_vba_lines
+    return read_vba_lines(filepath)
 
 
 def _remove_strings(line: str) -> str:

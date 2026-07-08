@@ -7,6 +7,8 @@ in the current working directory.
 
 import os
 import sys
+import shutil
+import importlib.resources
 
 
 TEMPLATE_TOML = '''[xlvbatools]
@@ -32,9 +34,9 @@ def run_init(args):
     """Execute the `xlvba init` command."""
     config_path = os.path.join(os.getcwd(), "xlvbatools.toml")
 
-    if os.path.exists(config_path):
+    if os.path.exists(config_path) and not getattr(args, "force", False):
         print(f"xlvbatools.toml already exists at {config_path}")
-        print("Use --force to overwrite (not yet implemented)")
+        print("Use --force to overwrite")
         sys.exit(1)
 
     # Determine workbook path
@@ -77,8 +79,23 @@ def _install_agents_template():
         print("  .agents/ already exists, skipping template installation")
         return
 
-    # TODO: Copy template from xlvbatools package data
-    os.makedirs(os.path.join(agents_dir, "skills", "vba-toolchain"), exist_ok=True)
-    os.makedirs(os.path.join(agents_dir, "workflows"), exist_ok=True)
-    os.makedirs(os.path.join(agents_dir, "rules"), exist_ok=True)
-    print("  Created .agents/ skeleton (templates will be populated in Phase 8)")
+    try:
+        templates_path = importlib.resources.files("xlvbatools").joinpath("templates/agents")
+        
+        def copy_resource_dir(resource_path, dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)
+            for entry in resource_path.iterdir():
+                dest_path = os.path.join(dest_dir, entry.name)
+                if entry.name == "__pycache__":
+                    continue
+                if entry.is_dir():
+                    copy_resource_dir(entry, dest_path)
+                elif entry.is_file():
+                    with entry.open("rb") as sf:
+                        with open(dest_path, "wb") as df:
+                            shutil.copyfileobj(sf, df)
+
+        copy_resource_dir(templates_path, agents_dir)
+        print("  Created .agents/ template successfully from package data.")
+    except Exception as e:
+        print(f"  Error installing agents template: {e}")

@@ -33,9 +33,25 @@ htmlcov/
 .coverage
 
 # Workbook backups and snapshots (user-generated, not tracked)
+backups/
+snapshots/
 workbook/backups/
 workbook/snapshots/
 
 # Screenshots and dumps (generated artifacts)
 docs/screenshots/
 docs/dumps/
+screenshots/
+dump.json
+dump.md
+
+# Excel workbooks (ignored by default to prevent repository pollution)
+*.xlsm
+*.xlsx
+*.xls
+*.xlsb
+sample_workbooks/
+
+# Allow tracking tiny standard test fixtures explicitly if needed
+!tests/fixtures/*.xlsm
+!tests/fixtures/*.xlsx

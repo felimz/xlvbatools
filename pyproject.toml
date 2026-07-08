@@ -46,17 +46,17 @@ all = [
 ]
 
 [project.scripts]
-xlvba = "cli.main:main"
+xlvba = "xlvbatools.cli.main:main"
 
 [project.urls]
 Homepage = "https://github.com/felimz/xlvbatools"
 
 [tool.setuptools.packages.find]
-where = ["src", "."]
-include = ["xlvbatools*", "cli*"]
+where = ["src"]
+include = ["xlvbatools*"]
 
-[tool.setuptools.package-dir]
-xlvbatools = "src/xlvbatools"
+[tool.setuptools.package-data]
+xlvbatools = ["templates/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

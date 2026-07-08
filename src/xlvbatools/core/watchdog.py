@@ -95,18 +95,51 @@ def _get_window_class(hwnd: int) -> str:
 
 
 def _get_control_text(hwnd: int) -> str:
-    """Get text from a control via WM_GETTEXT (works for static labels etc.)."""
-    length = user32.SendMessageW(hwnd, WM_GETTEXTLENGTH, 0, 0)
-    if length == 0:
+    """Get text from a control via WM_GETTEXT (uses SendMessageTimeoutW to prevent hang)."""
+    import ctypes
+    result_len = ctypes.c_size_t(0)
+    res = user32.SendMessageTimeoutW(
+        hwnd,
+        WM_GETTEXTLENGTH,
+        0,
+        0,
+        0x0002,  # SMTO_ABORTIFHUNG
+        250,     # 250ms timeout
+        ctypes.byref(result_len),
+    )
+    if res == 0 or result_len.value == 0:
         return ""
+
+    length = result_len.value
     buf = ctypes.create_unicode_buffer(length + 1)
-    user32.SendMessageW(hwnd, WM_GETTEXT, length + 1, buf)
+    result_text = ctypes.c_size_t(0)
+    res = user32.SendMessageTimeoutW(
+        hwnd,
+        WM_GETTEXT,
+        length + 1,
+        ctypes.addressof(buf),
+        0x0002,  # SMTO_ABORTIFHUNG
+        250,     # 250ms timeout
+        ctypes.byref(result_text),
+    )
+    if res == 0:
+        return ""
     return buf.value
 
 
 def _click_button(hwnd: int):
-    """Click a button control by sending BM_CLICK."""
-    user32.SendMessageW(hwnd, BM_CLICK, 0, 0)
+    """Click a button control by sending BM_CLICK with timeout protection."""
+    import ctypes
+    result = ctypes.c_size_t(0)
+    user32.SendMessageTimeoutW(
+        hwnd,
+        BM_CLICK,
+        0,
+        0,
+        0x0002,  # SMTO_ABORTIFHUNG
+        250,     # 250ms timeout
+        ctypes.byref(result),
+    )
 
 
 def _is_window_visible(hwnd: int) -> bool:
@@ -117,6 +150,13 @@ def _is_window_visible(hwnd: int) -> bool:
 def _close_window(hwnd: int):
     """Send WM_CLOSE to a window."""
     user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+
+
+def _get_window_pid(hwnd: int) -> tuple:
+    """Get the thread ID and process ID for a window handle."""
+    pid = ctypes.wintypes.DWORD()
+    tid = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return tid, pid.value
 
 
 # ===================================================================
@@ -220,6 +260,7 @@ class DialogWatchdog:
         auto_dismiss: bool = True,
         dismiss_strategy: str = "ok",
         on_dialog: Optional[Callable] = None,
+        target_pid: Optional[int] = None,
     ):
         from xlvbatools._compat import require_windows
         require_windows("DialogWatchdog")
@@ -229,6 +270,7 @@ class DialogWatchdog:
         self.auto_dismiss = auto_dismiss
         self.dismiss_strategy = dismiss_strategy
         self.on_dialog = on_dialog
+        self.target_pid = target_pid
 
         self._events: List[DialogEvent] = []
         self._lock = threading.Lock()
@@ -328,6 +370,11 @@ class DialogWatchdog:
                     return True
                 cls = _get_window_class(hwnd)
                 if cls == DIALOG_CLASS and hwnd not in self._seen_hwnds:
+                    # Filter by process if target_pid is set
+                    if self.target_pid is not None:
+                        _, pid = _get_window_pid(hwnd)
+                        if pid != self.target_pid:
+                            return True
                     title = _get_window_text(hwnd)
                     # Filter for Excel/VB related dialogs
                     if self._is_excel_dialog(title):

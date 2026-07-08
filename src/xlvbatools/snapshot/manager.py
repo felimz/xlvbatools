@@ -26,7 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-TS_FORMAT = "%Y%m%dT%H%M%S"
+TS_FORMAT = "%Y%m%dT%H%M%S%f"
 
 
 class SnapshotManager:
@@ -57,6 +57,7 @@ class SnapshotManager:
         self.snapshots_dir = os.path.abspath(snapshots_dir)
         self.rolling_limit = rolling_limit
         self._log_path = os.path.join(self.snapshots_dir, "snapshot_log.json")
+        self._lock_depth = 0
 
     def create(
         self,
@@ -229,18 +230,64 @@ class SnapshotManager:
 
         return None
 
+    def _lock(self):
+        """Reentrant file lock context manager for snapshot operations."""
+        import contextlib
+        import time
+
+        @contextlib.contextmanager
+        def _inner_lock():
+            lock_path = self._log_path + ".lock"
+            if getattr(self, "_lock_depth", 0) > 0:
+                self._lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth -= 1
+                return
+
+            os.makedirs(self.snapshots_dir, exist_ok=True)
+            acquired = False
+            for _ in range(50):  # Retry up to 5 seconds
+                try:
+                    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    os.close(fd)
+                    acquired = True
+                    break
+                except FileExistsError:
+                    time.sleep(0.1)
+
+            if not acquired:
+                logger.warning("Could not acquire snapshot log lock; proceeding without lock.")
+
+            self._lock_depth = 1
+            try:
+                yield
+            finally:
+                self._lock_depth = 0
+                if acquired:
+                    try:
+                        os.remove(lock_path)
+                    except Exception:
+                        pass
+        return _inner_lock()
+
     def _load_log(self) -> list:
-        if not os.path.exists(self._log_path):
-            return []
-        with open(self._log_path, "r", encoding="utf-8") as f:
-            entries = json.load(f)
-        return sorted(entries, key=lambda e: e.get("snapshot_id", ""))
+        import contextlib
+        # Inline ContextDecorator helper to use generator with custom lock
+        with self._lock():
+            if not os.path.exists(self._log_path):
+                return []
+            with open(self._log_path, "r", encoding="utf-8") as f:
+                entries = json.load(f)
+            return sorted(entries, key=lambda e: e.get("snapshot_id", ""))
 
     def _save_log(self, entries: list):
-        os.makedirs(self.snapshots_dir, exist_ok=True)
-        entries.sort(key=lambda e: e.get("snapshot_id", ""))
-        with open(self._log_path, "w", encoding="utf-8") as f:
-            json.dump(entries, f, indent=2)
+        with self._lock():
+            os.makedirs(self.snapshots_dir, exist_ok=True)
+            entries.sort(key=lambda e: e.get("snapshot_id", ""))
+            with open(self._log_path, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2)
 
     def _delete_snapshot_files(self, entry: dict):
         wb = os.path.join(self.snapshots_dir, entry["workbook_file"])
@@ -292,10 +339,9 @@ class SnapshotManager:
             if fname not in files_b:
                 output.append(f"  - REMOVED: {fname}")
                 continue
-            with open(os.path.join(dir_a, fname), "r", encoding="utf-8") as f:
-                a_lines = f.readlines()
-            with open(os.path.join(dir_b, fname), "r", encoding="utf-8") as f:
-                b_lines = f.readlines()
+            from xlvbatools.vba._io import read_vba_lines
+            a_lines = read_vba_lines(os.path.join(dir_a, fname))
+            b_lines = read_vba_lines(os.path.join(dir_b, fname))
             if a_lines != b_lines:
                 diff = difflib.unified_diff(a_lines, b_lines,
                                             fromfile=f"snapshot/{fname}",
