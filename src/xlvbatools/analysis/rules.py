@@ -1247,7 +1247,7 @@ def check_reserved_keywords(rel_path: str, lines: List[str]) -> List[VBAIssue]:
                     arg = arg.strip()
                     if not arg:
                         continue
-                    arg_clean = re.sub(r"^(ByVal|ByRef|Optional|ParamArray)\s+", "", arg, flags=re.IGNORECASE).strip()
+                    arg_clean = re.sub(r"^\s*(?:ByVal\s+|ByRef\s+|Optional\s+|ParamArray\s+)+", "", arg, flags=re.IGNORECASE).strip()
                     # Name is the first word
                     parts = arg_clean.split()
                     if parts:

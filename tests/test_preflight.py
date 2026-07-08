@@ -822,6 +822,14 @@ class TestReservedKeywords:
         assert issues[0].rule_id == "RK001"
         assert "string" in issues[0].message.lower()
 
+    def test_optional_byval_parameter_passes(self):
+        lines = [
+            "Public Sub Test(Optional ByVal myVal As Long = 0)\n",
+            "End Sub\n",
+        ]
+        issues = check_reserved_keywords("test.bas", lines)
+        assert len(issues) == 0
+
 
 @pytest.mark.unit
 class TestInvalidOutsideProcedure:
