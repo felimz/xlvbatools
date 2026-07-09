@@ -33,7 +33,7 @@ The linter scans VBA code offline (without Excel or COM dependencies) to enforce
 | **SF001** | WARNING | Silent error suppression | Using `On Error Resume Next` without checking `Err.Number` hides runtime exceptions. Always check `Err.Number` and reset with `On Error GoTo 0`. |
 | **DC001** | WARNING | Unused local variable | Declared variables that are never read or written clutter the code and represent dead allocations. |
 | **DC002** | WARNING | Empty procedure declaration | Sub or Function bodies containing only comments or whitespace should be removed or implemented. |
-| **DC003** | WARNING | Dead procedure (0 incoming calls) | Procedures that are never called from any other part of the project should be deleted or implemented. *(Requires call graph analysis).* |
+| **DC003** | WARNING | Dead procedure (0 incoming calls) | Procedures that are never called from any other part of the project should be deleted or implemented. Call graph parsing is comment-aware, ignoring inline single-quote comments and `Rem` statements to prevent false-positive dependency edges. *(Requires call graph analysis).* |
 | **SD015** | STYLE | Multiple consecutive blank lines | Excess blank lines increase vertical scrolling and clutter code readability. |
 | **SD016** | STYLE | Double-spaced code blocks | Alternating blank lines after every line of code degrades vertical readability. |
 | **RK001** | WARNING | Reserved keyword variable name | Declaring variables or parameters with the same name as a VBA reserved keyword (e.g. `Optional`, `Date`, `Error`, `Next`) leads to compilation errors or unexpected runtime behavior. |

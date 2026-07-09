@@ -25,6 +25,13 @@ FILE_FORMAT = "%(asctime)s %(levelname)-8s [%(name)s] %(message)s"
 FILE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
+class PathNormalizingFormatter(logging.Formatter):
+    """Custom log formatter that normalizes all Windows backslashes in logs to forward slashes."""
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        return formatted.replace("\\", "/")
+
+
 def setup_logging(
     verbose: bool = False,
     tool_name: str = "xlvbatools",
@@ -54,7 +61,7 @@ def setup_logging(
         log_dir = os.path.join(os.getcwd(), "logs")
     os.makedirs(log_dir, exist_ok=True)
 
-    log_filepath = os.path.join(log_dir, f"{log_name}.log")
+    log_filepath = os.path.abspath(os.path.join(log_dir, f"{log_name}.log")).replace("\\", "/")
 
     # Get root logger
     root_logger = logging.getLogger()
@@ -64,7 +71,7 @@ def setup_logging(
     # Console handler (stderr)
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
-    console_handler.setFormatter(logging.Formatter(CONSOLE_FORMAT))
+    console_handler.setFormatter(PathNormalizingFormatter(CONSOLE_FORMAT))
     root_logger.addHandler(console_handler)
 
     # Rotating File handler (always DEBUG, max 1MB, 3 backups)
@@ -73,7 +80,7 @@ def setup_logging(
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
-        logging.Formatter(FILE_FORMAT, datefmt=FILE_DATE_FORMAT)
+        PathNormalizingFormatter(FILE_FORMAT, datefmt=FILE_DATE_FORMAT)
     )
     root_logger.addHandler(file_handler)
 
@@ -82,7 +89,8 @@ def setup_logging(
     logger.debug(f"Session started: {tool_name}")
     logger.debug(f"Log file: {log_filepath}")
     logger.debug(f"Python: {sys.version}")
-    logger.debug(f"CWD: {os.getcwd()}")
+    cwd_path = os.getcwd().replace("\\", "/")
+    logger.debug(f"CWD: {cwd_path}")
 
     return log_filepath
 

@@ -30,10 +30,16 @@ with ExcelSession(
 * **`workbook_path` (str):** Relative or absolute path to the `.xlsm` workbook.
 * **`visible` (bool, default `False`):** Shows Excel visibly if `True`.
 * **`save_on_exit` (bool, default `True`):** Automatically saves the workbook upon exiting the context.
-* **`kill_on_enter` (bool, default `True`):** Kills stale Excel instances before opening.
+* **`kill_on_enter` (bool, default `True`):** Cleans up stale Excel instances before opening. ExcelSession uses ROT and window handle (Hwnd) tracking to close only the target workbook and its instance, leaving other unrelated Excel processes and workbooks open.
 * **`init_delay` (float, default `1.5`):** delay in seconds to wait for VBA project initialization.
 * **`enable_watchdog` (bool, default `True`):** Starts dialog dismissal daemon if `True`.
 * **`watchdog_poll_interval` (float, default `0.25`):** Watchdog polling interval in seconds.
+
+#### Properties
+* **`excel`:** Reference to the spawned raw Excel COM Application object.
+* **`wb`:** Reference to the opened Workbook object.
+* **`excel_pid` (int | None):** The process ID of the spawned Excel process.
+* **`vb_project`:** Getter for the workbook's `VBProject` object. Validates "Trust access to the VBA project object model" automatically. If disabled in the Trust Center, raises a clear, diagnostic `RuntimeError` instead of raising a raw COM exception.
 
 #### Methods
 * **`run_macro(macro_name: str, timeout: float = 120.0) -> dict`:**
@@ -122,4 +128,19 @@ mgr.restore("latest")
   Generates a git-style line-by-line diff of the VBA changes between the snapshot and current state.
 * **`prune(keep: int = 10) -> int`:**
   Manually prunes old rolling snapshots, keeping the specified number of most recent entries. Returns the number of snapshots pruned.
+
+---
+
+## Logging Configuration
+
+### `xlvbatools.logging.setup_logging(verbose: bool = False, tool_name: str = "xlvbatools", log_dir: str | None = None, log_name: str = "xlvbatools") -> str`
+Configures centralized stream and rotating file logging for all library operations.
+* **`verbose` (bool):** Sets console handler logging level to `DEBUG` if `True`, otherwise `INFO`. Rotating file handler always captures full `DEBUG` logs.
+* **`tool_name` (str):** The logger label for session metadata entries.
+* **`log_dir` (str, optional):** The output directory. Defaults to `logs/` in the current working directory.
+* **`log_name` (str):** Base filename (e.g. `xlvbatools` becomes `xlvbatools.log`).
+* **Returns:** The absolute string path to the created log file.
+
+#### Path Normalization
+All log outputs are automatically formatted via a custom `PathNormalizingFormatter` to convert Windows-style backslashes (`\`) into forward slashes (`/`), guaranteeing cross-platform consistency for automated log parsers.
 

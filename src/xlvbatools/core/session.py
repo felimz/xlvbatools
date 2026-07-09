@@ -39,7 +39,7 @@ from xlvbatools._compat import require_windows
 from xlvbatools.core.process import (
     kill_excel,
     is_excel_running,
-    elegant_close_excel,
+    close_excel_gracefully,
     is_process_running,
     kill_process_by_pid,
 )
@@ -116,11 +116,11 @@ class ExcelSession:
 
         if self.kill_on_enter:
             if is_excel_running():
-                # Attempt elegant closure of existing instances first
-                success = elegant_close_excel()
-                # If elegant closure failed or Excel is still running, fall back to force-kill
-                if not success or is_excel_running():
-                    logger.info("Elegant closure failed or Excel is still running. Force-killing EXCEL.EXE...")
+                # Attempt graceful closure of the target workbook first
+                success = close_excel_gracefully(target_path=self.workbook_path)
+                # If graceful closure failed, fall back to force-kill
+                if not success:
+                    logger.info("Graceful closure of target workbook failed. Force-killing EXCEL.EXE...")
                     kill_excel()
 
         if not os.path.exists(self.workbook_path):
@@ -138,7 +138,6 @@ class ExcelSession:
                 dismiss_strategy="ok",
             )
             self.watchdog.start()
-            logger.info("Dialog watchdog started")
 
         logger.info(f"Opening Excel session: {self.workbook_path}")
         # Use DispatchEx to ensure a new, isolated Excel instance is spawned
@@ -184,7 +183,8 @@ class ExcelSession:
                     self.wb.Save()
                     logger.info("Workbook saved")
                 self.wb.Close(False)
-                logger.info("Workbook closed")
+                pid_suffix = f" (PID: {self.excel_pid})" if self.excel_pid else ""
+                logger.info(f"Workbook closed{pid_suffix}")
         except Exception as e:
             logger.warning(f"Error closing workbook: {e}")
         finally:
@@ -194,18 +194,30 @@ class ExcelSession:
         try:
             if self.excel is not None:
                 self.excel.Quit()
-                logger.info("Excel quit")
+                pid_suffix = f" (PID: {self.excel_pid})" if self.excel_pid else ""
+                logger.info(f"Excel quit{pid_suffix}")
         except Exception as e:
             logger.warning(f"Error quitting Excel: {e}")
         finally:
             self.excel = None
             gc.collect()
 
-        # Final safety: target only our spawned Excel process for final cleanup if still running
+        # Final safety: wait a moment for Excel to exit. We only force-kill if there was an exception
+        # (which could indicate a hang) or if the process remains active after a grace period.
+        # Note: If the caller holds references to COM objects (e.g. from local variables),
+        # Excel cannot exit until those references are cleared by GC. Force-killing too early
+        # will trigger RPC server errors (0x800706ba) during GC.
         if self.excel_pid is not None:
-            time.sleep(0.5)
-            if is_process_running(self.excel_pid):
-                logger.info(f"Excel did not exit cleanly. Force-killing spawned process PID {self.excel_pid}...")
+            grace_period = 2.0 if exc_type is None else 0.5
+            exited = False
+            for _ in range(int(grace_period / 0.1)):
+                if not is_process_running(self.excel_pid):
+                    exited = True
+                    break
+                time.sleep(0.1)
+
+            if not exited and (exc_type is not None or not self.kill_on_enter):
+                logger.info(f"Excel process PID {self.excel_pid} did not exit cleanly. Force-killing spawned process...")
                 kill_process_by_pid(self.excel_pid)
 
         return False  # Don't suppress exceptions
@@ -235,6 +247,25 @@ class ExcelSession:
         if self.watchdog is None:
             return []
         return self.watchdog.events
+
+    @property
+    def vb_project(self):
+        """
+        Get the workbook's VBProject object with programmatic access trust checks.
+        """
+        if self.wb is None:
+            raise ValueError("Workbook is not open")
+        try:
+            return self.wb.VBProject
+        except Exception as e:
+            err_str = str(e).lower()
+            if "programmatic access" in err_str or "not trusted" in err_str or "0x800a03ec" in err_str:
+                raise RuntimeError(
+                    "Programmatic access to Visual Basic Project is not trusted in Excel.\n"
+                    "To enable this, go to: Excel Options -> Trust Center -> Trust Center Settings "
+                    "-> Macro Settings -> check 'Trust access to the VBA project object model'."
+                ) from e
+            raise
 
     # -- Macro Execution with Dialog Protection --
 

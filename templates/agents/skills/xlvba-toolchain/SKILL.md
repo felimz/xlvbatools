@@ -30,7 +30,7 @@ This skill teaches agents how to use `xlvbatools` for headless VBA development.
 | `xlvba extract` | Extract VBA from workbook to vba_source/ |
 | `xlvba inject` | Inject vba_source/ files into workbook |
 | `xlvba diff` | Compare workbook VBA vs vba_source/ |
-| `xlvba lint` | Run static analysis (7 built-in rules) |
+| `xlvba lint` | Run static analysis (30+ built-in rules) |
 | `xlvba run <macro>` | Execute macro with dialog protection |
 | `xlvba snapshot` | Checkpoint and rollback (create/list/restore/prune) |
 | `xlvba dump` | Dump sheet data and screenshots |
@@ -70,3 +70,7 @@ from xlvbatools.snapshot.manager import SnapshotManager
 4. **All Dim statements at top** of Sub/Function blocks
 5. **Use explicit types** -- `Dim x As Double`, never `Dim x`
 6. **Guard interactive code** with `If Not Application.UserControl Then`
+7. **Use `session.vb_project`** instead of `session.wb.VBProject` directly to benefit from Trust Center access validation.
+8. **Ignore lock files** -- always filter out Excel's temporary owner lock files starting with `~$` when scanning workbooks.
+9. **Targeted session closure** -- clean up Excel sessions using targeted graceful closure (`ExcelSession` with `kill_on_enter=True` usesROT/Hwnd tracking) to protect unrelated user workbooks.
+10. **Path Log Normalization** -- format all file paths in logs with forward slashes (`/`) for cross-platform consistency.

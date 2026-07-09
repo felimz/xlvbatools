@@ -38,7 +38,7 @@ def diff_all(workbook_path: str, source_dir: str) -> list[dict]:
     results = []
 
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
-        vb_project = session.wb.VBProject
+        vb_project = session.vb_project
 
         # Build lookup of source files
         source_files = _scan_source_files(src_dir)
@@ -92,7 +92,7 @@ def diff_component(
     src_dir = os.path.abspath(source_dir)
 
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
-        vb_project = session.wb.VBProject
+        vb_project = session.vb_project
 
         # Find in workbook
         comp = None

@@ -37,7 +37,10 @@ Instead of simple raw 2D lists, cells are returned using a detailed address-mapp
 The screenshot generator exports PNG images of target worksheets.
 * **Headers:** Inserts column letters (A, B, C...) and row numbers (1, 2, 3...) on the top and left margins using Pillow.
 * **Gridlines:** Forces Excel gridlines to be visible and overlays grid dividers on the screenshot.
-* **Retry Loop:** Automatically retries copying the range picture 5 times (with 0.5s backoff) to eliminate COM clipboard flakes.
+* **Retry Loop:** Automatically retries range copying and chart pasting up to 5 times (with backoff) to eliminate transient COM clipboard locks.
+
+### 4. Session Safety
+* **Graceful Targeted Closure**: The dumper utilizes `ExcelSession` to open the workbook. This uses ROT and window handle (Hwnd) tracking to close only the target workbook and its instance, ensuring other open Excel processes and user workbooks are left untouched.
 
 ---
 
@@ -60,3 +63,6 @@ modify_cell("workbook.xlsm", name="TaxRate", refers_to="=Sheet1!$C$3")
 # Delete a named range
 modify_cell("workbook.xlsm", name="TaxRate", delete_name=True)
 ```
+
+### Session Safety
+* **Graceful Targeted Closure**: The cell modifier runs within `ExcelSession` context, which uses ROT and Hwnd tracking to close only the target workbook being updated. Unrelated open user workbooks and their Excel processes remain running and completely unaffected.

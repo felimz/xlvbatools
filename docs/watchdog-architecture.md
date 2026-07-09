@@ -54,3 +54,11 @@ Buttons are selected based on the configured dismiss strategy:
 * **Cancel Strategy:** Clicks "cancel", "no", "abort", or similar negative buttons.
 
 If a button is selected, the watchdog sends a `BM_CLICK` message to the button handle (protected by `SendMessageTimeoutW`). If no matching button is found, it sends a fallback `WM_CLOSE` message to the dialog window itself.
+
+---
+
+## Watchdog Lifecycle & Timeouts
+The `DialogWatchdog` is managed automatically by `ExcelSession` with the following safety defaults:
+1. **Thread Startup**: Initiated asynchronously on `ExcelSession.__enter__`. The timeout is set to **600 seconds (10 minutes)** in the session context manager to accommodate long-running macro executions.
+2. **Execution Monitoring**: The watchdog logs its initial startup at `DEBUG` level and runs silently in the background unless a dialog is intercepted.
+3. **Shutdown Cleanliness**: Upon exiting the `ExcelSession` context, the watchdog thread is signaled via an internal event, joined with a 2.0-second timeout, and safely shut down, returning all captured dialog events to the session log.

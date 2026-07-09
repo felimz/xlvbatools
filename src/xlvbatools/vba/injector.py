@@ -86,7 +86,7 @@ def inject_all(
     results = []
 
     with ExcelSession(wb_path, visible=False, save_on_exit=True) as session:
-        vb_project = session.wb.VBProject
+        vb_project = session.vb_project
 
         for comp_info in manifest.components:
             filepath = os.path.join(src_dir, comp_info.file)
@@ -144,7 +144,7 @@ def inject_component(
 
     try:
         with ExcelSession(wb_path, visible=False, save_on_exit=True) as session:
-            _inject_single(session.wb.VBProject, component_name, filepath, type_code)
+            _inject_single(session.vb_project, component_name, filepath, type_code)
             logger.info(f"Injected: {component_name}")
             return True
     except Exception as e:
@@ -218,18 +218,18 @@ def _inject_document_module(vb_project, name: str, filepath: str):
     with open(filepath, "r", encoding="utf-8") as f:
         new_code = f.read()
 
+    # Normalize line endings to Windows CRLF (\r\n) for VBE Compatibility
+    normalized_code = new_code.replace("\r\n", "\n").replace("\n", "\r\n")
+
     # Clear existing code
     cm = comp.CodeModule
     if cm.CountOfLines > 0:
         cm.DeleteLines(1, cm.CountOfLines)
 
-    # Insert new code line by line
-    lines = new_code.split("\n")
-    for line in lines:
-        line = line.rstrip("\r")
-        cm.InsertLines(cm.CountOfLines + 1, line)
+    # Insert new code in a single bulk operation
+    cm.AddFromString(normalized_code)
 
-    logger.debug(f"Replaced document module: {name} ({len(lines)} lines)")
+    logger.debug(f"Replaced document module: {name} ({len(normalized_code.splitlines())} lines)")
 
 
 def _find_component_file(source_dir: str, name: str) -> tuple:

@@ -88,6 +88,7 @@ When `xlvba run` reports a dialog event, agents should:
        Exit Sub
    End If
    ```
+4. **untrusted_programmatic_access**: If a `RuntimeError` is raised indicating programmatic access to VBE is disabled, the agent should instruct the user to check "Trust access to the VBA project object model" in Excel's Trust Center Settings.
 
 ### Safe Macro Execution (Python API)
 
@@ -156,6 +157,7 @@ background thread that automatically captures and dismisses pop-up dialogs:
 1. **VBA Error Handlers** (`On Error GoTo ErrHandler`) -- errors become COM exceptions
 2. **VBA UserControl Guards** -- interactive code is skipped in headless mode
 3. **Python DialogWatchdog** -- catches compile errors and anything that bypasses layers 1-2
+4. **Targeted Session Sandboxing** -- uses ROT and Hwnd tracking to close only the target workbook and its instance, ensuring unrelated user workbooks remain untouched.
 
 ---
 
@@ -175,7 +177,7 @@ background thread that automatically captures and dismisses pop-up dialogs:
 | `xlvba extract` | Extract VBA from workbook |
 | `xlvba inject` | Inject VBA into workbook |
 | `xlvba diff` | Compare workbook vs source |
-| `xlvba lint` | Static analysis (7 rules) |
+| `xlvba lint` | Static analysis (30+ rules) |
 | `xlvba run <macro>` | Execute macro with dialog protection |
 | `xlvba snapshot` | Checkpoint/rollback system |
 | `xlvba dump` | Export sheet data and screenshots |

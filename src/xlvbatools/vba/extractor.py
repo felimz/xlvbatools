@@ -42,7 +42,7 @@ def list_components(workbook_path: str) -> list[dict]:
     components = []
 
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
-        for comp in session.wb.VBProject.VBComponents:
+        for comp in session.vb_project.VBComponents:
             type_code = comp.Type
             type_info = get_type_info(type_code)
             line_count = comp.CodeModule.CountOfLines if comp.CodeModule else 0
@@ -72,7 +72,7 @@ def extract_component(
     out_dir = os.path.abspath(output_dir)
 
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
-        vb_project = session.wb.VBProject
+        vb_project = session.vb_project
         comp = None
         for c in vb_project.VBComponents:
             if c.Name.lower() == component_name.lower():
@@ -119,7 +119,7 @@ def extract_all(
     components = []
 
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
-        vb_project = session.wb.VBProject
+        vb_project = session.vb_project
 
         for comp in vb_project.VBComponents:
             info = _extract_single(comp, out_dir)

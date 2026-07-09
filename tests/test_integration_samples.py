@@ -27,7 +27,10 @@ def get_sample_workbooks():
     ]
     files = []
     for pat in patterns:
-        files.extend(glob.glob(pat))
+        for f in glob.glob(pat):
+            # Ignore Excel temporary lock/owner files
+            if not os.path.basename(f).startswith("~$"):
+                files.append(f)
     return files
 
 

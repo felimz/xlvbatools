@@ -238,7 +238,7 @@ def lint_workbook(
     with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
         # Run rules against each component's code
         component_codes = {}
-        for comp in session.wb.VBProject.VBComponents:
+        for comp in session.vb_project.VBComponents:
             name = comp.Name
             type_info = get_type_info(comp.Type)
 

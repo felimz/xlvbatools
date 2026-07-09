@@ -174,12 +174,16 @@ def build_call_graph(
                     continue
 
                 # Skip comments
-                if stripped.startswith("'"):
+                if stripped.startswith("'") or stripped.lower().startswith("rem "):
                     continue
 
                 # Find potential call sites
                 # Remove string literals to avoid false positives
                 clean = _remove_strings(stripped)
+
+                # Remove inline comments starting with ' to prevent matching calls in comments
+                if "'" in clean:
+                    clean = clean.split("'", 1)[0]
 
                 for match in _CALL_RE.finditer(clean):
                     callee = match.group(1)

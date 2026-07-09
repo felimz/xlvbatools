@@ -82,3 +82,20 @@ class TestCallGraph:
         graph = build_call_graph(str(tmp_path))
         assert len(graph.procedures) == 0
         assert len(graph.edges) == 0
+
+    def test_comments_ignored(self, temp_vba_source):
+        from xlvbatools.vba.dependency import build_call_graph
+        mod = temp_vba_source / "modules" / "modTest.bas"
+        mod.write_text(
+            "Public Sub A()\n"
+            "    ' Call B\n"
+            "    Dim x As Long ' B\n"
+            "End Sub\n"
+            "Public Sub B()\n"
+            "End Sub\n",
+            encoding="utf-8",
+        )
+        graph = build_call_graph(str(temp_vba_source))
+        proc_a = graph.procedures["modTest.A"]
+        assert len(proc_a.calls) == 0
+        assert len(graph.edges) == 0

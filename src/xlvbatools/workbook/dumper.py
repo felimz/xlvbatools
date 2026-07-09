@@ -296,7 +296,19 @@ def export_screenshots(
                 except Exception:
                     pass
 
-                chart.Paste()
+                # Paste with retry loop to handle transient clipboard lock issues
+                for attempt in range(max_retries):
+                    try:
+                        chart.Paste()
+                        break
+                    except Exception as e:
+                        if attempt == max_retries - 1:
+                            logger.error(f"Chart paste failed after {max_retries} attempts: {e}")
+                            raise
+                        logger.warning(
+                            f"Chart paste attempt {attempt + 1} failed, retrying in 0.5s... Error: {e}"
+                        )
+                        time.sleep(0.5)
 
                 # Size the pasted shape to match the chart area
                 try:
