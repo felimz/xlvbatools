@@ -3,6 +3,7 @@ Shared test fixtures and markers for xlvbatools test suite.
 """
 
 import os
+import sys
 import pytest
 
 # ── Marker registration ──
@@ -26,12 +27,32 @@ def fixtures_dir():
 
 
 @pytest.fixture
-def minimal_workbook():
-    """Path to the minimal test workbook, or skip if not found."""
-    path = os.path.join(FIXTURES_DIR, "minimal.xlsm")
-    if not os.path.exists(path):
-        pytest.skip("minimal.xlsm test fixture not found")
-    return path
+def minimal_workbook(tmp_path):
+    """Path to a dynamically created minimal macro-enabled workbook."""
+    if sys.platform != "win32":
+        pytest.skip("COM tests require Windows")
+
+    import win32com.client
+    excel = None
+    try:
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        wb = excel.Workbooks.Add()
+        
+        path = os.path.join(tmp_path, "minimal.xlsm")
+        # FileFormat=52 is xlOpenXMLWorkbookMacroEnabled
+        wb.SaveAs(path, FileFormat=52)
+        wb.Close(False)
+        return path
+    except Exception as e:
+        pytest.skip(f"Could not dynamically create minimal.xlsm: {e}")
+    finally:
+        if excel:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
 
 
 @pytest.fixture
