@@ -22,6 +22,9 @@
 
 ```bash
 pip install xlvbatools
+
+# Or install with all features (includes Pillow for screenshots & oletools for advanced rules)
+pip install "xlvbatools[all]"
 ```
 
 ### As a Python Library
