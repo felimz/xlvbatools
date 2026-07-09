@@ -34,14 +34,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-lint-offline = ["oletools"]
+lint-offline = [
+    "oletools; sys_platform != 'win32'",
+]
 dev = [
     "pytest",
     "pytest-cov",
-    "oletools",
+    "oletools; sys_platform != 'win32'",
 ]
 all = [
-    "oletools",
+    "oletools; sys_platform != 'win32'",
 ]
 
 [project.scripts]
