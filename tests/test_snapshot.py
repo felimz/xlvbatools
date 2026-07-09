@@ -125,6 +125,47 @@ class TestSnapshotManager:
         assert mgr.info("nonexistent") is None
         assert mgr.restore("nonexistent") is False
 
+    def test_physical_directories_and_zip(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        # Create rolling snapshot
+        sid_r = mgr.create(description="Rolling Snapshot Example", milestone=False)
+        # Create milestone snapshot
+        sid_m = mgr.create(description="Milestone Snapshot Example", milestone=True)
+
+        # Check physical existence of files in separate directory structures
+        rolling_dir = tmp_path / "snapshots" / "rolling"
+        milestones_dir = tmp_path / "snapshots" / "milestones"
+
+        assert rolling_dir.is_dir()
+        assert milestones_dir.is_dir()
+
+        # Filename should include the slug suffix tag
+        assert any("rolling-snapshot-example" in f.name for f in rolling_dir.iterdir() if f.name.endswith(".xlsm"))
+        assert any("milestone-snapshot-example" in f.name for f in milestones_dir.iterdir() if f.name.endswith(".xlsm"))
+
+        # VBA source should be archived in a ZIP file and the raw folder removed
+        assert any("rolling-snapshot-example" in f.name and f.name.endswith(".zip") for f in rolling_dir.iterdir())
+        assert not any("rolling-snapshot-example" in f.name and f.is_dir() for f in rolling_dir.iterdir())
+
+        # Test restore of zipped archive
+        vba_file = tmp_path / "vba_source" / "modules" / "modTest.bas"
+        vba_file.write_text("Public Sub Test()\n    ' Changed current state\nEnd Sub\n", encoding="utf-8")
+
+        # Restore milestone (which was created when vba_file had original content)
+        assert mgr.restore(sid_m, safety_snapshot=False)
+        assert "Changed current state" not in vba_file.read_text(encoding="utf-8")
+
+    def test_git_metadata(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        sid = mgr.create(description="test git info")
+        info = mgr.info(sid)
+        assert "git" in info
+        if info["git"] is not None:
+            assert "branch" in info["git"]
+            assert "commit" in info["git"]
+            assert "dirty" in info["git"]
+
+
 
 @pytest.mark.unit
 class TestManifest:

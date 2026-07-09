@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,65 @@ class SnapshotManager:
         self._log_path = os.path.join(self.snapshots_dir, "snapshot_log.json")
         self._lock_depth = 0
 
+    def _slugify(self, text: str) -> str:
+        """Convert a description into a filesystem-safe slug."""
+        if not text:
+            return ""
+        import re
+        slug = text.lower().strip()
+        slug = re.sub(r'[^a-z0-9\-_ ]', '', slug)
+        slug = re.sub(r'[\s\-]+', '-', slug)
+        return slug[:40].strip('-')
+
+    def _get_git_info(self) -> Optional[dict]:
+        """Query branch name, commit hash, and dirty status of the workspace."""
+        try:
+            # Check if we are inside a git repository
+            res = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=os.path.dirname(self.workbook_path),
+            )
+            if res.returncode != 0 or res.stdout.strip() != "true":
+                return None
+
+            # Get branch name
+            branch_res = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=os.path.dirname(self.workbook_path),
+            )
+            branch = branch_res.stdout.strip() if branch_res.returncode == 0 else "unknown"
+
+            # Get commit hash
+            commit_res = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=os.path.dirname(self.workbook_path),
+            )
+            commit = commit_res.stdout.strip() if commit_res.returncode == 0 else "unknown"
+
+            # Get dirty status (are there uncommitted changes?)
+            status_res = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                cwd=os.path.dirname(self.workbook_path),
+            )
+            is_dirty = bool(status_res.stdout.strip()) if status_res.returncode == 0 else False
+
+            return {
+                "branch": branch,
+                "commit": commit,
+                "dirty": is_dirty,
+            }
+        except Exception:
+            return None
+
     def create(
         self,
         description: str = "",
@@ -70,25 +130,37 @@ class SnapshotManager:
         Returns the snapshot ID (timestamp string).
         """
         snapshot_id = datetime.datetime.now().strftime(TS_FORMAT)
-        while os.path.exists(os.path.join(self.snapshots_dir, f"{snapshot_id}.xlsm")):
+        log = self._load_log()
+        snapshot_ids = {e["snapshot_id"] for e in log}
+        while snapshot_id in snapshot_ids:
             import time
             time.sleep(0.2)
             snapshot_id = datetime.datetime.now().strftime(TS_FORMAT)
-        os.makedirs(self.snapshots_dir, exist_ok=True)
+
+        subfolder = "milestones" if milestone else "rolling"
+        dest_dir = os.path.join(self.snapshots_dir, subfolder)
+        os.makedirs(dest_dir, exist_ok=True)
+
+        slug = self._slugify(description)
+        suffix = f"_{slug}" if slug else ""
 
         # Copy workbook binary
-        wb_filename = f"{snapshot_id}.xlsm"
+        wb_filename = f"{subfolder}/{snapshot_id}{suffix}.xlsm"
         wb_snapshot = os.path.join(self.snapshots_dir, wb_filename)
         wb_size = 0
         if os.path.exists(self.workbook_path):
             shutil.copy2(self.workbook_path, wb_snapshot)
             wb_size = os.path.getsize(self.workbook_path)
 
-        # Copy VBA source
-        vba_dir_name = f"{snapshot_id}_vba"
+        # Copy and ZIP VBA source
+        vba_dir_name = f"{subfolder}/{snapshot_id}{suffix}_vba"
         vba_snapshot = os.path.join(self.snapshots_dir, vba_dir_name)
+        vba_source_dir_val = None
         if os.path.isdir(self.vba_source_dir):
             shutil.copytree(self.vba_source_dir, vba_snapshot, dirs_exist_ok=True)
+            shutil.make_archive(vba_snapshot, 'zip', vba_snapshot)
+            shutil.rmtree(vba_snapshot)
+            vba_source_dir_val = vba_dir_name
 
         # Build entry
         entry = {
@@ -98,12 +170,11 @@ class SnapshotManager:
             "workbook_file": wb_filename,
             "workbook_hash": self._hash_file(self.workbook_path),
             "workbook_size_bytes": wb_size,
-            "vba_source_dir": vba_dir_name if os.path.isdir(vba_snapshot) else None,
+            "vba_source_dir": vba_source_dir_val,
             "vba_hash": self._hash_vba_source(),
             "milestone": milestone,
+            "git": self._get_git_info(),
         }
-
-        log = self._load_log()
 
         # Auto-prune rolling snapshots
         if not milestone:
@@ -160,20 +231,25 @@ class SnapshotManager:
         vba_dir = entry.get("vba_source_dir")
         if vba_dir:
             vba_snapshot = os.path.join(self.snapshots_dir, vba_dir)
-            if os.path.isdir(vba_snapshot):
-                for subdir in ("modules", "classes", "sheets"):
-                    target = os.path.join(self.vba_source_dir, subdir)
-                    if os.path.isdir(target):
-                        shutil.rmtree(target)
+            vba_zip = vba_snapshot + ".zip"
+
+            # Clean up current VBA source subdirectories
+            for subdir in ("modules", "classes", "sheets"):
+                target = os.path.join(self.vba_source_dir, subdir)
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+
+            if os.path.exists(vba_zip):
+                shutil.unpack_archive(vba_zip, self.vba_source_dir, 'zip')
+                logger.info("VBA source restored from zipped snapshot")
+            elif os.path.isdir(vba_snapshot):
                 shutil.copytree(vba_snapshot, self.vba_source_dir, dirs_exist_ok=True)
-                logger.info("VBA source restored from snapshot")
+                logger.info("VBA source restored from snapshot folder")
 
         return True
 
     def diff(self, identifier: str) -> str:
         """Show VBA file differences between a snapshot and current state."""
-        import difflib
-
         entry = self._find(identifier)
         if entry is None:
             return f"Snapshot not found: {identifier}"
@@ -183,10 +259,20 @@ class SnapshotManager:
             return "No VBA source in this snapshot"
 
         vba_snapshot = os.path.join(self.snapshots_dir, vba_dir)
-        if not os.path.isdir(vba_snapshot):
-            return "Snapshot VBA directory not found"
+        vba_zip = vba_snapshot + ".zip"
 
-        return self._diff_directories(vba_snapshot, self.vba_source_dir)
+        if os.path.exists(vba_zip):
+            import tempfile
+            temp_vba = tempfile.mkdtemp()
+            try:
+                shutil.unpack_archive(vba_zip, temp_vba, 'zip')
+                return self._diff_directories(temp_vba, self.vba_source_dir)
+            finally:
+                shutil.rmtree(temp_vba, ignore_errors=True)
+        elif os.path.isdir(vba_snapshot):
+            return self._diff_directories(vba_snapshot, self.vba_source_dir)
+        else:
+            return "Snapshot VBA directory/archive not found"
 
     def prune(self, keep: int = 10) -> int:
         """Remove old rolling snapshots, keeping the most recent `keep`."""
@@ -218,6 +304,8 @@ class SnapshotManager:
 
         for e in log:
             if e["snapshot_id"] == identifier:
+                return e
+            if identifier.lower() in e["workbook_file"].lower():
                 return e
 
         prefix = [e for e in log if e["snapshot_id"].startswith(identifier)]
@@ -280,7 +368,6 @@ class SnapshotManager:
         return _inner_lock()
 
     def _load_log(self) -> list:
-        import contextlib
         # Inline ContextDecorator helper to use generator with custom lock
         with self._lock():
             if not os.path.exists(self._log_path):
@@ -305,6 +392,9 @@ class SnapshotManager:
             vba_path = os.path.join(self.snapshots_dir, vba)
             if os.path.isdir(vba_path):
                 shutil.rmtree(vba_path)
+            vba_zip = vba_path + ".zip"
+            if os.path.exists(vba_zip):
+                os.remove(vba_zip)
 
     def _hash_file(self, filepath: str) -> str:
         if not os.path.exists(filepath):

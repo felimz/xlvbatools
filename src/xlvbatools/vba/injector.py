@@ -81,7 +81,7 @@ def inject_all(
         ]
 
     if backup:
-        _create_backup(wb_path, backup_limit)
+        _create_backup(wb_path, src_dir, backup_limit)
 
     results = []
 
@@ -140,7 +140,7 @@ def inject_component(
         return False
 
     if backup:
-        _create_backup(wb_path)
+        _create_backup(wb_path, src_dir)
 
     try:
         with ExcelSession(wb_path, visible=False, save_on_exit=True) as session:
@@ -291,29 +291,15 @@ def _scan_source_dir(source_dir: str) -> Manifest:
     return Manifest(components=components)
 
 
-def _create_backup(workbook_path: str, limit: int = _DEFAULT_BACKUP_LIMIT):
-    """Create a timestamped backup of the workbook and prune old backups."""
-    import datetime
-
-    backup_dir = os.path.join(os.path.dirname(workbook_path), "backups")
-    os.makedirs(backup_dir, exist_ok=True)
-
-    basename = os.path.splitext(os.path.basename(workbook_path))[0]
-    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
-    backup_name = f"{basename}_backup_{ts}.xlsm"
-    backup_path = os.path.join(backup_dir, backup_name)
-
-    shutil.copy2(workbook_path, backup_path)
-    logger.info(f"Backup created: {backup_path}")
-
-    # Prune old backups
-    backups = sorted(
-        [f for f in os.listdir(backup_dir) if f.startswith(basename) and f.endswith(".xlsm")]
+def _create_backup(workbook_path: str, source_dir: str, limit: int = _DEFAULT_BACKUP_LIMIT):
+    """Create a backup of the workbook and VBA source as a rolling snapshot."""
+    from xlvbatools.snapshot.manager import SnapshotManager
+    from xlvbatools.config.loader import load_config
+    config = load_config(os.path.dirname(workbook_path))
+    mgr = SnapshotManager(
+        workbook_path=workbook_path,
+        vba_source_dir=source_dir,
+        snapshots_dir=config.snapshots_dir,
+        rolling_limit=limit,
     )
-    while len(backups) > limit:
-        oldest = backups.pop(0)
-        try:
-            os.remove(os.path.join(backup_dir, oldest))
-            logger.info(f"Pruned old backup: {oldest}")
-        except Exception:
-            pass
+    mgr.create(description="pre-injection_backup", milestone=False)
