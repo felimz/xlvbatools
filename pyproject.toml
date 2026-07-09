@@ -9,7 +9,7 @@ description = "General-purpose Python toolkit for headless Excel VBA automation,
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Felipe Muñoz"},
+    {name = "Felipe Mejia"},
 ]
 readme = "README.md"
 keywords = ["excel", "vba", "automation", "com", "headless"]
