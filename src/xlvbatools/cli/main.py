@@ -43,6 +43,10 @@ def main(args: Optional[List[str]] = None) -> None:
         "--version", action="version",
         version=f"%(prog)s {_get_version()}"
     )
+    parser.add_argument(
+        "--agents", action="store_true",
+        help="Show AI agent integration help and best practices"
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -60,8 +64,13 @@ def main(args: Optional[List[str]] = None) -> None:
     _register_search(subparsers)
     _register_fmt(subparsers)
     _register_graph(subparsers)
+    _register_agents(subparsers)
 
     args = parser.parse_args(args)
+
+    if getattr(args, "agents", False):
+        _cmd_agents(args)
+        sys.exit(0)
 
     if args.command is None:
         parser.print_help()
@@ -108,7 +117,8 @@ def _get_version() -> str:
 def _register_init(subparsers):
     p = subparsers.add_parser("init", help="Initialize xlvbatools.toml in current directory")
     p.add_argument("--workbook", "-w", help="Path to the .xlsm workbook")
-    p.add_argument("--agents", action="store_true", help="Also install .agents/ template")
+    p.add_argument("--agents", action="store_true",
+                   help="Install .agents/ templates for AI coding assistant rules, skills, and workflows")
     p.add_argument("--force", "-f", action="store_true", help="Overwrite existing xlvbatools.toml")
     p.set_defaults(func=_cmd_init)
 
@@ -255,6 +265,11 @@ def _register_graph(subparsers):
                    help="Output format (default: mermaid)")
     p.add_argument("--output", "-o", help="Output file (default: stdout)")
     p.set_defaults(func=_cmd_graph)
+
+
+def _register_agents(subparsers):
+    p = subparsers.add_parser("agents", help="Show AI agent integration help and best practices")
+    p.set_defaults(func=_cmd_agents)
 
 
 # ── Command handlers ──
@@ -657,6 +672,58 @@ def _cmd_snapshot_help(args):
     if not hasattr(args, "snapshot_command") or args.snapshot_command is None:
         print("Usage: xlvba snapshot <create|list|info|restore|diff|prune>")
         sys.exit(0)
+
+
+def _cmd_agents(args):
+    """Print AI agent integration instructions and best practices."""
+    help_text = """================================================================================
+                    xlvbatools AI Agent Integration Guide
+================================================================================
+
+This toolkit supports the July 2026 open-standard for agent customizations
+(agentskills.io and Google Antigravity specifications). By placing instructions
+in a central `.agents/` directory, you allow coding assistants to discover rules,
+capabilities, and workflows without polluting your workspace or bloating context.
+
+--------------------------------------------------------------------------------
+1. Standard Directory Layout (.agents/)
+--------------------------------------------------------------------------------
+When initialized, the following structure will be installed in the project root:
+
+    .agents/
+    ├── AGENTS.md           # Mission Control & main developer rules
+    ├── rules/              # Task-specific conditional guidelines
+    │   ├── vba-rules.md    # VBA coding standards & encoding constraints
+    │   └── python-rules.md # Python packaging & test guidelines
+    ├── skills/             # Portable capability packs (agentskills.io)
+    │   └── xlvba-toolchain/
+    │       └── SKILL.md    # xlvba CLI reference & python API usage
+    └── workflows/          # Repeatable step-by-step pipeline procedures
+        ├── vba-edit.md     # The modify-lint-inject-verify pipeline
+        └── vba-debug.md    # Dialog watchdogs & COM error debugging
+
+--------------------------------------------------------------------------------
+2. How to Bootstrap/Install
+--------------------------------------------------------------------------------
+To install or refresh these agent templates in your current workspace, run:
+
+    xlvba init --agents
+
+If xlvbatools.toml already exists, you can run:
+
+    xlvba init --agents --force
+
+--------------------------------------------------------------------------------
+3. Information for AI Agents (Antigravity, Cursor, Copilot, etc.)
+--------------------------------------------------------------------------------
+If you are an AI assistant:
+- READ .agents/AGENTS.md first to understand the workspace overview and rules.
+- REFER to skills/xlvba-toolchain/SKILL.md to understand the Python API and CLI.
+- USE .agents/workflows/vba-edit.md as your standard pipeline for modifying VBA files.
+- USE .agents/workflows/vba-debug.md when encountering Excel COM hangs, modal dialogs, or VBE programmatic errors.
+================================================================================
+"""
+    print(help_text)
 
 
 if __name__ == "__main__":

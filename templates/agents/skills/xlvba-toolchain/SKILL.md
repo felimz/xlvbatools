@@ -39,6 +39,7 @@ This skill teaches agents how to use `xlvbatools` for headless VBA development.
 | `xlvba search <pattern>` | Search VBA source files |
 | `xlvba fmt` | Format VBA code (normalize indentation) |
 | `xlvba graph` | Generate call dependency graph (Mermaid/DOT/JSON) |
+| `xlvba agents` | Show AI agent integration help and best practices |
 
 ## Troubleshooting Matrix
 
@@ -52,6 +53,7 @@ This skill teaches agents how to use `xlvbatools` for headless VBA development.
 | Need to set a cell value before running | `xlvba modify --cell A1 --value 42` |
 | COM session hangs or crashes | `taskkill /f /im EXCEL.EXE` then retry |
 | Need to rollback after a failed change | `xlvba snapshot restore latest` |
+| Need help on agent integration / templates | `xlvba agents` or `xlvba --agents` |
 
 ## Python API
 

@@ -12,3 +12,4 @@
 * **Strict Namespace Boundaries**: Keep the top-level namespace clean. All code, CLI commands, and templates reside under `src/xlvbatools/`.
 * **Zero Pollution**: Test runs must never write temporary artifacts or debug folders to the workspace root. Always use `tmp_path` or standard test directories.
 * **Progressive Disclosure**: Specific coding standards for VBA and Python are defined in the task-specific glob rules under `.agents/rules/` to prevent context bloat.
+* **Agent Integration Guide**: Run `xlvba agents` or `xlvba --agents` to print the full integration instructions and best practices for the toolkit.
