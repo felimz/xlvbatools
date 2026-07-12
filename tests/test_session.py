@@ -3,7 +3,9 @@ Tests for xlvbatools.core.session -- ExcelSession context manager.
 """
 
 import os
+import subprocess
 import sys
+import textwrap
 import pytest
 from types import SimpleNamespace
 
@@ -235,3 +237,36 @@ class TestSessionCOM:
                 excel1.Quit()
             except Exception:
                 pass
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_child_com_proxies_finalize_before_excel(self, minimal_workbook):
+        """Successful pytest status must not hide native pywin32 diagnostics."""
+        code = textwrap.dedent(
+            """
+            import gc
+            import json
+            import sys
+            from xlvbatools.core.session import ExcelSession
+
+            with ExcelSession(sys.argv[1], save_on_exit=False, kill_on_enter=False) as session:
+                sheet = session.wb.Worksheets(1)
+                cell = sheet.Range("A1")
+                _ = cell.Value
+                cell = None
+                sheet = None
+                gc.collect()
+
+            print(json.dumps(session.cleanup_result))
+            """
+        )
+        completed = subprocess.run(
+            [sys.executable, "-X", "faulthandler", "-c", code, minimal_workbook],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        combined = completed.stdout + completed.stderr
+        assert completed.returncode == 0, combined
+        assert '"still_running": false' in completed.stdout.lower()
+        for signature in ("Windows fatal exception", "0x800706ba", "0x80010108"):
+            assert signature not in combined, combined

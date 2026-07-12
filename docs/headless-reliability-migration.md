@@ -22,6 +22,25 @@ Code using `ExcelSession` requires no watchdog migration. The session creates Ex
 
 Do not use image-wide termination such as `taskkill /f /im EXCEL.EXE`. It can destroy unrelated user workbooks.
 
+### Release child COM references inside the session
+
+Python variables that reference worksheets, ranges, names, VBE components, or other child COM objects must be cleared before leaving the `ExcelSession` context. `ExcelSession` can release its own workbook and application references, but it cannot delete variables owned by caller or pytest fixture frames.
+
+```python
+import gc
+
+with ExcelSession("workbook.xlsm", save_on_exit=False) as session:
+    sheet = session.wb.Worksheets("Input")
+    cell = sheet.Range("C33")
+    value = cell.Value
+
+    cell = None
+    sheet = None
+    gc.collect()  # Runs while the Excel RPC server is still alive.
+```
+
+This is especially important in yield-based pytest fixtures: generator locals survive until fixture teardown, which is after the context manager requests Excel shutdown. Retained proxies can therefore emit pywin32 `0x800706ba` or `0x80010108` finalizer diagnostics even when every assertion passes and the owned process exits.
+
 ## Enforced timeouts
 
 `ExcelSession.run_macro()` remains a low-level blocking COM operation. Its `timeout` argument is retained for API compatibility but cannot interrupt `Application.Run` in the caller process.

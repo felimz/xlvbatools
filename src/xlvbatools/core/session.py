@@ -193,6 +193,14 @@ class ExcelSession:
                 for event in events:
                     logger.info(f"  {event}")
 
+        # pywin32 wrappers can participate in cycles (especially VBE,
+        # Names/RefersToRange, and pytest assertion temporaries). Finalize
+        # those proxies while their Excel RPC server is still alive. Waiting
+        # until after Workbook.Close/Application.Quit produces misleading
+        # 0x800706ba finalizer diagnostics even when cleanup succeeds.
+        gc.collect()
+        gc.collect()
+
         close_error = None
         save_error = None
         try:
