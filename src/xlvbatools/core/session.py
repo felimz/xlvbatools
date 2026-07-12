@@ -98,7 +98,7 @@ class ExcelSession:
         init_delay: float = 1.5,
         enable_watchdog: bool = True,
         watchdog_poll_interval: float = 0.25,
-        exit_grace_period: float = 3.0,
+        exit_grace_period: float = 10.0,
         terminate_owned_process: bool = True,
         on_excel_started: Optional[Callable[[int], None]] = None,
     ):

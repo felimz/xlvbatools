@@ -195,6 +195,8 @@ class TestSessionCOM:
             assert session.wb is not None
             assert session.excel_pid is not None
             assert not session.had_errors
+        assert session.cleanup_result["exited_gracefully"] is True
+        assert session.cleanup_result["force_terminated"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_multiline_runtime_error_is_captured(self, runtime_error_workbook):
@@ -208,6 +210,7 @@ class TestSessionCOM:
         assert "Diagnostic line one." in result["dialog_events"][0]["text"]
         assert "Diagnostic line two." in result["dialog_events"][0]["text"]
         assert session.cleanup_result["still_running"] is False
+        assert session.cleanup_result["force_terminated"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_compile_error_location_is_headless(self, compile_error_workbook):
@@ -222,6 +225,7 @@ class TestSessionCOM:
         assert result["error_line"] == 3
         assert result["error_column"] == 5
         assert "undeclaredCompileValue" in "\n".join(result["error_context"])
+        assert session.cleanup_result["force_terminated"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_graceful_close_target_only(self, tmp_path):

@@ -20,6 +20,8 @@ Code using `ExcelSession` requires no watchdog migration. The session creates Ex
 
 `kill_on_enter` controls only targeted stale-workbook handling before startup. Session exit always waits for and, when configured, terminates the exact PID spawned by that session. Inspect `session.cleanup_result` for the outcome.
 
+The default exit grace period is 10 seconds. Excel frequently needs more than three seconds to release VBE and COM state; force-terminating it during that interval can crash or terminate a later session in the same interpreter.
+
 Do not use image-wide termination such as `taskkill /f /im EXCEL.EXE`. It can destroy unrelated user workbooks.
 
 ### Release child COM references inside the session

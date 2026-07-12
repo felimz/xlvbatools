@@ -20,7 +20,7 @@ with ExcelSession(
     init_delay=1.5,
     enable_watchdog=True,
     watchdog_poll_interval=0.25,
-    exit_grace_period=3.0,
+    exit_grace_period=10.0,
     terminate_owned_process=True,
 ) as session:
     excel = session.excel
@@ -36,7 +36,7 @@ with ExcelSession(
 * **`init_delay` (float, default `1.5`):** delay in seconds to wait for VBA project initialization.
 * **`enable_watchdog` (bool, default `True`):** Starts dialog dismissal daemon if `True`.
 * **`watchdog_poll_interval` (float, default `0.25`):** Watchdog polling interval in seconds.
-* **`exit_grace_period` (float, default `3.0`):** Seconds to wait for the owned Excel PID after requesting quit.
+* **`exit_grace_period` (float, default `10.0`):** Seconds to wait for the owned Excel PID after requesting quit. Excel/VBE shutdown can exceed three seconds; allowing it to finish avoids destabilizing the next COM session.
 * **`terminate_owned_process` (bool, default `True`):** Force-terminates only the spawned PID if it outlives the grace period.
 
 #### Properties
