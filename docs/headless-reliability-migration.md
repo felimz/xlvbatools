@@ -41,6 +41,10 @@ with ExcelSession("workbook.xlsm", save_on_exit=False) as session:
 
 This is especially important in yield-based pytest fixtures: generator locals survive until fixture teardown, which is after the context manager requests Excel shutdown. Retained proxies can therefore emit pywin32 `0x800706ba` or `0x80010108` finalizer diagnostics even when every assertion passes and the owned process exits.
 
+### Balance COM apartment ownership
+
+`ExcelSession` initializes COM only when the calling thread does not already have an apartment. It uninitializes only an apartment that the session created, and only on the same thread. This preserves caller-owned pywin32 state while giving worker threads a balanced COM lifecycle.
+
 ## Enforced timeouts
 
 `ExcelSession.run_macro()` remains a low-level blocking COM operation. Its `timeout` argument is retained for API compatibility but cannot interrupt `Application.Run` in the caller process.

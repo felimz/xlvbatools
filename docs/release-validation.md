@@ -52,3 +52,11 @@ Compile tests inspect control 578 but do not execute the VBE command-bar control
 No release-validation path uses image-wide Excel termination. Timeout and exit cleanup use the PID reported by the isolated session. Final validation must end with no session-owned `EXCEL.EXE` process remaining.
 
 COM teardown validation also runs in a subprocess and inspects both stdout and stderr. A zero pytest or process exit code is not sufficient if output contains `Windows fatal exception`, `0x800706ba`, or `0x80010108`. Yield fixtures clear worksheet/range/VBE child proxies and collect them while their owning Excel session is still alive.
+
+The sequential session acceptance check must complete in one interpreter:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/test_session.py -m com -q
+```
+
+The expected result is five passing tests and process exit code 0. `tests/test_sequential_com.py` enforces the same check from a parent subprocess and rejects native COM finalizer diagnostics even when pytest reports success.

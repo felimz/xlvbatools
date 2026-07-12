@@ -146,6 +146,41 @@ class TestSessionProperties:
         assert created[0]["target_pid"] == 4321
         assert created[0]["auto_dismiss"] is True
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_com_apartment_is_balanced(self, monkeypatch):
+        import pythoncom
+        from xlvbatools.core.session import ExcelSession
+
+        calls = []
+        monkeypatch.setattr(pythoncom, "CoInitialize", lambda: calls.append("initialize"))
+        monkeypatch.setattr(pythoncom, "CoFreeUnusedLibraries", lambda: calls.append("free"))
+        monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: calls.append("uninitialize"))
+        monkeypatch.setattr(ExcelSession, "_thread_has_com_apartment", staticmethod(lambda: False))
+
+        session = ExcelSession("dummy.xlsm")
+        session._initialize_com()
+        session._uninitialize_com()
+
+        assert calls == ["initialize", "free", "uninitialize"]
+        assert session._com_initialized is False
+        assert session._com_thread_id is None
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_caller_owned_com_apartment_is_not_uninitialized(self, monkeypatch):
+        import pythoncom
+        from xlvbatools.core.session import ExcelSession
+
+        calls = []
+        monkeypatch.setattr(ExcelSession, "_thread_has_com_apartment", staticmethod(lambda: True))
+        monkeypatch.setattr(pythoncom, "CoInitialize", lambda: calls.append("initialize"))
+        monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: calls.append("uninitialize"))
+
+        session = ExcelSession("dummy.xlsm")
+        session._initialize_com()
+        session._uninitialize_com()
+
+        assert calls == []
+
 
 @pytest.mark.com
 @pytest.mark.integration

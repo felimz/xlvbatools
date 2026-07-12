@@ -37,8 +37,12 @@ def minimal_workbook(tmp_path):
 
     import win32com.client
     excel = None
+    wb = None
+    excel_pid = None
     try:
         excel = win32com.client.DispatchEx("Excel.Application")
+        import win32process
+        _, excel_pid = win32process.GetWindowThreadProcessId(excel.Hwnd)
         excel.Visible = False
         excel.DisplayAlerts = False
         wb = excel.Workbooks.Add()
@@ -47,15 +51,31 @@ def minimal_workbook(tmp_path):
         # FileFormat=52 is xlOpenXMLWorkbookMacroEnabled
         wb.SaveAs(path, FileFormat=52)
         wb.Close(False)
+        wb = None
         return path
     except Exception as e:
         pytest.skip(f"Could not dynamically create minimal.xlsm: {e}")
     finally:
-        if excel:
+        if wb is not None:
+            try:
+                wb.Close(False)
+            except Exception:
+                pass
+        if excel is not None:
             try:
                 excel.Quit()
             except Exception:
                 pass
+        wb = None
+        excel = None
+        gc.collect()
+        if excel_pid is not None:
+            from xlvbatools.core.process import is_process_running, kill_process_by_pid
+            deadline = time.time() + 3.0
+            while time.time() < deadline and is_process_running(excel_pid):
+                time.sleep(0.1)
+            if is_process_running(excel_pid):
+                kill_process_by_pid(excel_pid)
 
 
 @pytest.fixture

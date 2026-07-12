@@ -30,9 +30,11 @@ Usage:
 """
 
 import gc
+import ctypes
 import os
 import time
 import logging
+import threading
 import uuid
 import sys
 from typing import Any, Callable, Optional
@@ -122,12 +124,69 @@ class ExcelSession:
             "force_terminated": False, "still_running": False,
         }
         self.phase = "session_start"
+        self._com_initialized = False
+        self._com_thread_id = None
+
+    @staticmethod
+    def _thread_has_com_apartment() -> bool:
+        """Return whether COM is already initialized on the current thread."""
+        try:
+            apartment_type = ctypes.c_int()
+            qualifier = ctypes.c_int()
+            co_get_apartment_type = ctypes.windll.ole32.CoGetApartmentType
+            co_get_apartment_type.argtypes = [
+                ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)
+            ]
+            co_get_apartment_type.restype = ctypes.c_long
+            return co_get_apartment_type(
+                ctypes.byref(apartment_type), ctypes.byref(qualifier)
+            ) >= 0
+        except Exception:
+            return False
+
+    def _initialize_com(self) -> None:
+        """Enter a balanced STA apartment for this session."""
+        if self._thread_has_com_apartment():
+            logger.debug(
+                f"Using caller-owned COM apartment on thread {threading.get_ident()}"
+            )
+            return
+        import pythoncom
+
+        pythoncom.CoInitialize()
+        self._com_initialized = True
+        self._com_thread_id = threading.get_ident()
+        logger.debug(f"COM initialized on thread {self._com_thread_id}")
+
+    def _uninitialize_com(self) -> None:
+        """Leave the session's COM apartment on its owning thread."""
+        if not self._com_initialized:
+            return
+        current_thread = threading.get_ident()
+        if current_thread != self._com_thread_id:
+            logger.error(
+                f"COM teardown thread mismatch: initialized on {self._com_thread_id}, "
+                f"exiting on {current_thread}"
+            )
+            return
+        try:
+            import pythoncom
+            try:
+                pythoncom.CoFreeUnusedLibraries()
+            finally:
+                pythoncom.CoUninitialize()
+            logger.debug(f"COM uninitialized on thread {current_thread}")
+        finally:
+            self._com_initialized = False
+            self._com_thread_id = None
 
     def __enter__(self):
         import win32com.client
 
         if not os.path.exists(self.workbook_path):
             raise FileNotFoundError(f"Workbook not found: {self.workbook_path}")
+
+        self._initialize_com()
 
         if self.kill_on_enter:
             if is_excel_running():
@@ -139,7 +198,11 @@ class ExcelSession:
 
         logger.info(f"Opening Excel session: {self.workbook_path}")
         # Use DispatchEx to ensure a new, isolated Excel instance is spawned
-        self.excel = win32com.client.DispatchEx("Excel.Application")
+        try:
+            self.excel = win32com.client.DispatchEx("Excel.Application")
+        except Exception:
+            self._uninitialize_com()
+            raise
 
         self.phase = "workbook_open"
         try:
@@ -153,6 +216,7 @@ class ExcelSession:
                 self.excel.Quit()
             finally:
                 self.excel = None
+                self._uninitialize_com()
             raise RuntimeError("Could not determine the spawned Excel PID; refusing to start an unscoped watchdog") from e
 
         if self.enable_watchdog:
@@ -256,6 +320,9 @@ class ExcelSession:
             self.cleanup_result["workbook_close_error"] = str(close_error)
         if save_error:
             self.cleanup_result["workbook_save_error"] = str(save_error)
+
+        gc.collect()
+        self._uninitialize_com()
 
         return False  # Don't suppress exceptions
 
