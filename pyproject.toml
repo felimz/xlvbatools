@@ -65,6 +65,7 @@ pythonpath = ["src", "."]
 addopts = "-v --tb=short"
 markers = [
     "unit: Pure Python unit tests, no COM required",
+    "integration: Requires live Excel or multi-component integration",
     "com: Requires Excel COM automation (Windows only, slower)",
     "e2e: Full end-to-end pipeline tests (slowest)",
 ]

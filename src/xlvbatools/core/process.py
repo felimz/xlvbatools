@@ -10,6 +10,8 @@ import os
 import subprocess
 import time
 import logging
+import csv
+import io
 from typing import Optional
 
 from xlvbatools._compat import IS_WINDOWS
@@ -152,20 +154,24 @@ def is_process_running(pid: int) -> bool:
         return False
     try:
         output = subprocess.check_output(
-            ["tasklist", "/fi", f"PID eq {pid}"],
+            ["tasklist", "/fi", f"PID eq {pid}", "/fo", "csv", "/nh"],
             text=True
         )
-        return str(pid) in output
+        return any(
+            len(row) > 1 and row[1].strip() == str(pid)
+            for row in csv.reader(io.StringIO(output))
+        )
     except Exception:
         return False
 
 
-def kill_process_by_pid(pid: int):
+def kill_process_by_pid(pid: int) -> bool:
     """Forcefully kill a process by PID."""
     if not IS_WINDOWS:
-        return
-    subprocess.run(
+        return False
+    result = subprocess.run(
         ["taskkill", "/f", "/pid", str(pid)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
+    return result.returncode == 0

@@ -44,7 +44,7 @@ def main(args: Optional[List[str]] = None) -> None:
         version=f"%(prog)s {_get_version()}"
     )
     parser.add_argument(
-        "--agents", action="store_true",
+        "--agents", dest="show_agents", action="store_true",
         help="Show AI agent integration help and best practices"
     )
 
@@ -68,7 +68,7 @@ def main(args: Optional[List[str]] = None) -> None:
 
     args = parser.parse_args(args)
 
-    if getattr(args, "agents", False):
+    if getattr(args, "show_agents", False):
         _cmd_agents(args)
         sys.exit(0)
 
@@ -171,6 +171,8 @@ def _register_run(subparsers):
     p.add_argument("macro", help="Name of the macro to run")
     p.add_argument("--workbook", "-w", help="Path to the .xlsm workbook")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="Maximum seconds for the isolated Excel session")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_run)
 
@@ -437,7 +439,7 @@ def _cmd_run(args):
 
     wb = args.workbook or cfg.workbook
     from xlvbatools.macro.runner import run_macro
-    result = run_macro(wb, args.macro)
+    result = run_macro(wb, args.macro, timeout=args.timeout)
 
     if getattr(args, "json", False):
         import json

@@ -66,6 +66,7 @@ def extracted_sample(request, tmp_path_factory):
 
 
 @pytest.mark.com
+@pytest.mark.integration
 @pytest.mark.e2e
 def test_sample_linter(extracted_sample):
     """Run the offline linter on the extracted code and verify it completes without raising exceptions."""
@@ -91,6 +92,7 @@ def test_sample_linter(extracted_sample):
 
 
 @pytest.mark.com
+@pytest.mark.integration
 @pytest.mark.e2e
 def test_sample_call_graph(extracted_sample):
     """Build a call dependency graph from the extracted code and verify it constructs successfully."""

@@ -133,6 +133,31 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
 
 
 @pytest.mark.unit
+def test_global_agents_help_exits_successfully(capsys):
+    """The global --agents flag remains distinct from init --agents."""
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--agents"])
+    assert exc_info.value.code == 0
+    assert "Agent Integration Guide" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_cli_run_forwards_timeout(tmp_path):
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.macro.runner.run_macro") as mock_run:
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+        mock_run.return_value = {"success": True, "elapsed_seconds": 0.1}
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "MyMacro", "--timeout", "7.5"])
+
+    assert exc_info.value.code == 0
+    mock_run.assert_called_once_with("book.xlsm", "MyMacro", timeout=7.5)
+
+
+@pytest.mark.unit
 def test_cli_modify(tmp_path, capsys):
     """Test xlvba modify subcommand."""
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
@@ -228,4 +253,3 @@ def test_cli_extract_inject_diff(tmp_path, capsys):
         # Test diff
         main(["diff"])
         mock_diff.assert_called_once_with("test.xlsm", "vba_source")
-

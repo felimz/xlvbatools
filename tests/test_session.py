@@ -5,6 +5,7 @@ Tests for xlvbatools.core.session -- ExcelSession context manager.
 import os
 import sys
 import pytest
+from types import SimpleNamespace
 
 
 @pytest.mark.unit
@@ -42,8 +43,110 @@ class TestSessionProperties:
         assert session.error_summary == ""
         assert session.dialog_events == []
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_strict_named_range_raises(self):
+        from xlvbatools.core.session import ExcelSession
+        session = ExcelSession("dummy.xlsm")
+        session.wb = SimpleNamespace(Names=lambda name: (_ for _ in ()).throw(RuntimeError("missing")))
+        with pytest.raises(KeyError, match="Could not set named range"):
+            session.set_named_range("MissingName", 1, strict=True)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_exit_force_terminates_only_owned_pid(self, monkeypatch):
+        from xlvbatools.core import session as session_module
+
+        owned_pid = 4242
+        killed = []
+        states = iter([True, True, False])
+        monkeypatch.setattr(session_module, "is_process_running", lambda pid: next(states, False))
+        monkeypatch.setattr(session_module, "kill_process_by_pid", lambda pid: killed.append(pid) or True)
+
+        session = session_module.ExcelSession(
+            "dummy.xlsm", exit_grace_period=0, terminate_owned_process=True
+        )
+        session.excel_pid = owned_pid
+        session.excel = SimpleNamespace(Quit=lambda: None)
+        session.wb = SimpleNamespace(Close=lambda value: None)
+        session.__exit__(None, None, None)
+
+        assert killed == [owned_pid]
+        assert session.cleanup_result["force_terminated"] is True
+        assert session.cleanup_result["still_running"] is False
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_sequential_macro_runs_use_event_sequences(self):
+        from xlvbatools.core.session import ExcelSession
+        from xlvbatools.core.watchdog import DialogEvent
+
+        old = DialogEvent(1, 1, "old", "runtime_error", ["old error"], sequence=1)
+        new = DialogEvent(2, 2, "new", "runtime_error", ["new error"], sequence=2)
+
+        class Watchdog:
+            events = [old]
+
+        watchdog = Watchdog()
+
+        def run(_macro):
+            watchdog.events.append(new)
+
+        session = ExcelSession("dummy.xlsm")
+        session.watchdog = watchdog
+        session.excel = SimpleNamespace(Run=run)
+        result = session.run_macro("TestMacro")
+        assert [event["sequence"] for event in result["dialog_events"]] == [2]
+        assert result["primary_error"] == "new error"
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_watchdog_starts_with_spawned_pid(self, tmp_path, monkeypatch):
+        import win32com.client
+        import win32process
+        from xlvbatools.core import session as session_module
+        from xlvbatools.core import watchdog as watchdog_module
+
+        workbook = tmp_path / "book.xlsm"
+        workbook.touch()
+        created = []
+
+        class FakeWatchdog:
+            had_errors = False
+            had_dialogs = False
+            error_summary = ""
+            events = []
+
+            def __init__(self, **kwargs):
+                created.append(kwargs)
+
+            def start(self):
+                pass
+
+            def stop(self):
+                return []
+
+        fake_wb = SimpleNamespace(Close=lambda value: None)
+        fake_excel = SimpleNamespace(
+            Hwnd=99,
+            Visible=False,
+            DisplayAlerts=True,
+            AutomationSecurity=0,
+            Workbooks=SimpleNamespace(Open=lambda *args, **kwargs: fake_wb),
+            Quit=lambda: None,
+        )
+        monkeypatch.setattr(win32com.client, "DispatchEx", lambda name: fake_excel)
+        monkeypatch.setattr(win32process, "GetWindowThreadProcessId", lambda hwnd: (1, 4321))
+        monkeypatch.setattr(watchdog_module, "DialogWatchdog", FakeWatchdog)
+        monkeypatch.setattr(session_module, "is_process_running", lambda pid: False)
+
+        with session_module.ExcelSession(
+            str(workbook), kill_on_enter=False, init_delay=0
+        ) as session:
+            assert session.excel_pid == 4321
+
+        assert created[0]["target_pid"] == 4321
+        assert created[0]["auto_dismiss"] is True
+
 
 @pytest.mark.com
+@pytest.mark.integration
 class TestSessionCOM:
     """Integration tests requiring Excel COM. Skipped unless Excel is installed."""
 
@@ -57,11 +160,40 @@ class TestSessionCOM:
             assert not session.had_errors
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_multiline_runtime_error_is_captured(self, runtime_error_workbook):
+        from xlvbatools.core.session import ExcelSession
+
+        with ExcelSession(runtime_error_workbook, save_on_exit=False) as session:
+            result = session.run_macro("RaiseMultilineError")
+
+        assert result["success"] is False
+        assert result["dialog_events"][0]["type"] == "runtime_error"
+        assert "Diagnostic line one." in result["dialog_events"][0]["text"]
+        assert "Diagnostic line two." in result["dialog_events"][0]["text"]
+        assert session.cleanup_result["still_running"] is False
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_compile_error_location_is_headless(self, compile_error_workbook):
+        from xlvbatools.core.session import ExcelSession
+
+        with ExcelSession(compile_error_workbook, save_on_exit=False) as session:
+            result = session.compile_test()
+            assert session.excel.VBE.MainWindow.Visible is False
+
+        assert result["success"] is False
+        assert result["error_module"] == "modCompileFailure"
+        assert result["error_line"] == 3
+        assert result["error_column"] == 5
+        assert "undeclaredCompileValue" in "\n".join(result["error_context"])
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_graceful_close_target_only(self, tmp_path):
         import os
         import shutil
         import win32com.client
+        import win32process
         from xlvbatools.core.session import ExcelSession
+        from xlvbatools.core.process import is_process_running
 
         # Load real sample workbook from repository
         workbook_src = os.path.join(
@@ -78,24 +210,21 @@ class TestSessionCOM:
         shutil.copy(workbook_src, unrelated_workbook)
 
         # 1. Open unrelated_workbook manually
-        excel1 = win32com.client.Dispatch("Excel.Application")
+        excel1 = win32com.client.DispatchEx("Excel.Application")
         excel1.Visible = False
         wb1 = excel1.Workbooks.Open(str(unrelated_workbook))
-
-        # 2. Open target_workbook manually
-        excel2 = win32com.client.Dispatch("Excel.Application")
-        excel2.Visible = False
-        wb2 = excel2.Workbooks.Open(str(target_workbook))
+        _, unrelated_pid = win32process.GetWindowThreadProcessId(excel1.Hwnd)
 
         try:
-            # 3. Enter ExcelSession on target_workbook.
-            # This should close target_workbook (excel2), but keep unrelated_workbook (excel1) open.
-            with ExcelSession(str(target_workbook), kill_on_enter=True, save_on_exit=False) as session:
+            # Open and close an isolated target session while an unrelated
+            # workbook remains live in a separate Excel process.
+            with ExcelSession(str(target_workbook), kill_on_enter=False, save_on_exit=False) as session:
                 assert session.excel is not None
                 assert session.wb is not None
 
-            # 4. Verify that unrelated_workbook is still open and running
+            # Verify that unrelated_workbook is still open and running.
             assert wb1.Name == "unrelated.xlsm"
+            assert is_process_running(unrelated_pid)
         finally:
             # Cleanup manually opened instances
             try:
@@ -104,13 +233,5 @@ class TestSessionCOM:
                 pass
             try:
                 excel1.Quit()
-            except Exception:
-                pass
-            try:
-                wb2.Close(SaveChanges=False)
-            except Exception:
-                pass
-            try:
-                excel2.Quit()
             except Exception:
                 pass

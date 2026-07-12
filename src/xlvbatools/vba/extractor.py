@@ -17,6 +17,7 @@ Usage:
 """
 
 import datetime
+import gc
 import logging
 import os
 import tempfile
@@ -54,6 +55,7 @@ def list_components(workbook_path: str) -> list[dict]:
             })
         if "comp" in locals():
             del comp
+        gc.collect()
 
     return sorted(components, key=lambda c: (c["type_code"], c["name"]))
 
@@ -90,6 +92,7 @@ def extract_component(
             del c
         del comp
         del vb_project
+        gc.collect()
         return info.to_dict() if info else None
 
 
@@ -128,6 +131,10 @@ def extract_all(
         if "comp" in locals():
             del comp
         del vb_project
+        # Release VBE enumerators and component proxies while Excel is still
+        # alive; deferring their finalizers until after targeted process exit
+        # produces noisy RPC_SERVER_UNAVAILABLE fatal-exception reports.
+        gc.collect()
 
     # Build and save manifest
     manifest = Manifest(

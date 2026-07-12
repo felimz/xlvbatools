@@ -50,7 +50,7 @@ This skill teaches agents how to use `xlvbatools` for headless VBA development.
 | Need to understand call relationships | `xlvba graph --format json` |
 | Need to read a cell value | `xlvba dump --sheets Sheet1 --json` |
 | Need to set a cell value before running | `xlvba modify --cell A1 --value 42` |
-| COM session hangs or crashes | `taskkill /f /im EXCEL.EXE` then retry |
+| COM session hangs or crashes | Inspect the session cleanup result and terminate only its recorded PID |
 | Need to rollback after a failed change | `xlvba snapshot restore latest` |
 
 ## Python API

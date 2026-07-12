@@ -40,6 +40,14 @@ with ExcelSession("path/to/workbook.xlsm") as session:
             print(f"  [{event['type']}] {event['text']}")
 ```
 
+For a parent-enforced timeout that can stop an infinite VBA loop, use the isolated runner:
+
+```python
+from xlvbatools.macro import run_macro
+
+result = run_macro("path/to/workbook.xlsm", "MyMacro", timeout=120)
+```
+
 ### As a CLI
 
 ```bash
@@ -48,7 +56,7 @@ xlvba extract                       # Extract VBA to disk
 xlvba inject                        # Inject VBA from disk
 xlvba diff                          # Compare workbook vs. disk
 xlvba lint                          # Static analysis
-xlvba run MyMacro                   # Execute a macro
+xlvba run MyMacro --timeout 120     # Execute with an enforced timeout
 xlvba snapshot create               # Create checkpoint
 xlvba snapshot restore latest       # Rollback
 xlvba dump --sheets Sheet1 --json   # Inspect worksheets

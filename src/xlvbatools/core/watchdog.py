@@ -19,7 +19,7 @@ Supported dialog types:
 Usage (standalone):
     from xlvbatools.core.watchdog import DialogWatchdog
 
-    watchdog = DialogWatchdog()
+    watchdog = DialogWatchdog(target_pid=excel_pid)
     watchdog.start()
     # ... do COM stuff that might trigger dialogs ...
     events = watchdog.stop()
@@ -33,6 +33,7 @@ Usage (integrated -- via ExcelSession):
 import ctypes
 import ctypes.wintypes
 import logging
+import os
 import re
 import threading
 import time
@@ -51,11 +52,17 @@ logger = logging.getLogger(__name__)
 WM_GETTEXT = 0x000D
 WM_GETTEXTLENGTH = 0x000E
 WM_CLOSE = 0x0010
+WM_CANCELMODE = 0x001F
 BM_CLICK = 0x00F5
 DIALOG_CLASS = "#32770"
 
 # Button labels we'll click to dismiss dialogs (case-insensitive matching)
 DISMISS_BUTTONS = {"ok", "end", "close", "abort", "cancel", "no", "yes"}
+
+
+def _normalize_button_text(text: str) -> str:
+    """Remove Win32 mnemonic markers and punctuation from a button label."""
+    return (text or "").replace("&", "").strip().lower().rstrip(".")
 
 
 # ===================================================================
@@ -71,6 +78,21 @@ if IS_WINDOWS:
     LPARAM = ctypes.wintypes.LPARAM
     EnumWindowsProc = ctypes.WINFUNCTYPE(BOOL, HWND, LPARAM)
     EnumChildProc = ctypes.WINFUNCTYPE(BOOL, HWND, LPARAM)
+
+    # ctypes otherwise assumes 32-bit integer arguments, which can truncate
+    # HWNDs and text-buffer pointers in 64-bit Python.
+    user32.GetWindowTextLengthW.argtypes = [HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [HWND, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetClassNameW.argtypes = [HWND, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.SendMessageTimeoutW.argtypes = [
+        HWND, ctypes.wintypes.UINT, ctypes.c_size_t,
+        ctypes.c_ssize_t, ctypes.wintypes.UINT, ctypes.wintypes.UINT,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    user32.SendMessageTimeoutW.restype = ctypes.wintypes.LPARAM
 else:
     user32 = None
     HWND = BOOL = LPARAM = None
@@ -95,8 +117,7 @@ def _get_window_class(hwnd: int) -> str:
 
 
 def _get_control_text(hwnd: int) -> str:
-    """Get text from a control via WM_GETTEXT (uses SendMessageTimeoutW to prevent hang)."""
-    import ctypes
+    """Get control text without allowing a hung window to block the watchdog."""
     result_len = ctypes.c_size_t(0)
     res = user32.SendMessageTimeoutW(
         hwnd,
@@ -107,24 +128,27 @@ def _get_control_text(hwnd: int) -> str:
         250,     # 250ms timeout
         ctypes.byref(result_len),
     )
-    if res == 0 or result_len.value == 0:
-        return ""
+    text = ""
+    if res != 0 and result_len.value:
+        length = result_len.value
+        buf = ctypes.create_unicode_buffer(length + 1)
+        result_text = ctypes.c_size_t(0)
+        res = user32.SendMessageTimeoutW(
+            hwnd, WM_GETTEXT, length + 1, ctypes.addressof(buf),
+            0x0002, 250, ctypes.byref(result_text),
+        )
+        if res != 0:
+            text = buf.value
 
-    length = result_len.value
-    buf = ctypes.create_unicode_buffer(length + 1)
-    result_text = ctypes.c_size_t(0)
-    res = user32.SendMessageTimeoutW(
-        hwnd,
-        WM_GETTEXT,
-        length + 1,
-        ctypes.addressof(buf),
-        0x0002,  # SMTO_ABORTIFHUNG
-        250,     # 250ms timeout
-        ctypes.byref(result_text),
-    )
-    if res == 0:
-        return ""
-    return buf.value
+    # Some VBA dialog controls expose text only through GetWindowTextW.
+    if not text:
+        text = _get_window_text(hwnd)
+    return _normalize_text(text)
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize mixed newlines while retaining the original multiline layout."""
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
 
 
 def _click_button(hwnd: int):
@@ -149,7 +173,7 @@ def _is_window_visible(hwnd: int) -> bool:
 
 def _close_window(hwnd: int):
     """Send WM_CLOSE to a window."""
-    user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+    return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
 
 
 def _get_window_pid(hwnd: int) -> tuple:
@@ -159,9 +183,164 @@ def _get_window_pid(hwnd: int) -> tuple:
     return tid, pid.value
 
 
+def _get_code_pane_selection(pane) -> tuple:
+    """Read a VBE selection across tuple-return and by-reference COM variants."""
+    try:
+        selection = pane.GetSelection()
+        if selection is not None and len(selection) == 4:
+            return tuple(int(value) for value in selection)
+    except TypeError:
+        pass
+
+    import pythoncom
+    from win32com.client import VARIANT
+    refs = [VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0) for _ in range(4)]
+    pane.GetSelection(*refs)
+    return tuple(int(ref.value) for ref in refs)
+
+
+def _populate_compile_location(vbe, wb, result: dict) -> None:
+    """Populate the selected compile-error location without showing the VBE."""
+    panes = []
+    try:
+        if vbe.ActiveCodePane is not None:
+            panes.append(vbe.ActiveCodePane)
+    except Exception:
+        pass
+    try:
+        selected = vbe.SelectedVBComponent
+        if selected is not None and selected.CodeModule.CodePane is not None:
+            panes.append(selected.CodeModule.CodePane)
+    except Exception:
+        pass
+    if not panes:
+        try:
+            for component in wb.VBProject.VBComponents:
+                try:
+                    pane = component.CodeModule.CodePane
+                    if pane is not None:
+                        panes.append(pane)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    best = None
+    for pane in panes:
+        try:
+            selection = _get_code_pane_selection(pane)
+            # A compile error normally selects a token beyond the default
+            # 1,1 caret. Prefer that pane while retaining a final fallback.
+            candidate = (selection != (1, 1, 1, 1), pane, selection)
+            if best is None or candidate[0] > best[0]:
+                best = candidate
+        except Exception:
+            continue
+    if best is None or not best[0]:
+        return
+
+    _, pane, selection = best
+    module = pane.CodeModule
+    error_line, error_column = selection[0], selection[1]
+    result["error_module"] = module.Name
+    result["error_line"] = error_line
+    result["error_column"] = error_column
+    start = max(1, error_line - 5)
+    end = min(module.CountOfLines, error_line + 5)
+    result["error_context"] = [
+        f"{'>>> ' if line == error_line else '    '}{line:4d}: {module.Lines(line, 1)}"
+        for line in range(start, end + 1)
+    ]
+
+
+def _populate_static_compile_location(wb, result: dict) -> None:
+    """Fallback to UV001 analysis when hidden VBE exposes no selection."""
+    from xlvbatools.analysis.rules import _parse_vba_declarations, run_all_rules
+
+    modules = []
+    global_names = set()
+    public_re = re.compile(r"^(Public|Global)\s+", re.IGNORECASE)
+    proc_re = re.compile(
+        r"^(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+\w+)\s+",
+        re.IGNORECASE,
+    )
+    for component in wb.VBProject.VBComponents:
+        try:
+            module = component.CodeModule
+            count = module.CountOfLines
+            code = module.Lines(1, count) if count else ""
+            lines = code.splitlines(keepends=True)
+            modules.append((component.Name, module, count, lines))
+            for line in lines:
+                stripped = line.strip()
+                if proc_re.match(stripped):
+                    break
+                if public_re.match(stripped):
+                    for variable, _ in _parse_vba_declarations(stripped):
+                        global_names.add(variable.lower())
+        except Exception:
+            continue
+
+    for component_name, module, count, lines in modules:
+        try:
+            if not count:
+                continue
+            issues = run_all_rules(component_name, lines, global_names=global_names)
+            issue = next(
+                (item for item in issues if item.rule_id == "UV001" and item.severity == "ERROR"),
+                None,
+            )
+            if issue is None:
+                continue
+            line_text = module.Lines(issue.line_num, 1)
+            match = re.search(r"Undeclared variable '([^']+)'", issue.message)
+            column = 1
+            if match:
+                position = line_text.lower().find(match.group(1).lower())
+                if position >= 0:
+                    column = position + 1
+            result["error_module"] = component_name
+            result["error_line"] = issue.line_num
+            result["error_column"] = column
+            start = max(1, issue.line_num - 5)
+            end = min(count, issue.line_num + 5)
+            result["error_context"] = [
+                f"{'>>> ' if line == issue.line_num else '    '}{line:4d}: {module.Lines(line, 1)}"
+                for line in range(start, end + 1)
+            ]
+            return
+        except Exception:
+            continue
+
+
+def _hide_vbe_ui(excel) -> None:
+    """Cancel transient VBE command menus and keep the editor headless."""
+    try:
+        window = excel.VBE.MainWindow
+        result = ctypes.c_size_t(0)
+        user32.SendMessageTimeoutW(
+            int(window.HWnd), WM_CANCELMODE, 0, 0,
+            0x0002, 250, ctypes.byref(result),
+        )
+        window.Visible = False
+        del window
+    except Exception:
+        pass
+
+
 # ===================================================================
 #  Dialog Event
 # ===================================================================
+
+@dataclass
+class DialogControl:
+    hwnd: int
+    class_name: str
+    text: str
+
+    def to_dict(self) -> dict:
+        return {"hwnd": self.hwnd, "class_name": self.class_name, "text": self.text}
+
 
 @dataclass
 class DialogEvent:
@@ -172,6 +351,8 @@ class DialogEvent:
     title: str
     dialog_type: str  # "compile_error", "runtime_error", "msgbox", "file_dialog", "alert", "unknown"
     texts: List[str] = field(default_factory=list)
+    controls: List[DialogControl] = field(default_factory=list)
+    sequence: int = 0
     button_clicked: str = ""
     dismissed: bool = False
 
@@ -188,6 +369,8 @@ class DialogEvent:
             "type": self.dialog_type,
             "text": self.text,
             "texts": self.texts,
+            "controls": [control.to_dict() for control in self.controls],
+            "sequence": self.sequence,
             "button_clicked": self.button_clicked,
             "dismissed": self.dismissed,
         }
@@ -261,6 +444,8 @@ class DialogWatchdog:
         dismiss_strategy: str = "ok",
         on_dialog: Optional[Callable] = None,
         target_pid: Optional[int] = None,
+        capture_attempts: int = 3,
+        capture_retry_delay: float = 0.075,
     ):
         from xlvbatools._compat import require_windows
         require_windows("DialogWatchdog")
@@ -271,12 +456,17 @@ class DialogWatchdog:
         self.dismiss_strategy = dismiss_strategy
         self.on_dialog = on_dialog
         self.target_pid = target_pid
+        if self.auto_dismiss and self.target_pid is None:
+            raise ValueError("An auto-dismissing watchdog requires target_pid.")
+        self.capture_attempts = max(1, capture_attempts)
+        self.capture_retry_delay = max(0.0, capture_retry_delay)
 
         self._events: List[DialogEvent] = []
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._seen_hwnds: set = set()
+        self._next_sequence = 1
 
     @property
     def events(self) -> List[DialogEvent]:
@@ -325,6 +515,7 @@ class DialogWatchdog:
         self._seen_hwnds.clear()
         with self._lock:
             self._events.clear()
+        self._next_sequence = 1
 
         self._thread = threading.Thread(
             target=self._poll_loop,
@@ -400,32 +591,42 @@ class DialogWatchdog:
 
     def _handle_dialog(self, hwnd: int):
         """Capture dialog content and optionally dismiss it."""
-        self._seen_hwnds.add(hwnd)
-
         title = _get_window_text(hwnd)
-        texts = []
-        buttons = []
+        texts, buttons, controls = [], [], []
+        seen_texts, seen_controls = set(), set()
 
-        # Enumerate all child controls
-        def _enum_children(child_hwnd, _lparam):
+        for attempt in range(self.capture_attempts):
+            def _enum_children(child_hwnd, _lparam):
+                try:
+                    child_class = _get_window_class(child_hwnd)
+                    child_text = _get_control_text(child_hwnd)
+                    key = (int(child_hwnd), child_class, child_text)
+                    if key not in seen_controls:
+                        controls.append(DialogControl(int(child_hwnd), child_class, child_text))
+                        seen_controls.add(key)
+                    if child_text:
+                        if child_class == "Button":
+                            button = (int(child_hwnd), child_text)
+                            if button not in buttons:
+                                buttons.append(button)
+                        elif child_text not in seen_texts:
+                            texts.append(child_text)
+                            seen_texts.add(child_text)
+                except Exception as error:
+                    logger.debug(f"Error capturing child control {child_hwnd}: {error}")
+                return True
+
             try:
-                child_class = _get_window_class(child_hwnd)
-                child_text = _get_control_text(child_hwnd)
+                callback = EnumChildProc(_enum_children)
+                user32.EnumChildWindows(hwnd, callback, 0)
+            except Exception as e:
+                logger.debug(f"Error enumerating dialog children: {e}")
+            if texts or attempt == self.capture_attempts - 1:
+                break
+            self._stop_event.wait(self.capture_retry_delay)
 
-                if child_text:
-                    if child_class == "Button":
-                        buttons.append((child_hwnd, child_text))
-                    else:
-                        texts.append(child_text)
-            except Exception:
-                pass
-            return True
-
-        try:
-            callback = EnumChildProc(_enum_children)
-            user32.EnumChildWindows(hwnd, callback, 0)
-        except Exception as e:
-            logger.debug(f"Error enumerating dialog children: {e}")
+        # Mark seen only after all bounded capture attempts complete.
+        self._seen_hwnds.add(hwnd)
 
         # Classify
         dialog_type = _classify_dialog(title, texts)
@@ -437,7 +638,10 @@ class DialogWatchdog:
             title=title,
             dialog_type=dialog_type,
             texts=texts,
+            controls=controls,
+            sequence=self._next_sequence,
         )
+        self._next_sequence += 1
 
         # Log immediately
         logger.warning(f"Dialog detected: {event}")
@@ -463,7 +667,7 @@ class DialogWatchdog:
         preferred_order = self._get_button_priority()
         for preferred in preferred_order:
             for btn_hwnd, btn_text in buttons:
-                if btn_text.strip().lower().rstrip(".") in preferred:
+                if _normalize_button_text(btn_text) in preferred:
                     try:
                         _click_button(btn_hwnd)
                         event.button_clicked = btn_text
@@ -474,7 +678,7 @@ class DialogWatchdog:
 
         # Strategy 2: Click ANY button we recognize
         for btn_hwnd, btn_text in buttons:
-            if btn_text.strip().lower().rstrip(".") in DISMISS_BUTTONS:
+            if _normalize_button_text(btn_text) in DISMISS_BUTTONS:
                 try:
                     _click_button(btn_hwnd)
                     event.button_clicked = btn_text
@@ -485,10 +689,12 @@ class DialogWatchdog:
 
         # Strategy 3: Send WM_CLOSE
         try:
-            _close_window(hwnd)
-            event.button_clicked = "[WM_CLOSE]"
-            logger.info(f"Sent WM_CLOSE to dialog: {event.title}")
-            return True
+            if _close_window(hwnd):
+                event.button_clicked = "[WM_CLOSE]"
+                logger.info(f"Sent WM_CLOSE to dialog: {event.title}")
+                return True
+            logger.debug(f"PostMessageW rejected WM_CLOSE for dialog: {event.title}")
+            return False
         except Exception as e:
             logger.debug(f"Failed to send WM_CLOSE: {e}")
             return False
@@ -511,10 +717,11 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
     """
     Trigger VBE compilation and capture any compile error dialogs.
 
-    Uses the VBE CommandBars compile button (ID=578) to force compilation,
-    then checks the watchdog for any error dialogs that appeared. If a compile
-    error is found, it also reads the VBE active code pane to identify the
-    exact module and line of the error.
+    Inspects VBE compile control ID 578, then forces project compilation by
+    running a temporary no-op probe procedure. This avoids the visible menu
+    flash caused by executing VBE CommandBar controls. If a compile error is
+    found, the function reads VBE selection or static Option Explicit evidence
+    to identify the exact module and line.
 
     Parameters
     ----------
@@ -537,31 +744,54 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
     """
     own_watchdog = watchdog is None
     if own_watchdog:
-        watchdog = DialogWatchdog(poll_interval=0.2, timeout=30.0)
+        _, target_pid = _get_window_pid(excel.Hwnd)
+        watchdog = DialogWatchdog(poll_interval=0.2, timeout=30.0, target_pid=target_pid)
         watchdog.start()
 
     result = {
         "success": True,
+        "already_compiled": False,
         "errors": [],
         "error_module": "",
         "error_line": 0,
+        "error_column": 0,
         "error_context": [],
+        "target_project": "",
+        "active_project": "",
+        "target_project_file": "",
+        "active_project_file": "",
+        "compile_verified": True,
+        "warnings": [],
     }
+    probe_component = None
 
     try:
         # Make VBE available (required for compile button)
         vbe = excel.VBE
 
-        # Activate all components so VBE loads them
-        for comp in wb.VBProject.VBComponents:
-            try:
-                comp.Activate()
-            except Exception:
-                pass
+        # CommandBars control 578 compiles the active VB project, which is not
+        # necessarily the workbook passed by the caller. Activate exactly one
+        # component to target this project without walking every component or
+        # making the VBE visible.
+        wb.Activate()
+        try:
+            active_file = os.path.abspath(vbe.ActiveVBProject.FileName)
+        except Exception:
+            active_file = ""
+        if os.path.normcase(active_file) != os.path.normcase(os.path.abspath(wb.FullName)):
+            target_component = wb.VBProject.VBComponents.Item(1)
+            target_component.Activate()
+            del target_component
+        result["target_project"] = wb.VBProject.Name
+        result["target_project_file"] = wb.VBProject.FileName
+        try:
+            result["active_project"] = vbe.ActiveVBProject.Name
+            result["active_project_file"] = vbe.ActiveVBProject.FileName
+        except Exception:
+            result["active_project"] = ""
 
-        time.sleep(0.5)
-
-        # Find and execute the compile button
+        # Inspect control 578 for compatibility, but do not execute it: VBE's
+        # CommandBar API can flash a File menu even while MainWindow is hidden.
         compile_btn = vbe.CommandBars.FindControl(Id=578)
         if compile_btn is None:
             result["errors"].append({
@@ -570,38 +800,81 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
             })
             return result
 
-        # Execute compile -- if there's an error, this will trigger a dialog
-        compile_btn.Execute()
-        time.sleep(2.0)  # Give dialog time to appear
+        if not compile_btn.Enabled:
+            result["already_compiled"] = True
+            return result
 
-        # Check watchdog for errors
-        if watchdog.had_errors:
-            result["success"] = False
-            for event in watchdog.events:
-                if event.dialog_type in ("compile_error", "runtime_error", "vb_error"):
-                    result["errors"].append(event.to_dict())
+        pre_sequence = max((event.sequence for event in watchdog.events), default=0)
 
-            # Try to read the error location from the active code pane
+        # Adding and running a no-op procedure forces VBA to compile the active
+        # project without invoking any VBE command-bar UI. The component is
+        # removed before returning and is never intentionally persisted.
+        suffix = str(int(time.time() * 1000000))[-8:]
+        module_name = f"modXlvbaProbe{suffix}"
+        procedure_name = f"XlvbaCompileProbe{suffix}"
+        probe_component = wb.VBProject.VBComponents.Add(1)
+        probe_component.Name = module_name
+        probe_component.CodeModule.AddFromString(
+            f"Option Explicit\r\nPublic Sub {procedure_name}()\r\nEnd Sub\r\n"
+        )
+        _hide_vbe_ui(excel)
+        probe_error = None
+        try:
+            escaped_name = wb.Name.replace("'", "''")
+            excel.Run(f"'{escaped_name}'!{procedure_name}")
+        except Exception as error:
+            probe_error = error
+        _hide_vbe_ui(excel)
+        compile_incomplete = bool(compile_btn.Enabled)
+        deadline = time.time() + 1.0
+        new_error_events = []
+        while time.time() < deadline:
+            _hide_vbe_ui(excel)
+            new_error_events = [
+                event for event in watchdog.events
+                if event.sequence > pre_sequence and event.dialog_type in
+                ("compile_error", "runtime_error", "vb_error")
+            ]
+            if new_error_events:
+                break
+            time.sleep(0.05)
+
+        try:
+            wb.VBProject.VBComponents.Remove(probe_component)
+            probe_component = None
+        except Exception as error:
+            result["warnings"].append(f"Could not remove temporary compile probe: {error}")
+
+        # A successful compile disables control 578. If it remains enabled,
+        # VBE stopped at an error even when no modal dialog was raised (a
+        # common behavior while the VBE window is hidden).
+        if new_error_events or compile_incomplete:
             try:
-                pane = vbe.ActiveCodePane
-                if pane is not None:
-                    module = pane.CodeModule
-                    result["error_module"] = module.Name
-                    sel = pane.GetSelection()
-                    error_line = sel[0]  # sel is (startLine, startCol, endLine, endCol)
-                    result["error_line"] = error_line
-
-                    # Capture surrounding context (+/-5 lines)
-                    start = max(1, error_line - 5)
-                    end = min(module.CountOfLines, error_line + 5)
-                    context = []
-                    for i in range(start, end + 1):
-                        prefix = ">>> " if i == error_line else "    "
-                        line_text = module.Lines(i, 1)
-                        context.append(f"{prefix}{i:4d}: {line_text}")
-                    result["error_context"] = context
+                _populate_compile_location(vbe, wb, result)
+                if not result["error_line"]:
+                    _populate_static_compile_location(wb, result)
             except Exception as e:
                 logger.debug(f"Could not read VBE error location: {e}")
+
+        if new_error_events or result["error_line"]:
+            result["success"] = False
+            result["errors"].extend(event.to_dict() for event in new_error_events)
+            if not new_error_events:
+                result["errors"].append({
+                    "type": "compile_error",
+                    "message": "VBE compilation did not complete; compile control remained enabled.",
+                })
+        elif compile_incomplete:
+            result["compile_verified"] = False
+            result["warnings"].append(
+                "VBE compile control remained enabled, but no compile error dialog or static Option Explicit failure was found."
+            )
+        elif probe_error is not None:
+            result["success"] = False
+            result["errors"].append({
+                "type": "exception",
+                "message": f"Compile probe failed without a captured compile error: {probe_error}",
+            })
 
     except Exception as e:
         result["success"] = False
@@ -610,6 +883,12 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
             "message": f"Compile test raised exception: {e}",
         })
     finally:
+        _hide_vbe_ui(excel)
+        if probe_component is not None:
+            try:
+                wb.VBProject.VBComponents.Remove(probe_component)
+            except Exception:
+                pass
         if own_watchdog:
             watchdog.stop()
 

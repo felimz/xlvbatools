@@ -33,11 +33,12 @@ import gc
 import os
 import time
 import logging
-from typing import Any, Optional
+import uuid
+import sys
+from typing import Any, Callable, Optional
 
 from xlvbatools._compat import require_windows
 from xlvbatools.core.process import (
-    kill_excel,
     is_excel_running,
     close_excel_gracefully,
     is_process_running,
@@ -95,6 +96,9 @@ class ExcelSession:
         init_delay: float = 1.5,
         enable_watchdog: bool = True,
         watchdog_poll_interval: float = 0.25,
+        exit_grace_period: float = 3.0,
+        terminate_owned_process: bool = True,
+        on_excel_started: Optional[Callable[[int], None]] = None,
     ):
         require_windows("ExcelSession")
 
@@ -105,67 +109,79 @@ class ExcelSession:
         self.init_delay = init_delay
         self.enable_watchdog = enable_watchdog
         self.watchdog_poll_interval = watchdog_poll_interval
+        self.exit_grace_period = max(0.0, exit_grace_period)
+        self.terminate_owned_process = terminate_owned_process
+        self.on_excel_started = on_excel_started
 
         self.excel = None
         self.wb = None
         self.watchdog = None
         self.excel_pid = None
+        self.cleanup_result = {
+            "pid": None, "quit_requested": False, "exited_gracefully": False,
+            "force_terminated": False, "still_running": False,
+        }
+        self.phase = "session_start"
 
     def __enter__(self):
         import win32com.client
+
+        if not os.path.exists(self.workbook_path):
+            raise FileNotFoundError(f"Workbook not found: {self.workbook_path}")
 
         if self.kill_on_enter:
             if is_excel_running():
                 # Attempt graceful closure of the target workbook first
                 success = close_excel_gracefully(target_path=self.workbook_path)
-                # If graceful closure failed, fall back to force-kill
+                # Never terminate unrelated Excel processes as a fallback.
                 if not success:
-                    logger.info("Graceful closure of target workbook failed. Force-killing EXCEL.EXE...")
-                    kill_excel()
-
-        if not os.path.exists(self.workbook_path):
-            raise FileNotFoundError(f"Workbook not found: {self.workbook_path}")
-
-        # Start the dialog watchdog BEFORE opening Excel
-        if self.enable_watchdog:
-            from xlvbatools.core.watchdog import DialogWatchdog
-            self.watchdog = DialogWatchdog(
-                poll_interval=self.watchdog_poll_interval,
-                # 600s (10 min) instead of watchdog default (300s) because
-                # sessions with macro execution may run longer than 5 minutes.
-                timeout=600.0,
-                auto_dismiss=True,
-                dismiss_strategy="ok",
-            )
-            self.watchdog.start()
+                    logger.warning("Could not close the stale target workbook; continuing without global termination")
 
         logger.info(f"Opening Excel session: {self.workbook_path}")
         # Use DispatchEx to ensure a new, isolated Excel instance is spawned
         self.excel = win32com.client.DispatchEx("Excel.Application")
-        self.excel.Visible = self.visible
-        self.excel.DisplayAlerts = False
-        self.excel.AutomationSecurity = 1  # Enable macros
 
-        # Retrieve the PID of our spawned Excel instance
+        self.phase = "workbook_open"
         try:
             import win32process
             _, self.excel_pid = win32process.GetWindowThreadProcessId(self.excel.Hwnd)
+            if not self.excel_pid:
+                raise RuntimeError("Excel returned an invalid process ID")
             logger.info(f"Spawned Excel process with PID: {self.excel_pid}")
-            # Wire PID into watchdog so it only monitors our Excel instance
-            if self.watchdog is not None:
-                self.watchdog.target_pid = self.excel_pid
         except Exception as e:
-            self.excel_pid = None
-            logger.warning(f"Could not retrieve Excel PID: {e}")
+            try:
+                self.excel.Quit()
+            finally:
+                self.excel = None
+            raise RuntimeError("Could not determine the spawned Excel PID; refusing to start an unscoped watchdog") from e
 
-        self.wb = self.excel.Workbooks.Open(self.workbook_path, UpdateLinks=0)
-        time.sleep(self.init_delay)
+        if self.enable_watchdog:
+            from xlvbatools.core.watchdog import DialogWatchdog
+            self.watchdog = DialogWatchdog(
+                poll_interval=self.watchdog_poll_interval, timeout=600.0,
+                auto_dismiss=True, dismiss_strategy="ok", target_pid=self.excel_pid,
+            )
+            self.watchdog.start()
+
+        if self.on_excel_started is not None:
+            self.on_excel_started(self.excel_pid)
+
+        try:
+            self.excel.Visible = self.visible
+            self.excel.DisplayAlerts = False
+            self.excel.AutomationSecurity = 1
+            self.wb = self.excel.Workbooks.Open(self.workbook_path, UpdateLinks=0)
+            time.sleep(self.init_delay)
+        except Exception:
+            self.__exit__(*sys.exc_info())
+            raise
 
         # Check if any dialogs appeared during open
         if self.watchdog and self.watchdog.had_errors:
             logger.warning(f"Dialogs during workbook open:\n{self.watchdog.error_summary}")
 
         logger.info(f"Workbook opened: {os.path.basename(self.workbook_path)}")
+        self.phase = "ready"
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -177,22 +193,31 @@ class ExcelSession:
                 for event in events:
                     logger.info(f"  {event}")
 
+        close_error = None
+        save_error = None
         try:
             if self.wb is not None:
                 if self.save_on_exit and exc_type is None:
-                    self.wb.Save()
-                    logger.info("Workbook saved")
+                    try:
+                        self.wb.Save()
+                        logger.info("Workbook saved")
+                    except Exception as e:
+                        save_error = e
+                        logger.error(f"Error saving workbook: {e}")
                 self.wb.Close(False)
                 pid_suffix = f" (PID: {self.excel_pid})" if self.excel_pid else ""
                 logger.info(f"Workbook closed{pid_suffix}")
         except Exception as e:
+            close_error = e
             logger.warning(f"Error closing workbook: {e}")
         finally:
             self.wb = None
             gc.collect()
 
+        quit_requested = False
         try:
             if self.excel is not None:
+                quit_requested = True
                 self.excel.Quit()
                 pid_suffix = f" (PID: {self.excel_pid})" if self.excel_pid else ""
                 logger.info(f"Excel quit{pid_suffix}")
@@ -202,23 +227,27 @@ class ExcelSession:
             self.excel = None
             gc.collect()
 
-        # Final safety: wait a moment for Excel to exit. We only force-kill if there was an exception
-        # (which could indicate a hang) or if the process remains active after a grace period.
-        # Note: If the caller holds references to COM objects (e.g. from local variables),
-        # Excel cannot exit until those references are cleared by GC. Force-killing too early
-        # will trigger RPC server errors (0x800706ba) during GC.
+        self.cleanup_result.update({"pid": self.excel_pid, "quit_requested": quit_requested})
         if self.excel_pid is not None:
-            grace_period = 2.0 if exc_type is None else 0.5
-            exited = False
-            for _ in range(int(grace_period / 0.1)):
+            deadline = time.time() + self.exit_grace_period
+            while time.time() < deadline:
                 if not is_process_running(self.excel_pid):
-                    exited = True
+                    self.cleanup_result["exited_gracefully"] = True
                     break
                 time.sleep(0.1)
-
-            if not exited and (exc_type is not None or not self.kill_on_enter):
-                logger.info(f"Excel process PID {self.excel_pid} did not exit cleanly. Force-killing spawned process...")
-                kill_process_by_pid(self.excel_pid)
+            if is_process_running(self.excel_pid) and self.terminate_owned_process:
+                logger.warning(f"Excel PID {self.excel_pid} did not exit; terminating the owned process")
+                self.cleanup_result["force_terminated"] = kill_process_by_pid(self.excel_pid)
+                deadline = time.time() + max(1.0, self.exit_grace_period)
+                while time.time() < deadline and is_process_running(self.excel_pid):
+                    time.sleep(0.1)
+            self.cleanup_result["still_running"] = is_process_running(self.excel_pid)
+            if self.cleanup_result["still_running"]:
+                logger.error(f"Cleanup failed: owned Excel PID {self.excel_pid} is still running")
+        if close_error:
+            self.cleanup_result["workbook_close_error"] = str(close_error)
+        if save_error:
+            self.cleanup_result["workbook_save_error"] = str(save_error)
 
         return False  # Don't suppress exceptions
 
@@ -287,9 +316,9 @@ class ExcelSession:
         dict
             Keys: success, elapsed_seconds, error, dialog_events
         """
-        pre_count = 0
+        pre_sequence = 0
         if self.watchdog:
-            pre_count = len(self.watchdog.events)
+            pre_sequence = max((event.sequence for event in self.watchdog.events), default=0)
 
         t0 = time.time()
         try:
@@ -300,7 +329,7 @@ class ExcelSession:
             new_events = []
             if self.watchdog:
                 all_events = self.watchdog.events
-                new_events = all_events[pre_count:]
+                new_events = [event for event in all_events if event.sequence > pre_sequence]
 
             result = {
                 "success": not any(
@@ -308,8 +337,14 @@ class ExcelSession:
                     for e in new_events
                 ),
                 "elapsed_seconds": elapsed,
+                "run_id": str(uuid.uuid4()),
+                "macro": macro_name,
+                "phase": "macro_execution",
                 "dialog_events": [e.to_dict() for e in new_events],
+                "cleanup": self.cleanup_result,
             }
+            if not result["success"]:
+                result["primary_error"] = self._primary_error(new_events, None)
 
             if new_events:
                 logger.warning(
@@ -328,7 +363,7 @@ class ExcelSession:
             new_events = []
             if self.watchdog:
                 all_events = self.watchdog.events
-                new_events = all_events[pre_count:]
+                new_events = [event for event in all_events if event.sequence > pre_sequence]
 
             if new_events:
                 dialog_text = "; ".join(
@@ -340,9 +375,33 @@ class ExcelSession:
             return {
                 "success": False,
                 "elapsed_seconds": elapsed,
+                "run_id": str(uuid.uuid4()),
+                "macro": macro_name,
+                "phase": "macro_execution",
                 "error": error_msg,
+                "com_error": self._com_error(e),
+                "primary_error": self._primary_error(new_events, e),
                 "dialog_events": [e.to_dict() for e in new_events],
+                "cleanup": self.cleanup_result,
             }
+
+    @staticmethod
+    def _com_error(error: Exception) -> dict:
+        hresult = getattr(error, "hresult", None)
+        message = getattr(error, "strerror", None) or str(error)
+        return {"hresult": hresult, "message": message}
+
+    @staticmethod
+    def _primary_error(events: list, error: Optional[Exception]) -> str:
+        for event in events:
+            if event.dialog_type in ("runtime_error", "compile_error", "vb_error") and event.text:
+                return event.text
+        if error is not None:
+            excepinfo = getattr(error, "excepinfo", None)
+            if excepinfo and len(excepinfo) > 2 and excepinfo[2]:
+                return str(excepinfo[2])
+            return str(error)
+        return ""
 
     # -- Compile Test --
 
@@ -362,7 +421,7 @@ class ExcelSession:
 
     # -- Named Range Helpers --
 
-    def set_named_range(self, name: str, value) -> bool:
+    def set_named_range(self, name: str, value, strict: bool = False) -> bool:
         """Set a named range value. Returns True on success."""
         try:
             rng = self.wb.Names(name).RefersToRange
@@ -370,6 +429,8 @@ class ExcelSession:
             logger.info(f"Set {name} = {value}")
             return True
         except Exception as e:
+            if strict:
+                raise KeyError(f"Could not set named range '{name}': {e}") from e
             logger.warning(f"Could not set named range '{name}': {e}")
             return False
 

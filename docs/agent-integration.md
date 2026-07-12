@@ -93,15 +93,16 @@ When `xlvba run` reports a dialog event, agents should:
 ### Safe Macro Execution (Python API)
 
 ```python
-from xlvbatools.core.session import ExcelSession
+from xlvbatools.macro import run_macro
 
-with ExcelSession("workbook.xlsm") as session:
-    result = session.run_macro("MyMacro", timeout=60)
-    if not result["success"]:
-        print(f"Error: {result['error']}")
-        for event in result["dialog_events"]:
-            print(f"  [{event['type']}] {event['text']}")
+result = run_macro("workbook.xlsm", "MyMacro", timeout=60)
+if not result["success"]:
+    print(f"{result['phase']} failed: {result['primary_error']}")
+    for event in result["dialog_events"]:
+        print(f"  [{event['type']}] {event['text']}")
 ```
+
+Use the high-level runner when a real deadline is required. Direct `ExcelSession.run_macro()` remains useful for multiple operations within one session, but its blocking COM call cannot enforce a timeout.
 
 ### Programmatic Lint
 
@@ -157,7 +158,7 @@ background thread that automatically captures and dismisses pop-up dialogs:
 1. **VBA Error Handlers** (`On Error GoTo ErrHandler`) -- errors become COM exceptions
 2. **VBA UserControl Guards** -- interactive code is skipped in headless mode
 3. **Python DialogWatchdog** -- catches compile errors and anything that bypasses layers 1-2
-4. **Targeted Session Sandboxing** -- uses ROT and Hwnd tracking to close only the target workbook and its instance, ensuring unrelated user workbooks remain untouched.
+4. **Targeted Session Sandboxing** -- starts the watchdog only after PID discovery and force-terminates only the spawned PID during cleanup, ensuring unrelated user workbooks remain untouched.
 
 ---
 

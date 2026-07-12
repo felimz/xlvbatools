@@ -19,7 +19,9 @@ with ExcelSession(
     kill_on_enter=True,
     init_delay=1.5,
     enable_watchdog=True,
-    watchdog_poll_interval=0.25
+    watchdog_poll_interval=0.25,
+    exit_grace_period=3.0,
+    terminate_owned_process=True,
 ) as session:
     excel = session.excel
     wb = session.wb
@@ -34,20 +36,85 @@ with ExcelSession(
 * **`init_delay` (float, default `1.5`):** delay in seconds to wait for VBA project initialization.
 * **`enable_watchdog` (bool, default `True`):** Starts dialog dismissal daemon if `True`.
 * **`watchdog_poll_interval` (float, default `0.25`):** Watchdog polling interval in seconds.
+* **`exit_grace_period` (float, default `3.0`):** Seconds to wait for the owned Excel PID after requesting quit.
+* **`terminate_owned_process` (bool, default `True`):** Force-terminates only the spawned PID if it outlives the grace period.
 
 #### Properties
 * **`excel`:** Reference to the spawned raw Excel COM Application object.
 * **`wb`:** Reference to the opened Workbook object.
 * **`excel_pid` (int | None):** The process ID of the spawned Excel process.
+* **`cleanup_result` (dict):** Records quit request, graceful exit, targeted termination, and final process state.
 * **`vb_project`:** Getter for the workbook's `VBProject` object. Validates "Trust access to the VBA project object model" automatically. If disabled in the Trust Center, raises a clear, diagnostic `RuntimeError` instead of raising a raw COM exception.
 
 #### Methods
 * **`run_macro(macro_name: str, timeout: float = 120.0) -> dict`:**
-  Runs a VBA macro safely. Under COM error or dialog pop-ups, returns diagnostic information.
-  * **Returns:** Dict containing keys `success` (bool), `elapsed_seconds` (float), `error` (str | None), and `dialog_events` (list).
+  Runs a VBA macro inside an already-open session. Under COM error or dialog pop-ups, returns diagnostic information. Because the COM call executes in the caller process, this low-level method cannot interrupt an infinite loop; use `xlvbatools.macro.run_macro` for an enforced timeout.
+  * **Returns:** Structured result containing `success`, `run_id`, `macro`, `phase`, `elapsed_seconds`, `primary_error`, `com_error`, `dialog_events`, and `cleanup` as applicable.
 * **`compile_test() -> dict`:**
-  Triggers a compile test in VBE.
+  Forces project compilation through a temporary unsaved no-op VBA probe, avoiding visible VBE command-bar menus.
   * **Returns:** Dict containing keys `success` (bool), `error` (str | None), `error_context` (list[str]).
+* **`set_named_range(name, value, strict=False) -> bool`:** Sets a workbook name. Strict mode raises immediately so execution cannot continue with stale inputs.
+
+### `xlvbatools.macro.run_macro`
+
+Runs the complete Excel session in a spawned worker process. The worker reports its isolated Excel PID before opening the workbook. The parent waits up to `timeout`, terminates only that PID when the deadline expires, and then terminates the blocked worker if necessary.
+
+```python
+from xlvbatools.macro import run_macro
+
+result = run_macro("workbook.xlsm", "OnCalculate", timeout=120)
+if result.get("timed_out"):
+    print(result["excel_pid"], result["cleanup"])
+```
+
+Timeout results include `timed_out`, `timeout_seconds`, `excel_pid`, and targeted `cleanup` details. Frozen Windows executables should call `multiprocessing.freeze_support()` in their guarded entry point.
+
+Successful result example:
+
+```json
+{
+  "success": true,
+  "run_id": "9e11b72e-9b41-43af-b351-3ab0c2158e83",
+  "macro": "OnCalculate",
+  "phase": "macro_execution",
+  "elapsed_seconds": 1.234,
+  "excel_pid": 12345,
+  "dialog_events": [],
+  "cleanup": {
+    "pid": 12345,
+    "quit_requested": true,
+    "exited_gracefully": true,
+    "force_terminated": false,
+    "still_running": false
+  }
+}
+```
+
+Timeout result example:
+
+```json
+{
+  "success": false,
+  "run_id": "8b832a6c-2601-4fd3-aa51-805bd95ab36d",
+  "macro": "LoopForever",
+  "phase": "macro_execution",
+  "timed_out": true,
+  "timeout_seconds": 120.0,
+  "excel_pid": 12345,
+  "primary_error": "Execution timed out after 120.000 seconds",
+  "dialog_events": [],
+  "cleanup": {
+    "pid": 12345,
+    "quit_requested": false,
+    "exited_gracefully": false,
+    "force_terminated": true,
+    "worker_terminated": false,
+    "still_running": false
+  }
+}
+```
+
+See [Headless Reliability Migration](headless-reliability-migration.md) for compatibility guidance.
 
 ---
 
@@ -143,4 +210,3 @@ Configures centralized stream and rotating file logging for all library operatio
 
 #### Path Normalization
 All log outputs are automatically formatted via a custom `PathNormalizingFormatter` to convert Windows-style backslashes (`\`) into forward slashes (`/`), guaranteeing cross-platform consistency for automated log parsers.
-

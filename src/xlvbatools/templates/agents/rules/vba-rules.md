@@ -15,7 +15,7 @@ description: "VBA coding standards, COM automation safety rules, and encoding co
 
 ## COM Automation Rules
 
-1. **Kill stale Excel** before every COM session: `taskkill /f /im EXCEL.EXE`
+1. **Clean up only session-owned Excel** through `ExcelSession`; never terminate every `EXCEL.EXE` process.
 2. **Use ExcelSession** from `xlvbatools.core.session` -- never manually call `Dispatch("Excel.Application")`
 3. **Check dialog events** after every macro run
 4. **Use try/finally** to ensure cleanup
