@@ -23,7 +23,11 @@ Usage:
 import json
 import logging
 import os
+import subprocess
+import sys
+import tempfile
 import time
+from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
 
@@ -168,11 +172,160 @@ def dump_sheet_shapes(sheet) -> list:
     return shapes_info
 
 
+def _scaled_boundaries(sizes: list[float], pixel_extent: int) -> list[int]:
+    """Map Excel point sizes to stable pixel boundaries without rounding drift."""
+    if pixel_extent <= 0 or not sizes:
+        raise ValueError("Overlay geometry requires a positive extent and sizes")
+    normalized = []
+    for size in sizes:
+        try:
+            normalized.append(max(0.0, float(size)))
+        except (TypeError, ValueError):
+            normalized.append(0.0)
+    total = sum(normalized)
+    if total <= 0:
+        raise ValueError("Overlay geometry contains no visible rows or columns")
+    boundaries = [0]
+    cumulative = 0.0
+    for size in normalized:
+        cumulative += size
+        boundaries.append(round(pixel_extent * cumulative / total))
+    boundaries[-1] = pixel_extent
+    return [max(0, min(pixel_extent, value)) for value in boundaries]
+
+
+def _worksheet_is_renderable(sheet, include_hidden_sheets: bool) -> bool:
+    """Return whether a worksheet may be screenshotted under the policy."""
+    return include_hidden_sheets or int(sheet.Visible) == -1
+
+
+def _apply_headers_and_grid_overlay(
+    image_path: str,
+    column_widths: list[float],
+    row_heights: list[float],
+    first_column: int,
+    first_row: int,
+    include_headers: bool = True,
+    include_grid_overlay: bool = True,
+) -> None:
+    """Add geometry-accurate headers/grid around an Excel-rendered PNG."""
+    if not include_headers and not include_grid_overlay:
+        return
+    from PIL import Image, ImageDraw, ImageFont
+
+    with Image.open(image_path) as source:
+        source.load()
+        image = source.convert("RGBA")
+    x_bounds = _scaled_boundaries(column_widths, image.width)
+    y_bounds = _scaled_boundaries(row_heights, image.height)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 12)
+    except OSError:
+        font = ImageFont.load_default()
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+    def text_size(value: str) -> tuple[int, int]:
+        box = measure.textbbox((0, 0), value, font=font)
+        return box[2] - box[0], box[3] - box[1]
+
+    max_row_label = str(first_row + len(row_heights) - 1)
+    row_label_width, font_height = text_size(max_row_label)
+    pad_left = max(32, row_label_width + 14) if include_headers else 0
+    pad_top = max(20, font_height + 8) if include_headers else 0
+    canvas = Image.new(
+        "RGBA", (image.width + pad_left, image.height + pad_top),
+        (255, 255, 255, 255),
+    )
+    canvas.paste(image, (pad_left, pad_top))
+    draw = ImageDraw.Draw(canvas)
+    header_fill = (240, 240, 240, 255)
+    header_line = (180, 180, 180, 255)
+    grid_line = (210, 210, 210, 255)
+
+    if include_headers:
+        draw.rectangle((0, 0, canvas.width - 1, pad_top - 1), fill=header_fill)
+        draw.rectangle((0, 0, pad_left - 1, canvas.height - 1), fill=header_fill)
+        draw.line((pad_left, 0, pad_left, canvas.height - 1), fill=header_line)
+        draw.line((0, pad_top, canvas.width - 1, pad_top), fill=header_line)
+
+    for index in range(len(column_widths)):
+        left, right = x_bounds[index], x_bounds[index + 1]
+        x = pad_left + right
+        if include_grid_overlay and 0 < right < image.width:
+            draw.line((x, pad_top, x, canvas.height - 1), fill=grid_line)
+        if include_headers and right > left:
+            label = get_column_letter(first_column + index)
+            width, height = text_size(label)
+            if width + 4 <= right - left:
+                draw.text(
+                    (pad_left + left + (right - left - width) // 2,
+                     max(0, (pad_top - height) // 2)),
+                    label, fill=(50, 50, 50, 255), font=font,
+                )
+
+    for index in range(len(row_heights)):
+        top, bottom = y_bounds[index], y_bounds[index + 1]
+        y = pad_top + bottom
+        if include_grid_overlay and 0 < bottom < image.height:
+            draw.line((pad_left, y, canvas.width - 1, y), fill=grid_line)
+        if include_headers and bottom > top:
+            label = str(first_row + index)
+            width, height = text_size(label)
+            if height + 2 <= bottom - top:
+                draw.text(
+                    (max(0, (pad_left - width) // 2),
+                     pad_top + top + (bottom - top - height) // 2),
+                    label, fill=(50, 50, 50, 255), font=font,
+                )
+
+    draw.rectangle(
+        (0, 0, canvas.width - 1, canvas.height - 1),
+        outline=header_line, width=1,
+    )
+    temporary_path = image_path + ".overlay.tmp"
+    try:
+        canvas.convert("RGB").save(temporary_path, "PNG")
+        os.replace(temporary_path, image_path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+        image.close()
+        canvas.close()
+
+
+def _show_owned_excel_offscreen(excel) -> None:
+    """Make only the owned Excel HWND renderable without activating onscreen."""
+    import ctypes
+
+    hwnd = int(excel.Hwnd)
+    user32 = ctypes.windll.user32
+    swp_no_zorder = 0x0004
+    swp_noactivate = 0x0010
+    # Position the hidden HWND first, because setting Application.Visible can
+    # otherwise display it at its last normal desktop coordinates for a frame.
+    user32.SetWindowPos(
+        hwnd, 0, -30000, -30000, 1600, 1000,
+        swp_no_zorder | swp_noactivate,
+    )
+    excel.Visible = True
+    user32.SetWindowPos(
+        hwnd, 0, -30000, -30000, 1600, 1000,
+        swp_no_zorder | swp_noactivate,
+    )
+
+
 def export_screenshots(
     workbook_path: str,
     sheets: list[str],
     output_dir: str,
     custom_range: str | None = None,
+    render_mode: str = "excel_native",
+    include_headers: bool = True,
+    include_grid_overlay: bool = True,
+    include_hidden_sheets: bool = False,
+    dpi: int = 144,
+    _session: ExcelSession | None = None,
 ) -> dict[str, str]:
     """
     Export worksheet screenshots with column/row headers composited via Pillow.
@@ -184,9 +337,19 @@ def export_screenshots(
     Returns dict mapping sheet name -> output file path (or error message).
     """
     os.makedirs(output_dir, exist_ok=True)
+    if render_mode != "excel_native":
+        raise NotImplementedError(
+            f"Render mode '{render_mode}' is not implemented; use 'excel_native'"
+        )
+    if dpi <= 0:
+        raise ValueError("dpi must be positive")
     results = {}
 
-    with ExcelSession(workbook_path, visible=True, save_on_exit=False) as session:
+    session_context = nullcontext(_session) if _session is not None else ExcelSession(
+        workbook_path, visible=False, save_on_exit=False, kill_on_enter=False,
+        read_only=True, disable_macros=True,
+    )
+    with session_context as session:
         excel, wb = session.excel, session.wb
 
         for sheet_name in sheets:
@@ -196,6 +359,10 @@ def export_screenshots(
                 except Exception:
                     logger.warning(f"Worksheet '{sheet_name}' not found in workbook")
                     results[sheet_name] = "Not found"
+                    continue
+                if not _worksheet_is_renderable(sheet, include_hidden_sheets):
+                    logger.info(f"Skipping hidden worksheet '{sheet_name}'")
+                    results[sheet_name] = "Hidden (skipped)"
                     continue
 
                 # Resolve range with fallback (D8)
@@ -226,24 +393,32 @@ def export_screenshots(
                 r_end = r_start + r_count - 1
                 c_end = c_start + c_count - 1
 
-                logger.info(f"Copying sheet '{sheet_name}' for screenshot (UsedRange: {ur.Address})")
+                logger.info(f"Rendering original range '{sheet_name}'!{ur.Address}")
 
-                # Copy sheet to a new temporary workbook to freeze values
-                sheet.Copy()
-                wb_temp = excel.ActiveWorkbook
-                ws_temp = wb_temp.ActiveSheet
-
-                # Freeze values to prevent external reference / formula errors
-                try:
-                    ws_temp.UsedRange.Copy()
-                    ws_temp.UsedRange.PasteSpecial(Paste=-4163)  # xlPasteValues
-                    excel.CutCopyMode = False
-                except Exception as e:
-                    logger.warning(f"Failed to freeze values on temp sheet: {e}")
+                range_width = float(ur.Width)
+                range_height = float(ur.Height)
+                # Check the aggregate COM properties before enumerating every
+                # row/column; a 70k-row range must fail in O(1), not after 70k
+                # cross-process Height calls.
+                pixel_scale = dpi / 72.0
+                estimated_width = round(range_width * pixel_scale)
+                estimated_height = round(range_height * pixel_scale)
+                estimated_pixels = estimated_width * estimated_height
+                max_native_axis_pixels = 32767
+                max_native_pixels = 80_000_000
+                if (estimated_width > max_native_axis_pixels or
+                        estimated_height > max_native_axis_pixels or
+                        estimated_pixels > max_native_pixels):
+                    raise ValueError(
+                        f"Range {ur.Address} is too large for excel_native "
+                        f"rendering (estimated {estimated_width} x "
+                        f"{estimated_height} pixels at {dpi} DPI); "
+                        "request a smaller range"
+                    )
 
                 # Get column widths and row heights in points (for Pillow scaling)
-                widths = [ws_temp.Cells(r_start, c).Width for c in range(c_start, c_end + 1)]
-                heights = [ws_temp.Cells(r, c_start).Height for r in range(r_start, r_end + 1)]
+                widths = [sheet.Cells(r_start, c).Width for c in range(c_start, c_end + 1)]
+                heights = [sheet.Cells(r, c_start).Height for r in range(r_start, r_end + 1)]
 
                 # Enable gridlines
                 try:
@@ -251,9 +426,9 @@ def export_screenshots(
                 except Exception:
                     pass
 
-                export_range = ws_temp.Range(
-                    ws_temp.Cells(r_start, c_start),
-                    ws_temp.Cells(r_end, c_end),
+                export_range = sheet.Range(
+                    sheet.Cells(r_start, c_start),
+                    sheet.Cells(r_end, c_end),
                 )
 
                 # Build output filename (D7 — custom range in filename)
@@ -264,156 +439,93 @@ def export_screenshots(
                     filename = f"{sheet_name.lower().replace(' ', '_')}_screenshot.png"
                 out_path = os.path.abspath(os.path.join(output_dir, filename))
 
-                # CopyPicture with retry loop (D7)
                 max_retries = 5
-                for attempt in range(max_retries):
-                    try:
-                        ws_temp.Activate()
-                        time.sleep(0.5)
-                        try:
-                            export_range.Select()
-                        except Exception:
-                            pass
-                        export_range.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
-                        break
-                    except Exception as e:
-                        if attempt == max_retries - 1:
-                            logger.error(f"CopyPicture failed after {max_retries} attempts: {e}")
-                            raise
-                        logger.warning(
-                            f"CopyPicture attempt {attempt + 1} failed, retrying in 0.5s... Error: {e}"
-                        )
-                        time.sleep(0.5)
-
-                # Paste to a temporary chart object
-                chart_obj = ws_temp.ChartObjects().Add(
-                    0, 0, export_range.Width, export_range.Height
-                )
-                chart = chart_obj.Chart
-
+                wb_temp = None
+                chart_obj = None
+                chart = None
                 try:
-                    chart_obj.Select()
-                except Exception:
-                    pass
+                    for attempt in range(max_retries):
+                        try:
+                            sheet.Activate()
+                            try:
+                                export_range.Select()
+                            except Exception:
+                                # Large/non-contiguous used ranges can reject
+                                # Select while still supporting CopyPicture.
+                                pass
+                            export_range.CopyPicture(Appearance=1, Format=2)
+                            break
+                        except Exception:
+                            if attempt == max_retries - 1:
+                                raise
+                            if attempt == 0:
+                                # Some Excel builds require a visible normal
+                                # window for CopyPicture. Only the owned
+                                # instance is exposed, far outside the desktop.
+                                _show_owned_excel_offscreen(excel)
+                            time.sleep(0.5)
+
+                    # Never create the bitmap-only chart workbook while the
+                    # owned application is visible, even off-screen.
+                    excel.Visible = False
+                    # The clean workbook receives only the clipboard bitmap;
+                    # worksheet code and formulas never cross this boundary.
+                    wb_temp = excel.Workbooks.Add()
+                    ws_temp = wb_temp.Worksheets(1)
+                    chart_obj = ws_temp.ChartObjects().Add(
+                        0, 0, range_width, range_height
+                    )
+                    chart = chart_obj.Chart
+
+                    try:
+                        chart_obj.Select()
+                    except Exception:
+                        pass
 
                 # Paste with retry loop to handle transient clipboard lock issues
-                for attempt in range(max_retries):
-                    try:
-                        chart.Paste()
-                        break
-                    except Exception as e:
-                        if attempt == max_retries - 1:
-                            logger.error(f"Chart paste failed after {max_retries} attempts: {e}")
-                            raise
-                        logger.warning(
-                            f"Chart paste attempt {attempt + 1} failed, retrying in 0.5s... Error: {e}"
-                        )
-                        time.sleep(0.5)
+                    for attempt in range(max_retries):
+                        try:
+                            chart.Paste()
+                            break
+                        except Exception:
+                            if attempt == max_retries - 1:
+                                raise
+                            time.sleep(0.5)
 
                 # Size the pasted shape to match the chart area
-                try:
                     if chart.Shapes.Count > 0:
                         shape = chart.Shapes.Item(1)
                         shape.Left = 0
                         shape.Top = 0
-                        shape.Width = export_range.Width
-                        shape.Height = export_range.Height
-                except Exception as e:
-                    logger.warning(f"Could not format pasted shape: {e}")
-
-                time.sleep(1.0)
-
-                chart.Export(out_path, "PNG")
-                chart_obj.Delete()
-                wb_temp.Close(False)
-
-                # Apply column/row headers and gridline overlay with Pillow (D7)
-                try:
-                    from PIL import Image, ImageDraw
-
-                    if os.path.exists(out_path):
-                        img = Image.open(out_path).convert("RGBA")
-
-                        scale_x = img.width / sum(widths) if sum(widths) > 0 else 1
-                        scale_y = img.height / sum(heights) if sum(heights) > 0 else 1
-
-                        pad_left = 45   # Width of row header column
-                        pad_top = 22    # Height of column header row
-
-                        final_w = img.width + pad_left
-                        final_h = img.height + pad_top
-                        final_img = Image.new("RGBA", (final_w, final_h), (255, 255, 255, 255))
-
-                        # Paste raw Excel screenshot
-                        final_img.paste(img, (pad_left, pad_top))
-
-                        draw = ImageDraw.Draw(final_img)
-
-                        # Load font
+                        shape.Width = range_width
+                        shape.Height = range_height
+                    time.sleep(1.0)
+                    if not chart.Export(out_path, "PNG"):
+                        raise RuntimeError("Excel chart export returned false")
+                finally:
+                    shape = None
+                    chart = None
+                    if chart_obj is not None:
                         try:
-                            from PIL import ImageFont
-                            font = ImageFont.truetype("arial.ttf", 12)
+                            chart_obj.Delete()
                         except Exception:
-                            from PIL import ImageFont
-                            font = ImageFont.load_default()
+                            pass
+                    chart_obj = None
+                    if wb_temp is not None:
+                        try:
+                            wb_temp.Close(False)
+                        except Exception:
+                            pass
+                    wb_temp = None
+                    excel.CutCopyMode = False
 
-                        # Draw header backgrounds (gray)
-                        draw.rectangle([(0, 0), (final_w, pad_top)], fill=(240, 240, 240, 255))
-                        draw.rectangle([(0, 0), (pad_left, final_h)], fill=(240, 240, 240, 255))
-
-                        # Draw dividing lines
-                        draw.line([(pad_left, 0), (pad_left, final_h)], fill=(180, 180, 180, 255), width=1)
-                        draw.line([(0, pad_top), (final_w, pad_top)], fill=(180, 180, 180, 255), width=1)
-
-                        # Draw column letter headers
-                        curr_x = pad_left
-                        for c_idx in range(c_start, c_end + 1):
-                            w_px = int(widths[c_idx - c_start] * scale_x)
-                            col_letter = get_column_letter(c_idx)
-
-                            try:
-                                bbox = draw.textbbox((0, 0), col_letter, font=font)
-                                text_w = bbox[2] - bbox[0]
-                                text_h = bbox[3] - bbox[1]
-                            except AttributeError:
-                                text_w, text_h = draw.textsize(col_letter, font=font)
-
-                            tx = curr_x + (w_px - text_w) // 2
-                            ty = (pad_top - text_h) // 2
-                            draw.text((tx, ty), col_letter, fill=(50, 50, 50, 255), font=font)
-
-                            curr_x += w_px
-                            draw.line([(curr_x, 0), (curr_x, final_h)], fill=(220, 220, 220, 255), width=1)
-
-                        # Draw row number headers
-                        curr_y = pad_top
-                        for r_idx in range(r_start, r_end + 1):
-                            h_px = int(heights[r_idx - r_start] * scale_y)
-                            row_str = str(r_idx)
-
-                            try:
-                                bbox = draw.textbbox((0, 0), row_str, font=font)
-                                text_w = bbox[2] - bbox[0]
-                                text_h = bbox[3] - bbox[1]
-                            except AttributeError:
-                                text_w, text_h = draw.textsize(row_str, font=font)
-
-                            tx = (pad_left - text_w) // 2
-                            ty = curr_y + (h_px - text_h) // 2
-                            draw.text((tx, ty), row_str, fill=(50, 50, 50, 255), font=font)
-
-                            curr_y += h_px
-                            draw.line([(0, curr_y), (final_w, curr_y)], fill=(220, 220, 220, 255), width=1)
-
-                        # Draw outer border
-                        draw.rectangle(
-                            [(0, 0), (final_w - 1, final_h - 1)],
-                            outline=(180, 180, 180, 255), width=1,
-                        )
-
-                        # Save composite image
-                        final_img.convert("RGB").save(out_path, "PNG")
-                        logger.info(f"Applied Pillow headers and grid overlay to screenshot: {out_path}")
+                try:
+                    _apply_headers_and_grid_overlay(
+                        out_path, widths, heights, c_start, r_start,
+                        include_headers=include_headers,
+                        include_grid_overlay=include_grid_overlay,
+                    )
+                    logger.info(f"Applied headers/grid overlay to screenshot: {out_path}")
 
                 except ImportError:
                     logger.info("Pillow not available, screenshot saved without headers")
@@ -438,6 +550,7 @@ def dump_sheet_data(
     custom_range: str | None = None,
     dump_names: bool = True,
     max_md_rows: int = 500,
+    _session: ExcelSession | None = None,
 ) -> dict:
     """
     Dump worksheet contents to JSON and/or Markdown.
@@ -457,7 +570,11 @@ def dump_sheet_data(
         "sheets": {},
     }
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    session_context = nullcontext(_session) if _session is not None else ExcelSession(
+        wb_path, visible=False, save_on_exit=False, kill_on_enter=False,
+        read_only=True, disable_macros=True,
+    )
+    with session_context as session:
         excel, wb = session.excel, session.wb
 
         if dump_names:
@@ -597,6 +714,138 @@ def dump_sheet_data(
         logger.info(f"Markdown dump: {output_md}")
 
     return dump_data
+
+
+def _inspect_workbook_in_process(
+    workbook_path: str,
+    sheets: list[str],
+    output_dir: str = "screenshots",
+    custom_range: str | None = None,
+    include_data: bool = True,
+    include_screenshots: bool = True,
+    output_json: str | None = None,
+    output_md: str | None = None,
+    continue_on_render_error: bool = False,
+    include_hidden_sheets: bool = False,
+    on_excel_started=None,
+) -> dict:
+    """Inspect data and render ranges in one isolated, read-only Excel session."""
+    result = {
+        "success": True,
+        "phase": "session_start",
+        "screenshots": {},
+        "data": None,
+        "primary_error": None,
+        "dialog_events": [],
+        "cleanup": {},
+    }
+    session = ExcelSession(
+        workbook_path,
+        visible=False,
+        save_on_exit=False,
+        kill_on_enter=False,
+        read_only=True,
+        disable_macros=True,
+        on_excel_started=on_excel_started,
+    )
+    try:
+        with session:
+            if include_screenshots:
+                result["phase"] = "range_copy_picture"
+                result["screenshots"] = export_screenshots(
+                    workbook_path, sheets, output_dir,
+                    custom_range=custom_range, _session=session,
+                    include_hidden_sheets=include_hidden_sheets,
+                )
+                render_errors = {
+                    name: value for name, value in result["screenshots"].items()
+                    if value in ("Not found", "Empty") or str(value).startswith("Error:")
+                }
+                if render_errors and not continue_on_render_error:
+                    raise RuntimeError(f"Screenshot rendering failed: {render_errors}")
+            if include_data:
+                result["phase"] = "data_dump"
+                result["data"] = dump_sheet_data(
+                    workbook_path, sheets, output_json=output_json,
+                    output_md=output_md, custom_range=custom_range,
+                    _session=session,
+                )
+        result["phase"] = "complete"
+    except Exception as error:
+        result["success"] = False
+        result["primary_error"] = str(error)
+    finally:
+        result["dialog_events"] = (
+            [event.to_dict() for event in session.watchdog.events]
+            if session.watchdog is not None else []
+        )
+        result["cleanup"] = dict(session.cleanup_result)
+    return result
+
+
+def inspect_workbook(
+    workbook_path: str,
+    sheets: list[str],
+    output_dir: str = "screenshots",
+    custom_range: str | None = None,
+    include_data: bool = True,
+    include_screenshots: bool = True,
+    output_json: str | None = None,
+    output_md: str | None = None,
+    continue_on_render_error: bool = False,
+    include_hidden_sheets: bool = False,
+    timeout_seconds: float = 60,
+) -> dict:
+    """Run combined workbook inspection in a timeout-controlled worker."""
+    request = {
+        "workbook_path": os.path.abspath(workbook_path), "sheets": sheets,
+        "output_dir": os.path.abspath(output_dir), "custom_range": custom_range,
+        "include_data": include_data, "include_screenshots": include_screenshots,
+        "output_json": os.path.abspath(output_json) if output_json else None,
+        "output_md": os.path.abspath(output_md) if output_md else None,
+        "continue_on_render_error": continue_on_render_error,
+        "include_hidden_sheets": include_hidden_sheets,
+    }
+    with tempfile.TemporaryDirectory(prefix="xlvba-inspect-") as temp_dir:
+        request_path = os.path.join(temp_dir, "request.json")
+        result_path = os.path.join(temp_dir, "result.json")
+        progress_path = os.path.join(temp_dir, "progress.json")
+        with open(request_path, "w", encoding="utf-8") as handle:
+            json.dump(request, handle)
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-m", "xlvbatools.workbook.inspection_worker",
+                 request_path, result_path, progress_path],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            excel_pid = None
+            try:
+                with open(progress_path, encoding="utf-8") as handle:
+                    excel_pid = json.load(handle).get("excel_pid")
+            except Exception:
+                pass
+            force_terminated = False
+            if excel_pid:
+                from xlvbatools.core.process import kill_process_by_pid
+                force_terminated = kill_process_by_pid(excel_pid)
+            return {
+                "success": False, "phase": "timeout",
+                "primary_error": f"Inspection exceeded {timeout_seconds} seconds",
+                "dialog_events": [],
+                "cleanup": {"pid": excel_pid, "quit_requested": False,
+                            "exited_gracefully": False,
+                            "force_terminated": force_terminated},
+            }
+        if not os.path.exists(result_path):
+            return {
+                "success": False, "phase": "worker_exit",
+                "primary_error": f"Inspection worker exited with {completed.returncode}",
+                "dialog_events": [], "cleanup": {},
+            }
+        with open(result_path, encoding="utf-8") as handle:
+            return json.load(handle)
 
 
 # ── Markdown Report Generation (D6) ──

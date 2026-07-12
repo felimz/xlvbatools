@@ -16,7 +16,7 @@ with ExcelSession(
     workbook_path="workbook.xlsm",
     visible=False,
     save_on_exit=True,
-    kill_on_enter=True,
+    kill_on_enter=False,
     init_delay=1.5,
     enable_watchdog=True,
     watchdog_poll_interval=0.25,
@@ -32,7 +32,7 @@ with ExcelSession(
 * **`workbook_path` (str):** Relative or absolute path to the `.xlsm` workbook.
 * **`visible` (bool, default `False`):** Shows Excel visibly if `True`.
 * **`save_on_exit` (bool, default `True`):** Automatically saves the workbook upon exiting the context.
-* **`kill_on_enter` (bool, default `True`):** Cleans up stale Excel instances before opening. ExcelSession uses ROT and window handle (Hwnd) tracking to close only the target workbook and its instance, leaving other unrelated Excel processes and workbooks open.
+* **`kill_on_enter` (bool, default `False`):** Existing Excel sessions are never touched by default. Enable targeted stale-workbook recovery only as an explicit diagnostic action.
 * **`init_delay` (float, default `1.5`):** delay in seconds to wait for VBA project initialization.
 * **`enable_watchdog` (bool, default `True`):** Starts dialog dismissal daemon if `True`.
 * **`watchdog_poll_interval` (float, default `0.25`):** Watchdog polling interval in seconds.
@@ -148,6 +148,14 @@ Dumps cell values, formulas, formatted texts, interactive shapes, and named rang
 
 ### `xlvbatools.workbook.dumper.export_screenshots(workbook_path: str, sheets: list[str], output_dir: str, custom_range: str | None = None) -> dict[str, str]`
 Exports PNG screenshots of the specified worksheets with Pillow-composited column and row headers.
+
+Screenshots use Excel's native `Range.CopyPicture` on the original read-only worksheet. Only the resulting bitmap is pasted into a blank chart workbook; worksheet code is never copied.
+
+Hidden and VeryHidden worksheets are skipped unless `include_hidden_sheets=True` is explicitly supplied.
+
+### `xlvbatools.workbook.inspect_workbook(...) -> dict`
+
+Runs screenshots and data extraction in one macro-disabled, read-only worker session with a hard timeout and PID-scoped cleanup.
 
 ---
 

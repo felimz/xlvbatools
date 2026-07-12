@@ -50,6 +50,7 @@ This skill teaches agents how to use `xlvbatools` for headless VBA development.
 | Need to understand call relationships | `xlvba graph --format json` |
 | Need to read a cell value | `xlvba dump --sheets Sheet1 --json` |
 | Need to set a cell value before running | `xlvba modify --cell A1 --value 42` |
+| COM session hangs or crashes | Terminate only the PID recorded in the session cleanup result |
 | COM session hangs or crashes | Inspect the session cleanup result and terminate only its recorded PID |
 | Need to rollback after a failed change | `xlvba snapshot restore latest` |
 
@@ -72,5 +73,5 @@ from xlvbatools.snapshot.manager import SnapshotManager
 6. **Guard interactive code** with `If Not Application.UserControl Then`
 7. **Use `session.vb_project`** instead of `session.wb.VBProject` directly to benefit from Trust Center access validation.
 8. **Ignore lock files** -- always filter out Excel's temporary owner lock files starting with `~$` when scanning workbooks.
-9. **Targeted session closure** -- clean up Excel sessions using targeted graceful closure (`ExcelSession` with `kill_on_enter=True` usesROT/Hwnd tracking) to protect unrelated user workbooks.
+9. **Isolated inspection** -- screenshot and dump operations use one read-only owned process, never copy worksheet VBA, and never close existing Excel sessions. `kill_on_enter=False` is the safe default; cleanup may terminate only the recorded owned PID.
 10. **Path Log Normalization** -- format all file paths in logs with forward slashes (`/`) for cross-platform consistency.

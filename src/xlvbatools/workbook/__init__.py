@@ -6,6 +6,7 @@ from xlvbatools.workbook.dumper import (
     dump_named_ranges,
     dump_sheet_shapes,
     get_column_letter,
+    inspect_workbook,
 )
 from xlvbatools.workbook.modifier import modify_cell
 from xlvbatools.workbook.debugger import launch_debug_session
@@ -16,6 +17,7 @@ __all__ = [
     "dump_named_ranges",
     "dump_sheet_shapes",
     "get_column_letter",
+    "inspect_workbook",
     "modify_cell",
     "launch_debug_session",
 ]

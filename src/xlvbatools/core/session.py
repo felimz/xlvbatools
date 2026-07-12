@@ -94,13 +94,15 @@ class ExcelSession:
         workbook_path: str,
         visible: bool = False,
         save_on_exit: bool = True,
-        kill_on_enter: bool = True,
+        kill_on_enter: bool = False,
         init_delay: float = 1.5,
         enable_watchdog: bool = True,
         watchdog_poll_interval: float = 0.25,
         exit_grace_period: float = 10.0,
         terminate_owned_process: bool = True,
         on_excel_started: Optional[Callable[[int], None]] = None,
+        read_only: bool = False,
+        disable_macros: bool = False,
     ):
         require_windows("ExcelSession")
 
@@ -114,6 +116,8 @@ class ExcelSession:
         self.exit_grace_period = max(0.0, exit_grace_period)
         self.terminate_owned_process = terminate_owned_process
         self.on_excel_started = on_excel_started
+        self.read_only = read_only
+        self.disable_macros = disable_macros
 
         self.excel = None
         self.wb = None
@@ -233,8 +237,16 @@ class ExcelSession:
         try:
             self.excel.Visible = self.visible
             self.excel.DisplayAlerts = False
-            self.excel.AutomationSecurity = 1
-            self.wb = self.excel.Workbooks.Open(self.workbook_path, UpdateLinks=0)
+            self.excel.EnableEvents = not self.disable_macros
+            self.excel.AskToUpdateLinks = False
+            self.excel.AutomationSecurity = 3 if self.disable_macros else 1
+            self.wb = self.excel.Workbooks.Open(
+                self.workbook_path,
+                UpdateLinks=0,
+                ReadOnly=self.read_only,
+                AddToMru=False,
+                IgnoreReadOnlyRecommended=True,
+            )
             time.sleep(self.init_delay)
         except Exception:
             self.__exit__(*sys.exc_info())

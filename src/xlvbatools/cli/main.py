@@ -142,6 +142,10 @@ def _register_inject(subparsers):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-backup", action="store_true")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--timeout", type=float, default=60.0,
+                   help="Hard timeout for the isolated inspection worker")
+    p.add_argument("--include-hidden-sheets", action="store_true",
+                   help="Explicitly render Hidden and VeryHidden worksheets")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_inject)
 
@@ -511,21 +515,26 @@ def _cmd_dump(args):
     wb = args.workbook or cfg.workbook
     sheets = args.sheets.split(",") if args.sheets else None
 
-    if getattr(args, "screenshot", False) and sheets:
-        from xlvbatools.workbook.dumper import export_screenshots
-        results = export_screenshots(wb, sheets, "screenshots/", custom_range=args.range)
-        for name, path in results.items():
-            print(f"  {name}: {path}")
-
-    if getattr(args, "data", False) or not getattr(args, "screenshot", False):
-        if not sheets:
-            print("Specify --sheets for data dump")
-            sys.exit(1)
-        from xlvbatools.workbook.dumper import dump_sheet_data
-        out_json = "dump.json" if getattr(args, "json", False) else None
-        out_md = "dump.md" if not getattr(args, "json", False) else None
-        dump_sheet_data(wb, sheets, output_json=out_json, output_md=out_md,
-                        custom_range=args.range)
+    if not sheets:
+        print("Specify --sheets for workbook inspection")
+        sys.exit(1)
+    from xlvbatools.workbook.dumper import inspect_workbook
+    include_screenshots = getattr(args, "screenshot", False)
+    include_data = getattr(args, "data", False) or not include_screenshots
+    out_json = "dump.json" if include_data and getattr(args, "json", False) else None
+    out_md = "dump.md" if include_data and not getattr(args, "json", False) else None
+    result = inspect_workbook(
+        wb, sheets, output_dir="screenshots", custom_range=args.range,
+        include_data=include_data, include_screenshots=include_screenshots,
+        output_json=out_json, output_md=out_md, timeout_seconds=args.timeout,
+        include_hidden_sheets=args.include_hidden_sheets,
+    )
+    if not result.get("success"):
+        print(json.dumps(result, indent=2, default=str))
+        sys.exit(1)
+    for name, path in result.get("screenshots", {}).items():
+        print(f"  {name}: {path}")
+    if include_data:
         print(f"Dumped to: {out_json or out_md}")
 
 

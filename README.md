@@ -11,6 +11,13 @@
 - **VBA Code Formatter** -- Non-destructive indentation normalizer with dry-run and directory-wide support
 - **Call Dependency Graph** -- Parses Sub/Function definitions and call sites, outputs Mermaid/DOT/JSON
 - **Workbook Inspection** -- Screenshot worksheets, dump cell values/formulas, inspect named ranges and shapes
+
+Workbook inspection runs in an isolated, timeout-controlled Excel process. It
+opens files read-only with macros/events disabled, never closes an existing
+Excel session, and renders the original range directly without copying
+worksheet VBA. Combined screenshot and data requests reuse one owned session.
+Only visible worksheet tabs are rendered by default; hidden and VeryHidden
+worksheets require the explicit `--include-hidden-sheets` option.
 - **Workbook Modification** -- Programmatically set cell values, formulas, and named ranges
 - **Macro Execution** -- Run VBA macros with full dialog protection and structured result reporting
 - **Snapshot System** -- Timestamped checkpoint/rollback for workbook and VBA source state
