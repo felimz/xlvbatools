@@ -21,6 +21,7 @@ Commands:
 """
 
 import argparse
+import json
 import os
 import sys
 from typing import List, Optional, Any
@@ -142,10 +143,6 @@ def _register_inject(subparsers):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-backup", action="store_true")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--timeout", type=float, default=60.0,
-                   help="Hard timeout for the isolated inspection worker")
-    p.add_argument("--include-hidden-sheets", action="store_true",
-                   help="Explicitly render Hidden and VeryHidden worksheets")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_inject)
 
@@ -222,6 +219,10 @@ def _register_dump(subparsers):
     p.add_argument("--data", action="store_true")
     p.add_argument("--range", "-r", help="Specific cell range")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--timeout", type=float, default=60.0,
+                   help="Hard timeout for the isolated inspection worker")
+    p.add_argument("--include-hidden-sheets", action="store_true",
+                   help="Explicitly render Hidden and VeryHidden worksheets")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_dump)
 
@@ -532,10 +533,13 @@ def _cmd_dump(args):
     if not result.get("success"):
         print(json.dumps(result, indent=2, default=str))
         sys.exit(1)
-    for name, path in result.get("screenshots", {}).items():
-        print(f"  {name}: {path}")
-    if include_data:
-        print(f"Dumped to: {out_json or out_md}")
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        for name, path in result.get("screenshots", {}).items():
+            print(f"  {name}: {path}")
+        if include_data:
+            print(f"Dumped to: {out_md}")
 
 
 def _cmd_modify(args):

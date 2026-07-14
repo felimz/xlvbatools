@@ -158,6 +158,39 @@ def test_cli_run_forwards_timeout(tmp_path):
 
 
 @pytest.mark.unit
+def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, capsys):
+    """Dump owns its timeout/hidden defaults and emits machine-readable results."""
+    expected = {
+        "success": True,
+        "phase": "complete",
+        "screenshots": {"Input": "screenshots/Input.png"},
+        "data": None,
+        "primary_error": None,
+        "dialog_events": [],
+        "cleanup": {"pid": 42, "still_running": False},
+    }
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.workbook.dumper.inspect_workbook") as mock_inspect:
+        mock_config.return_value.workbook = "configured.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test_dump"
+        mock_inspect.return_value = expected
+
+        main([
+            "dump", "--workbook", "book.xlsm", "--sheets", "Input",
+            "--screenshot", "--range", "B91:K99", "--json",
+        ])
+
+    assert json.loads(capsys.readouterr().out) == expected
+    mock_inspect.assert_called_once_with(
+        "book.xlsm", ["Input"], output_dir="screenshots",
+        custom_range="B91:K99", include_data=False, include_screenshots=True,
+        output_json=None, output_md=None, timeout_seconds=60.0,
+        include_hidden_sheets=False,
+    )
+
+
+@pytest.mark.unit
 def test_cli_modify(tmp_path, capsys):
     """Test xlvba modify subcommand."""
     with patch("xlvbatools.config.loader.load_config") as mock_config, \

@@ -1,7 +1,11 @@
 """Unit coverage for isolated workbook inspection orchestration."""
 
+import gc
 import json
+import os
 import subprocess
+
+import pytest
 
 
 def test_inspection_worker_result_is_returned(monkeypatch, tmp_path):
@@ -107,3 +111,50 @@ def test_hidden_worksheets_require_explicit_opt_in():
     assert _worksheet_is_renderable(SimpleNamespace(Visible=0), False) is False
     assert _worksheet_is_renderable(SimpleNamespace(Visible=2), False) is False
     assert _worksheet_is_renderable(SimpleNamespace(Visible=0), True) is True
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_combined_range_data_and_screenshot_share_one_clean_session(
+    minimal_workbook, tmp_path,
+):
+    """Combined inspection honors its range and leaves no owned Excel process."""
+    from xlvbatools.core.session import ExcelSession
+    from xlvbatools.workbook.dumper import inspect_workbook
+
+    sheet = None
+    cells = None
+    with ExcelSession(
+        minimal_workbook, save_on_exit=True, kill_on_enter=False,
+    ) as session:
+        sheet = session.wb.Worksheets("Sheet1")
+        cells = sheet.Range("A1:B2")
+        cells.Value = (("alpha", 2), ("beta", 4))
+        cells = None
+        sheet = None
+        gc.collect()
+
+    output_dir = tmp_path / "screenshots"
+    output_json = tmp_path / "dump.json"
+    result = inspect_workbook(
+        minimal_workbook,
+        ["Sheet1"],
+        output_dir=str(output_dir),
+        custom_range="A1:B2",
+        include_data=True,
+        include_screenshots=True,
+        output_json=str(output_json),
+        timeout_seconds=60,
+    )
+
+    assert result["success"] is True, result
+    assert result["phase"] == "complete"
+    assert result["cleanup"]["pid"] is not None
+    assert result["cleanup"]["still_running"] is False
+    assert result["data"]["sheets"]["Sheet1"]["bounds"]["address"] == "$A$1:$B$2"
+    assert set(result["data"]["sheets"]["Sheet1"]["cells"]) == {
+        "A1", "B1", "A2", "B2",
+    }
+    screenshot = result["screenshots"]["Sheet1"]
+    assert os.path.isfile(screenshot), result
+    assert output_json.is_file()
