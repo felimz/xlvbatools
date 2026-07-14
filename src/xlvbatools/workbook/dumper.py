@@ -139,20 +139,57 @@ def dump_named_ranges(wb) -> dict:
     return named_ranges
 
 
+def _collection_item(collection_factory, name):
+    """Resolve a named item from Excel's callable or Item-based collections."""
+    collection = collection_factory()
+    try:
+        return collection.Item(name)
+    except Exception:
+        return collection_factory(name)
+
+
+def _shape_display_text(sheet, shape, shape_type: int) -> tuple[str, str]:
+    """Return visible shape/control text and the COM accessor that supplied it."""
+    candidates = [
+        ("TextFrame.Characters.Text", lambda: shape.TextFrame.Characters.Text),
+        ("TextFrame2.TextRange.Text", lambda: shape.TextFrame2.TextRange.Text),
+    ]
+    if shape_type == 8:  # msoFormControl
+        candidates.append((
+            "Buttons.Caption",
+            lambda: _collection_item(sheet.Buttons, shape.Name).Caption,
+        ))
+    elif shape_type == 12:  # msoOLEControlObject (ActiveX)
+        candidates.append((
+            "OLEObjects.Object.Caption",
+            lambda: _collection_item(sheet.OLEObjects, shape.Name).Object.Caption,
+        ))
+
+    for accessor, getter in candidates:
+        try:
+            value = getter()
+            if value is not None and str(value).strip():
+                return str(value).strip(), accessor
+        except Exception:
+            continue
+    return "", ""
+
+
 def dump_sheet_shapes(sheet) -> list:
-    """Extract interactive shapes (buttons, form controls) from a worksheet."""
+    """Extract shapes and controls, including Forms and ActiveX captions."""
     shapes_info = []
     try:
         for shape in sheet.Shapes:
-            on_action, text, linked_cell = "", "", ""
+            on_action, linked_cell = "", ""
+            try:
+                shape_type = int(shape.Type)
+            except Exception:
+                shape_type = -1
             try:
                 on_action = shape.OnAction
             except Exception:
                 pass
-            try:
-                text = shape.TextFrame.Characters.Text
-            except Exception:
-                pass
+            text, text_accessor = _shape_display_text(sheet, shape, shape_type)
             try:
                 lc = shape.ControlFormat.LinkedCell
                 linked_cell = str(lc) if not callable(lc) else lc()
@@ -162,8 +199,13 @@ def dump_sheet_shapes(sheet) -> list:
             if on_action or text or linked_cell:
                 shapes_info.append({
                     "name": shape.Name,
-                    "type": shape.Type,
-                    "text": text.strip() if text else "",
+                    "type": shape_type,
+                    "control_type": {
+                        8: "forms_control",
+                        12: "activex_control",
+                    }.get(shape_type, "shape"),
+                    "text": text,
+                    "text_accessor": text_accessor,
                     "on_action": on_action,
                     "linked_cell": linked_cell,
                 })
@@ -920,11 +962,12 @@ def _render_markdown(dump_data: dict, max_rows: int) -> str:
         shapes = sheet_data.get("shapes", [])
         if shapes:
             lines.append("### 🎛️ Interactive Controls & Buttons")
-            lines.append("| Shape Name | Type | Label / Text | Linked Macro (OnAction) | Linked Cell |")
-            lines.append("|---|---|---|---|---|")
+            lines.append("| Shape Name | Type | Label / Text | Text Accessor | Linked Macro (OnAction) | Linked Cell |")
+            lines.append("|---|---|---|---|---|---|")
             for shape in shapes:
                 lines.append(
                     f"| {shape['name']} | {shape['type']} | {shape['text']} "
+                    f"| `{shape.get('text_accessor', '')}` "
                     f"| `{shape['on_action']}` | `{shape['linked_cell']}` |"
                 )
             lines.append("")

@@ -161,7 +161,10 @@ def _register_diff(subparsers):
 def _register_lint(subparsers):
     p = subparsers.add_parser("lint", help="Run static analysis on VBA code")
     p.add_argument("--workbook", "-w", help="Path to the .xlsm workbook")
-    p.add_argument("--source", "-s", help="Path to vba_source/ directory")
+    p.add_argument(
+        "--source", "-s",
+        help="Path to a VBA source directory or one .bas/.cls/.frm file",
+    )
     p.add_argument("--json", action="store_true")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_lint)
@@ -410,7 +413,11 @@ def _cmd_lint(args):
 
     if args.source:
         from xlvbatools.analysis.preflight import lint_files
-        issues = lint_files(args.source, disabled_rules=disabled)
+        try:
+            issues = lint_files(args.source, disabled_rules=disabled)
+        except (FileNotFoundError, OSError, ValueError) as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            sys.exit(2)
     elif args.workbook:
         from xlvbatools.analysis.preflight import lint_workbook
         issues = lint_workbook(args.workbook, disabled_rules=disabled)

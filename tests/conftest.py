@@ -91,6 +91,9 @@ def runtime_error_workbook(tmp_path):
     excel = None
     wb = None
     module = None
+    sheet = None
+    formula_cell = None
+    interior = None
     excel_pid = None
     try:
         excel = win32com.client.DispatchEx("Excel.Application")
@@ -122,9 +125,19 @@ def runtime_error_workbook(tmp_path):
             '        "Diagnostic line one." & vbCrLf & "Diagnostic line two."\r\n'
             'End Sub\r\n'
         )
+        sheet = wb.Worksheets(1)
+        formula_cell = sheet.Range("B1")
+        formula_cell.Formula = "=21*2"
+        formula_cell.NumberFormat = "0.00"
+        interior = formula_cell.Interior
+        interior.Color = 65535
         path = os.path.join(tmp_path, "runtime_error.xlsm")
         wb.SaveAs(path, FileFormat=52)
+        interior = None
+        formula_cell = None
+        sheet = None
         module = None
+        gc.collect()
         wb.Close(False)
         wb = None
         return path
@@ -142,6 +155,9 @@ def runtime_error_workbook(tmp_path):
             except Exception:
                 pass
         module = None
+        interior = None
+        formula_cell = None
+        sheet = None
         wb = None
         excel = None
         gc.collect()

@@ -896,6 +896,87 @@ class TestDuplicateProcedures:
 
 
 @pytest.mark.unit
+class TestExportedMetadata:
+    """VBE serialization headers are not executable VBA source."""
+
+    @pytest.mark.parametrize(
+        ("relative_path", "content"),
+        [
+            (
+                "classes/Worker.cls",
+                "VERSION 1.0 CLASS\n"
+                "BEGIN\n"
+                "  MultiUse = -1  'True\n"
+                "END\n"
+                'Attribute VB_Name = "Worker"\n'
+                "Attribute VB_PredeclaredId = False\n"
+                "Option Explicit\n"
+                "Public Sub Work()\n"
+                "End Sub\n",
+            ),
+            (
+                "sheets/Sheet1.cls",
+                "VERSION 1.0 CLASS\n"
+                "BEGIN\n"
+                "  MultiUse = -1  'True\n"
+                "END\n"
+                'Attribute VB_Name = "Sheet1"\n'
+                "Attribute VB_PredeclaredId = True\n"
+                "Option Explicit\n"
+                "Private Sub Worksheet_Activate()\n"
+                "End Sub\n",
+            ),
+            (
+                "forms/Settings.frm",
+                "VERSION 5.00\n"
+                "Begin VB.UserForm Settings\n"
+                '   Caption = "Settings"\n'
+                "   BeginProperty Font\n"
+                '      Name = "Arial"\n'
+                "   EndProperty\n"
+                "End\n"
+                'Attribute VB_Name = "Settings"\n'
+                "Attribute VB_PredeclaredId = True\n"
+                "Option Explicit\n"
+                "Private Sub UserForm_Initialize()\n"
+                "End Sub\n",
+            ),
+        ],
+    )
+    def test_export_metadata_is_ignored(self, tmp_path, relative_path, content):
+        from xlvbatools.analysis.preflight import lint_files
+
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True)
+        path.write_text(content, encoding="utf-8")
+
+        issues = lint_files(str(tmp_path), disabled_rules=["DC003"])
+
+        assert [issue for issue in issues if issue.rule_id == "IP001"] == []
+
+    def test_real_executable_after_metadata_keeps_original_line_number(self, tmp_path):
+        from xlvbatools.analysis.preflight import lint_files
+
+        path = tmp_path / "Broken.cls"
+        path.write_text(
+            "VERSION 1.0 CLASS\n"
+            "BEGIN\n"
+            "  MultiUse = -1  'True\n"
+            "END\n"
+            'Attribute VB_Name = "Broken"\n'
+            "Option Explicit\n"
+            "x = 42\n",
+            encoding="utf-8",
+        )
+
+        issues = lint_files(str(path), disabled_rules=["DC003"])
+        invalid = [issue for issue in issues if issue.rule_id == "IP001"]
+
+        assert len(invalid) == 1
+        assert invalid[0].line_num == 7
+
+
+@pytest.mark.unit
 class TestClassMembers:
     """SM001/SM002: Class member validation."""
 

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def lint_files(
     source_dir: str,
     disabled_rules: List[str] | None = None,
-    extensions: tuple = (".bas", ".cls"),
+    extensions: tuple = (".bas", ".cls", ".frm"),
 ) -> List[VBAIssue]:
     """
     Run static analysis on extracted VBA source files (no COM needed).
@@ -43,10 +43,27 @@ def lint_files(
     list of VBAIssue
         All issues found, sorted by file then line number.
     """
-    src_dir = os.path.abspath(source_dir)
-    if not os.path.isdir(src_dir):
-        logger.error(f"Source directory not found: {src_dir}")
-        return []
+    source_path = os.path.abspath(source_dir)
+    normalized_extensions = tuple(ext.lower() for ext in extensions)
+    is_single_file = os.path.isfile(source_path)
+    if is_single_file:
+        if not source_path.lower().endswith(normalized_extensions):
+            raise ValueError(
+                "Source file must have a supported VBA extension: "
+                + ", ".join(normalized_extensions)
+            )
+        src_dir = os.path.dirname(source_path)
+        source_groups = [(src_dir, [os.path.basename(source_path)])]
+    elif os.path.isdir(source_path):
+        src_dir = source_path
+        source_groups = [
+            (root, sorted(files)) for root, _, files in os.walk(src_dir)
+        ]
+    else:
+        raise FileNotFoundError(
+            f"Source target not found (expected a directory or VBA source file): "
+            f"{source_path}"
+        )
 
     all_issues = []
 
@@ -62,13 +79,13 @@ def lint_files(
     seen_public_procs = {}
     class_registry = {}
 
-    for root, _, files in os.walk(src_dir):
-        for fname in sorted(files):
-            if not fname.endswith(extensions):
+    for root, files in source_groups:
+        for fname in files:
+            if not fname.lower().endswith(normalized_extensions):
                 continue
             filepath = os.path.join(root, fname)
             rel_path = os.path.relpath(filepath, src_dir)
-            file_lines = _read_file_lines(filepath)
+            file_lines = _code_lines_for_lint(filepath, _read_file_lines(filepath))
             
             # Extract public names from header
             for fline in file_lines:
@@ -89,7 +106,7 @@ def lint_files(
                         global_public_names.add(var_name.lower())
 
             # Extract class members if this is a class module
-            if fname.endswith(".cls"):
+            if fname.lower().endswith(".cls"):
                 cls_name = os.path.splitext(fname)[0].lower()
                 cls_members = set()
                 for fline in file_lines:
@@ -124,7 +141,7 @@ def lint_files(
                             proc_name = _extract_proc_name(stripped)
                             proc_key = proc_name.lower()
                             is_standard_module = (
-                                fname.endswith(".bas") and 
+                                fname.lower().endswith(".bas") and
                                 "sheets" not in rel_path.lower() and 
                                 not fname.lower().startswith("sheet") and 
                                 not fname.lower().startswith("thisworkbook")
@@ -144,14 +161,14 @@ def lint_files(
                                     seen_public_procs[proc_key] = (rel_path, i)
 
     # Second pass: run all rules with cross-module context
-    for root, _, files in os.walk(src_dir):
-        for fname in sorted(files):
-            if not fname.endswith(extensions):
+    for root, files in source_groups:
+        for fname in files:
+            if not fname.lower().endswith(normalized_extensions):
                 continue
             filepath = os.path.join(root, fname)
             rel_path = os.path.relpath(filepath, src_dir)
 
-            lines = _read_file_lines(filepath)
+            lines = _code_lines_for_lint(filepath, _read_file_lines(filepath))
             issues = run_all_rules(
                 rel_path, lines, disabled_rules,
                 global_names=global_public_names,
@@ -160,7 +177,7 @@ def lint_files(
             all_issues.extend(issues)
 
     disabled = set(disabled_rules or [])
-    if "DC003" not in disabled:
+    if "DC003" not in disabled and not is_single_file:
         from xlvbatools.vba.dependency import build_call_graph
         from xlvbatools.analysis.rules import _is_entry_point
         try:
@@ -351,3 +368,51 @@ def _read_file_lines(filepath: str) -> list[str]:
     """Read a file's lines, handling encoding gracefully."""
     from xlvbatools.vba._io import read_vba_lines
     return read_vba_lines(filepath)
+
+
+def _code_lines_for_lint(filepath: str, lines: list[str]) -> list[str]:
+    """Blank exported class/form designer metadata without shifting line numbers."""
+    extension = os.path.splitext(filepath)[1].lower()
+    if extension not in (".cls", ".frm"):
+        return lines
+
+    first_content = next(
+        (index for index, line in enumerate(lines) if line.strip()), None
+    )
+    if first_content is None or not re.match(
+        r"^VERSION\s+\d", lines[first_content].strip(), re.IGNORECASE
+    ):
+        return lines
+
+    cleaned = list(lines)
+    in_preamble = True
+    designer_depth = 0
+    for index in range(first_content, len(lines)):
+        if not in_preamble:
+            break
+        stripped = lines[index].strip()
+        lowered = stripped.lower()
+
+        is_designer_start = bool(re.match(r"^begin(?:property)?\b", stripped, re.IGNORECASE))
+        is_designer_end = bool(re.match(r"^end(?:property)?\b", stripped, re.IGNORECASE))
+        if designer_depth:
+            if is_designer_start:
+                designer_depth += 1
+            elif is_designer_end:
+                designer_depth -= 1
+        elif is_designer_start:
+            designer_depth = 1
+        elif (
+            index == first_content
+            or not stripped
+            or lowered.startswith("object =")
+            or lowered.startswith("attribute vb_")
+        ):
+            pass
+        else:
+            in_preamble = False
+            break
+
+        cleaned[index] = "\n" if lines[index].endswith(("\n", "\r")) else ""
+
+    return cleaned

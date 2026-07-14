@@ -4,6 +4,7 @@ import gc
 import json
 import os
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -111,6 +112,79 @@ def test_hidden_worksheets_require_explicit_opt_in():
     assert _worksheet_is_renderable(SimpleNamespace(Visible=0), False) is False
     assert _worksheet_is_renderable(SimpleNamespace(Visible=2), False) is False
     assert _worksheet_is_renderable(SimpleNamespace(Visible=0), True) is True
+
+
+def test_shape_dump_reports_forms_activex_and_text_accessors():
+    from xlvbatools.workbook.dumper import dump_sheet_shapes
+
+    class NamedCollection:
+        def __init__(self, items):
+            self.items = items
+
+        def __call__(self, name=None):
+            return self if name is None else self.items[name]
+
+        def Item(self, name):
+            return self.items[name]
+
+    ordinary = SimpleNamespace(
+        Name="Title", Type=1, OnAction="",
+        TextFrame=SimpleNamespace(
+            Characters=SimpleNamespace(Text="Ordinary text"),
+        ),
+    )
+    forms = SimpleNamespace(
+        Name="RunButton", Type=8, OnAction="RunModel",
+        TextFrame=SimpleNamespace(Characters=SimpleNamespace(Text="")),
+        TextFrame2=SimpleNamespace(TextRange=SimpleNamespace(Text="")),
+    )
+    activex = SimpleNamespace(
+        Name="ActiveButton", Type=12,
+        TextFrame=SimpleNamespace(Characters=SimpleNamespace(Text="")),
+        TextFrame2=SimpleNamespace(TextRange=SimpleNamespace(Text="")),
+    )
+    sheet = SimpleNamespace(
+        Name="Input",
+        Shapes=[ordinary, forms, activex],
+        Buttons=NamedCollection({
+            "RunButton": SimpleNamespace(Caption="Run model"),
+        }),
+        OLEObjects=NamedCollection({
+            "ActiveButton": SimpleNamespace(
+                Object=SimpleNamespace(Caption="Active action"),
+            ),
+        }),
+    )
+
+    result = {item["name"]: item for item in dump_sheet_shapes(sheet)}
+
+    assert result["Title"]["text"] == "Ordinary text"
+    assert result["Title"]["text_accessor"] == "TextFrame.Characters.Text"
+    assert result["Title"]["control_type"] == "shape"
+    assert result["RunButton"]["text"] == "Run model"
+    assert result["RunButton"]["text_accessor"] == "Buttons.Caption"
+    assert result["RunButton"]["control_type"] == "forms_control"
+    assert result["ActiveButton"]["text"] == "Active action"
+    assert result["ActiveButton"]["text_accessor"] == "OLEObjects.Object.Caption"
+    assert result["ActiveButton"]["control_type"] == "activex_control"
+
+
+def test_shape_dump_uses_textframe2_when_legacy_textframe_is_empty():
+    from xlvbatools.workbook.dumper import dump_sheet_shapes
+
+    shape = SimpleNamespace(
+        Name="ModernText", Type=1, OnAction="",
+        TextFrame=SimpleNamespace(Characters=SimpleNamespace(Text="")),
+        TextFrame2=SimpleNamespace(
+            TextRange=SimpleNamespace(Text="TextFrame2 label"),
+        ),
+    )
+    sheet = SimpleNamespace(Name="Input", Shapes=[shape])
+
+    result = dump_sheet_shapes(sheet)
+
+    assert result[0]["text"] == "TextFrame2 label"
+    assert result[0]["text_accessor"] == "TextFrame2.TextRange.Text"
 
 
 @pytest.mark.com

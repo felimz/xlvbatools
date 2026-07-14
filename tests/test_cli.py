@@ -191,6 +191,42 @@ def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, 
 
 
 @pytest.mark.unit
+def test_cli_lint_supports_one_source_file(tmp_path, capsys):
+    source = tmp_path / "Broken.bas"
+    source.write_text("Option Explicit\nx = 42\n", encoding="utf-8")
+
+    with patch("xlvbatools.config.loader.load_config") as mock_config:
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test_lint"
+        mock_config.return_value.lint.disabled_rules = ["DC003"]
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["lint", "--source", str(source)])
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr()
+    assert "IP001" in output.out
+    assert "FAIL:" in output.out
+    assert "PASS" not in output.out
+
+
+@pytest.mark.unit
+def test_cli_lint_missing_target_fails_without_pass(tmp_path, capsys):
+    with patch("xlvbatools.config.loader.load_config") as mock_config:
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test_lint"
+        mock_config.return_value.lint.disabled_rules = []
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["lint", "--source", str(tmp_path / "missing.bas")])
+
+    assert exc_info.value.code == 2
+    output = capsys.readouterr()
+    assert "expected a directory or VBA source file" in output.err
+    assert "PASS" not in output.out + output.err
+
+
+@pytest.mark.unit
 def test_cli_modify(tmp_path, capsys):
     """Test xlvba modify subcommand."""
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
