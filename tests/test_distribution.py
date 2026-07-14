@@ -48,9 +48,11 @@ def test_built_wheel_exposes_public_wrapper_api(tmp_path):
         "import xlvbatools; "
         "from xlvbatools import OperationResult, XlvbaProject, lint_files; "
         "from xlvbatools.analysis import VBAIssue, lint_workbook; "
+        "from xlvbatools.core.worker import WORKER_PROTOCOL_VERSION; "
         "print(json.dumps({'module': xlvbatools.__file__, "
         "'exports': [item.__name__ for item in "
-        "(OperationResult, XlvbaProject, VBAIssue, lint_files, lint_workbook)]}))"
+        "(OperationResult, XlvbaProject, VBAIssue, lint_files, lint_workbook)], "
+        "'worker_protocol': WORKER_PROTOCOL_VERSION}))"
     )
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
@@ -69,3 +71,4 @@ def test_built_wheel_exposes_public_wrapper_api(tmp_path):
         "OperationResult", "XlvbaProject", "VBAIssue", "lint_files",
         "lint_workbook",
     ]
+    assert payload["worker_protocol"] == "1.0"

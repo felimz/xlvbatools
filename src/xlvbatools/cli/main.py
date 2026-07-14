@@ -140,6 +140,8 @@ def _register_extract(subparsers):
     p.add_argument("--component", "-c", help="Extract a single component by name")
     p.add_argument("--list", "-l", action="store_true", help="List components only")
     p.add_argument("--json", action="store_true", help="JSON output")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="Maximum seconds for the isolated Excel worker")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_extract)
 
@@ -152,6 +154,8 @@ def _register_inject(subparsers):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-backup", action="store_true")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="Maximum seconds for the isolated Excel worker")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_inject)
 
@@ -163,6 +167,8 @@ def _register_diff(subparsers):
     p.add_argument("--component", "-c", help="Diff a single component by name")
     p.add_argument("--summary", action="store_true")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="Maximum seconds for the isolated Excel worker")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_diff)
 
@@ -175,6 +181,8 @@ def _register_lint(subparsers):
         help="Path to a VBA source directory or one .bas/.cls/.frm file",
     )
     p.add_argument("--json", action="store_true")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="Maximum seconds for workbook lint worker")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_lint)
 
@@ -249,6 +257,8 @@ def _register_modify(subparsers):
     p.add_argument("--name", "-n", help="Named range")
     p.add_argument("--refers-to", help="Reference for named range")
     p.add_argument("--delete-name", "-d", action="store_true")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="Maximum seconds for the isolated Excel worker")
     p.add_argument("--verbose", "-v", action="store_true")
     p.set_defaults(func=_cmd_modify)
 
@@ -318,33 +328,51 @@ def _cmd_extract(args):
 
     wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     out = args.output or _cfg_path(cfg, "vba_source_path", "vba_source")
+    from xlvbatools.core.worker import run_isolated_operation
 
     if getattr(args, "list", False):
-        from xlvbatools.vba.extractor import list_components
-        components = list_components(wb)
+        raw = run_isolated_operation(
+            "list_components", {"workbook_path": os.path.abspath(wb)},
+            timeout=args.timeout,
+        )
+        if not raw.get("success"):
+            print(json.dumps(raw, indent=2, default=str))
+            sys.exit(1)
+        components = raw.get("data") or []
         if getattr(args, "json", False):
-            import json
             print(json.dumps(components, indent=2))
         else:
             for c in components:
                 print(f"  {c['type_name']:20s} {c['name']:30s} ({c['line_count']} lines)")
         return
 
-    if args.component:
-        from xlvbatools.vba.extractor import extract_component
-        result = extract_component(wb, args.component, out)
-        if result:
-            print(f"Extracted: {result['name']} -> {result['file']}")
+    raw = run_isolated_operation(
+        "extract",
+        {
+            "workbook_path": os.path.abspath(wb),
+            "output_dir": os.path.abspath(out),
+            "component": args.component,
+        },
+        timeout=args.timeout,
+    )
+    if not raw.get("success"):
+        if getattr(args, "json", False):
+            print(json.dumps(raw, indent=2, default=str))
         else:
-            print(f"Component not found: {args.component}")
-            sys.exit(1)
+            print(raw.get("primary_error") or "Extraction failed")
+        sys.exit(1)
+
+    result = raw.get("data")
+    if args.component:
+        if getattr(args, "json", False):
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Extracted: {result['name']} -> {result['file']}")
     else:
-        from xlvbatools.vba.extractor import extract_all
-        manifest = extract_all(wb, out)
+        manifest = result or {}
         count = len(manifest.get("components", []))
         print(f"Extracted {count} components to {out}/")
         if getattr(args, "json", False):
-            import json
             print(json.dumps(manifest, indent=2))
 
 
@@ -359,18 +387,33 @@ def _cmd_inject(args):
 
     wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
-
-    if args.component:
-        from xlvbatools.vba.injector import inject_component
-        success = inject_component(wb, src, args.component, backup=not args.no_backup)
-        print("Injected" if success else "FAILED")
-        sys.exit(0 if success else 1)
-    else:
-        from xlvbatools.vba.injector import inject_all
-        results = inject_all(wb, src, backup=not args.no_backup, dry_run=args.dry_run,
-                             backup_limit=cfg.backups.limit)
+    from xlvbatools.core.worker import run_isolated_operation
+    if args.component and args.dry_run:
+        print("--dry-run cannot be combined with --component", file=sys.stderr)
+        sys.exit(2)
+    raw = run_isolated_operation(
+        "inject",
+        {
+            "workbook_path": os.path.abspath(wb),
+            "source_dir": os.path.abspath(src),
+            "component": args.component,
+            "backup": not args.no_backup,
+            "dry_run": args.dry_run,
+            "backup_limit": cfg.backups.limit,
+        },
+        timeout=args.timeout,
+    )
+    if not raw.get("success"):
         if getattr(args, "json", False):
-            import json
+            print(json.dumps(raw, indent=2, default=str))
+        else:
+            print(raw.get("primary_error") or "FAILED")
+        sys.exit(1)
+    if args.component:
+        print("Injected")
+    else:
+        results = raw.get("data") or []
+        if getattr(args, "json", False):
             print(json.dumps(results, indent=2))
         else:
             for r in results:
@@ -389,23 +432,35 @@ def _cmd_diff(args):
 
     wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
-
-    if args.component:
-        from xlvbatools.vba.differ import diff_component
-        result = diff_component(wb, src, args.component)
-        if result is None:
-            print(f"Component not found: {args.component}")
-            sys.exit(1)
-        _print_diff_result(result, args)
-    else:
-        from xlvbatools.vba.differ import diff_all
-        results = diff_all(wb, src)
+    from xlvbatools.core.worker import run_isolated_operation
+    raw = run_isolated_operation(
+        "diff",
+        {
+            "workbook_path": os.path.abspath(wb),
+            "source_dir": os.path.abspath(src),
+            "component": args.component,
+        },
+        timeout=args.timeout,
+    )
+    if not raw.get("success"):
         if getattr(args, "json", False):
-            import json
+            print(json.dumps(raw, indent=2, default=str))
+        else:
+            print(raw.get("primary_error") or "Diff failed")
+        sys.exit(1)
+    if args.component:
+        result = raw.get("data")
+        if getattr(args, "json", False):
+            print(json.dumps(result, indent=2))
+        else:
+            _print_diff_result(result, args)
+    else:
+        results = raw.get("data") or []
+        if getattr(args, "json", False):
             print(json.dumps(results, indent=2))
         else:
-            for r in results:
-                _print_diff_result(r, args)
+            for result in results:
+                _print_diff_result(result, args)
 
 
 def _print_diff_result(r, args):
@@ -440,8 +495,21 @@ def _cmd_lint(args):
             print(f"ERROR: {error}", file=sys.stderr)
             sys.exit(2)
     elif args.workbook:
-        from xlvbatools.analysis.preflight import lint_workbook
-        issues = lint_workbook(args.workbook, disabled_rules=disabled)
+        from xlvbatools.analysis.issue import VBAIssue
+        from xlvbatools.core.worker import run_isolated_operation
+        raw = run_isolated_operation(
+            "lint_workbook",
+            {
+                "workbook_path": os.path.abspath(args.workbook),
+                "disabled_rules": disabled,
+                "compile_test": True,
+            },
+            timeout=args.timeout,
+        )
+        issues = [VBAIssue(**item) for item in (raw.get("data") or [])]
+        if not raw.get("success") and not issues:
+            print(json.dumps(raw, indent=2, default=str), file=sys.stderr)
+            sys.exit(1)
     else:
         # Try source dir first (no COM needed), then workbook
         src = _cfg_path(cfg, "vba_source_path", "vba_source")
@@ -449,11 +517,23 @@ def _cmd_lint(args):
             from xlvbatools.analysis.preflight import lint_files
             issues = lint_files(src, disabled_rules=disabled)
         else:
-            from xlvbatools.analysis.preflight import lint_workbook
-            issues = lint_workbook(
-                _cfg_path(cfg, "workbook_path", "workbook"),
-                disabled_rules=disabled,
+            from xlvbatools.analysis.issue import VBAIssue
+            from xlvbatools.core.worker import run_isolated_operation
+            raw = run_isolated_operation(
+                "lint_workbook",
+                {
+                    "workbook_path": _cfg_path(
+                        cfg, "workbook_path", "workbook",
+                    ),
+                    "disabled_rules": disabled,
+                    "compile_test": True,
+                },
+                timeout=args.timeout,
             )
+            issues = [VBAIssue(**item) for item in (raw.get("data") or [])]
+            if not raw.get("success") and not issues:
+                print(json.dumps(raw, indent=2, default=str), file=sys.stderr)
+                sys.exit(1)
 
     if getattr(args, "json", False):
         import json
@@ -604,18 +684,26 @@ def _cmd_modify(args):
         except ValueError:
             pass
 
-    from xlvbatools.workbook.modifier import modify_cell
-    success = modify_cell(
-        wb,
-        sheet=args.sheet or "Sheet1",
-        cell=args.cell,
-        value=value,
-        formula=args.formula,
-        name=args.name,
-        refers_to=args.refers_to,
-        delete_name=args.delete_name,
+    from xlvbatools.core.worker import run_isolated_operation
+    raw = run_isolated_operation(
+        "modify",
+        {
+            "workbook_path": os.path.abspath(wb),
+            "sheet": args.sheet or "Sheet1",
+            "cell": args.cell,
+            "value": value,
+            "formula": args.formula,
+            "name": args.name,
+            "refers_to": args.refers_to,
+            "delete_name": args.delete_name,
+        },
+        timeout=args.timeout,
+        retry_transient=True,
     )
+    success = bool(raw.get("success"))
     print("OK" if success else "FAILED")
+    if not success and raw.get("primary_error"):
+        print(f"  Error: {raw['primary_error']}")
     sys.exit(0 if success else 1)
 
 

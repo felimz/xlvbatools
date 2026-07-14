@@ -20,6 +20,7 @@ import logging
 import os
 import shutil
 import tempfile
+from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
 from xlvbatools.vba.manifest import (
@@ -41,6 +42,9 @@ def inject_all(
     backup: bool = True,
     dry_run: bool = False,
     backup_limit: int = _DEFAULT_BACKUP_LIMIT,
+    *,
+    _session=None,
+    _raise_on_error: bool = False,
 ) -> list[dict]:
     """
     Inject all VBA components from source files into the workbook.
@@ -85,7 +89,11 @@ def inject_all(
 
     results = []
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=True) as session:
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=True)
+    )
+    with session_context as session:
         vb_project = session.vb_project
 
         for comp_info in manifest.components:
@@ -116,6 +124,14 @@ def inject_all(
                 })
                 logger.error(f"Failed to inject {comp_info.name}: {e}")
 
+        failed = [item for item in results if item.get("status") == "error"]
+        if failed and _raise_on_error:
+            details = "; ".join(
+                f"{item.get('name')}: {item.get('error', 'injection failed')}"
+                for item in failed
+            )
+            raise RuntimeError(f"VBA injection failed: {details}")
+
     return results
 
 
@@ -124,6 +140,9 @@ def inject_component(
     source_dir: str,
     component_name: str,
     backup: bool = True,
+    *,
+    _session=None,
+    _raise_on_error: bool = False,
 ) -> bool:
     """
     Inject a single VBA component by name.
@@ -143,12 +162,18 @@ def inject_component(
         _create_backup(wb_path, src_dir)
 
     try:
-        with ExcelSession(wb_path, visible=False, save_on_exit=True) as session:
+        session_context = (
+            nullcontext(_session) if _session is not None
+            else ExcelSession(wb_path, visible=False, save_on_exit=True)
+        )
+        with session_context as session:
             _inject_single(session.vb_project, component_name, filepath, type_code)
             logger.info(f"Injected: {component_name}")
             return True
     except Exception as e:
         logger.error(f"Failed to inject {component_name}: {e}")
+        if _raise_on_error:
+            raise
         return False
 
 

@@ -226,6 +226,8 @@ def lint_workbook(
     workbook_path: str,
     disabled_rules: List[str] | None = None,
     compile_test: bool = True,
+    *,
+    _session=None,
 ) -> List[VBAIssue]:
     """
     Run static analysis on a live workbook via COM.
@@ -252,7 +254,12 @@ def lint_workbook(
     wb_path = os.path.abspath(workbook_path)
     all_issues = []
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    from contextlib import nullcontext
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+    )
+    with session_context as session:
         # Run rules against each component's code
         component_codes = {}
         for comp in session.vb_project.VBComponents:

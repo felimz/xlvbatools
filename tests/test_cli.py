@@ -5,6 +5,7 @@ Unit tests for the xlvba command line interface.
 import os
 import sys
 import json
+from pathlib import Path
 import pytest
 from unittest.mock import patch
 from xlvbatools.cli.main import main
@@ -240,26 +241,31 @@ def test_cli_lint_missing_target_fails_without_pass(tmp_path, capsys):
 def test_cli_modify(tmp_path, capsys):
     """Test xlvba modify subcommand."""
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
-         patch("xlvbatools.workbook.modifier.modify_cell") as mock_modify:
+         patch("xlvbatools.core.worker.run_isolated_operation") as mock_worker:
         mock_cfg = mock_config.return_value
         mock_cfg.workbook = "test.xlsm"
         mock_cfg.log_dir = str(tmp_path)
         mock_cfg.log_name = "test_modify"
-        mock_modify.return_value = True
+        mock_worker.return_value = {"success": True, "data": True}
         
         with pytest.raises(SystemExit) as exc_info:
             main(["modify", "--cell", "A1", "--value", "100", "--sheet", "Sheet2"])
         assert exc_info.value.code == 0
         
-        mock_modify.assert_called_once_with(
-            "test.xlsm",
-            sheet="Sheet2",
-            cell="A1",
-            value=100,
-            formula=None,
-            name=None,
-            refers_to=None,
-            delete_name=False
+        mock_worker.assert_called_once_with(
+            "modify",
+            {
+                "workbook_path": str((Path.cwd() / "test.xlsm").resolve()),
+                "sheet": "Sheet2",
+                "cell": "A1",
+                "value": 100,
+                "formula": None,
+                "name": None,
+                "refers_to": None,
+                "delete_name": False,
+            },
+            timeout=120.0,
+            retry_transient=True,
         )
     captured = capsys.readouterr()
     assert "OK" in captured.out
@@ -304,9 +310,7 @@ def test_cli_snapshot_commands(tmp_path, capsys):
 def test_cli_extract_inject_diff(tmp_path, capsys):
     """Test xlvba extract, inject, and diff subcommands."""
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
-         patch("xlvbatools.vba.extractor.extract_all") as mock_extract, \
-         patch("xlvbatools.vba.injector.inject_all") as mock_inject, \
-         patch("xlvbatools.vba.differ.diff_all") as mock_diff:
+         patch("xlvbatools.core.worker.run_isolated_operation") as mock_worker:
         
         mock_cfg = mock_config.return_value
         mock_cfg.workbook = "test.xlsm"
@@ -315,23 +319,24 @@ def test_cli_extract_inject_diff(tmp_path, capsys):
         mock_cfg.log_name = "test_extract"
         mock_cfg.backups.limit = 5
         
-        mock_extract.return_value = {"components": [{"name": "modTest"}]}
-        mock_inject.return_value = [{"name": "modTest", "status": "injected"}]
-        mock_diff.return_value = []
+        mock_worker.side_effect = [
+            {"success": True, "data": {"components": [{"name": "modTest"}]}},
+            {"success": True, "data": [{"name": "modTest", "status": "injected"}]},
+            {"success": True, "data": []},
+        ]
         
         # Test extract
         main(["extract"])
-        mock_extract.assert_called_once_with("test.xlsm", "vba_source")
         
         # Test inject
         main(["inject"])
-        mock_inject.assert_called_once_with(
-            "test.xlsm", "vba_source", backup=True, dry_run=False, backup_limit=5
-        )
 
         # Test diff
         main(["diff"])
-        mock_diff.assert_called_once_with("test.xlsm", "vba_source")
+        assert [call.args[0] for call in mock_worker.call_args_list] == [
+            "extract", "inject", "diff",
+        ]
+        assert all(call.kwargs["timeout"] == 120.0 for call in mock_worker.call_args_list)
 
 
 @pytest.mark.unit
@@ -350,12 +355,17 @@ def test_cli_resolves_config_paths_from_nested_directory(
     )
     monkeypatch.chdir(nested)
 
-    with patch("xlvbatools.vba.extractor.extract_all") as extract:
-        extract.return_value = {"components": []}
+    with patch("xlvbatools.core.worker.run_isolated_operation") as worker:
+        worker.return_value = {"success": True, "data": {"components": []}}
         main(["extract"])
 
-    extract.assert_called_once_with(
-        str((project / "workbook" / "book.xlsm").resolve()),
-        str((project / "workbook" / "vba_source").resolve()),
+    worker.assert_called_once_with(
+        "extract",
+        {
+            "workbook_path": str((project / "workbook" / "book.xlsm").resolve()),
+            "output_dir": str((project / "workbook" / "vba_source").resolve()),
+            "component": None,
+        },
+        timeout=120.0,
     )
     assert (project / "logs").is_dir()

@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import tempfile
+from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
 from xlvbatools.vba.manifest import get_type_info
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 from xlvbatools.vba.constants import VBE_HEADER_STRIP_RE as _VBE_HEADER_RE
 
 
-def diff_all(workbook_path: str, source_dir: str) -> list[dict]:
+def diff_all(workbook_path: str, source_dir: str, *, _session=None) -> list[dict]:
     """
     Compare all VBA components between the workbook and source files.
 
@@ -37,7 +38,11 @@ def diff_all(workbook_path: str, source_dir: str) -> list[dict]:
     src_dir = os.path.abspath(source_dir)
     results = []
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+    )
+    with session_context as session:
         vb_project = session.vb_project
 
         # Build lookup of source files
@@ -82,6 +87,8 @@ def diff_component(
     workbook_path: str,
     source_dir: str,
     component_name: str,
+    *,
+    _session=None,
 ) -> dict | None:
     """
     Compare a single VBA component between workbook and source.
@@ -91,7 +98,11 @@ def diff_component(
     wb_path = os.path.abspath(workbook_path)
     src_dir = os.path.abspath(source_dir)
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+    )
+    with session_context as session:
         vb_project = session.vb_project
 
         # Find in workbook

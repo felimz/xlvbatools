@@ -48,26 +48,30 @@ def test_timeout_requires_positive_value():
 
 @pytest.mark.unit
 def test_targeted_timeout_cleanup(monkeypatch):
-    from xlvbatools.macro import runner
+    from xlvbatools.core import worker
 
     killed = []
 
     class Process:
-        alive = True
+        returncode = None
 
-        def join(self, timeout):
-            pass
+        def wait(self, timeout):
+            if self.returncode is None:
+                raise worker.subprocess.TimeoutExpired("worker", timeout)
 
-        def is_alive(self):
-            return self.alive
+        def poll(self):
+            return self.returncode
 
         def terminate(self):
-            self.alive = False
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
 
     states = iter([True, False])
-    monkeypatch.setattr(runner, "is_process_running", lambda pid: next(states, False))
-    monkeypatch.setattr(runner, "kill_process_by_pid", lambda pid: killed.append(pid) or True)
-    cleanup = runner._terminate_timed_out_run(Process(), 4321, grace_period=0)
+    monkeypatch.setattr(worker, "is_process_running", lambda pid: next(states, False))
+    monkeypatch.setattr(worker, "kill_process_by_pid", lambda pid: killed.append(pid) or True)
+    cleanup = worker._terminate_owned_processes(Process(), 4321, grace_period=0)
 
     assert killed == [4321]
     assert cleanup["pid"] == 4321

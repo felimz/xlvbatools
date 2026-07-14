@@ -42,6 +42,14 @@ The facade exposes:
 - `modify(...)`
 - `snapshot_manager()`
 
+All COM-backed facade methods use one shared worker protocol. Each request is
+executed by a fresh interpreter and a fresh owned Excel process; no COM proxy
+crosses the process boundary. The parent enforces the method's `timeout`, reads
+atomic progress containing the exact worker and Excel PIDs, and can stop only
+those owned processes. `extract`, `inject`, `diff`, `modify`, and workbook-mode
+`lint` accept a `timeout` keyword in addition to their operation-specific
+arguments.
+
 `XlvbaProject.for_workbook(...)` provides the same interface without requiring
 a TOML file.
 
@@ -61,8 +69,8 @@ Every facade method returns a schema-versioned `OperationResult` containing:
 `OperationFailedError`; `require_clean_shutdown()` raises
 `HeadlessCleanupError` unless Excel reported a graceful, non-forced exit.
 
-Existing function-level APIs remain supported and are used internally during
-the compatibility phase.
+Existing function-level APIs remain supported for advanced callers that
+deliberately manage an in-process COM lifecycle.
 
 ---
 
@@ -117,9 +125,32 @@ with ExcelSession(
   * **Returns:** Dict containing keys `success` (bool), `error` (str | None), `error_context` (list[str]).
 * **`set_named_range(name, value, strict=False) -> bool`:** Sets a workbook name. Strict mode raises immediately so execution cannot continue with stale inputs.
 
+## Shared Isolated Worker
+
+The facade and CLI use the internal `xlvbatools.core.worker` executor for:
+
+- workbook inspection;
+- macro execution;
+- VBA component listing and extraction;
+- VBA injection;
+- workbook/source differencing;
+- live-workbook lint and compile checks; and
+- cell, formula, and named-range modification.
+
+The versioned protocol uses a request file, atomically replaced progress file,
+and atomically replaced result file. Worker output is redirected to a regular
+file so Excel cannot keep an inherited output pipe open. On Windows, a venv's
+base interpreter is launched with the active venv preserved, avoiding a
+detached launcher/child pair that would make timeout ownership ambiguous.
+
+See [Worker Protocol](worker-protocol.md) for the schema and lifecycle rules.
+
 ### `xlvbatools.macro.run_macro`
 
-Runs the complete Excel session in a spawned worker process. The worker reports its isolated Excel PID before opening the workbook. The parent waits up to `timeout`, terminates only that PID when the deadline expires, and then terminates the blocked worker if necessary.
+Runs the complete Excel session through the shared worker. The worker reports
+its isolated Excel PID before opening the workbook. The parent waits up to
+`timeout`, terminates only that PID when the deadline expires, and then
+terminates the blocked worker if necessary.
 
 ```python
 from xlvbatools.macro import run_macro
@@ -129,7 +160,9 @@ if result.get("timed_out"):
     print(result["excel_pid"], result["cleanup"])
 ```
 
-Timeout results include `timed_out`, `timeout_seconds`, `excel_pid`, and targeted `cleanup` details. Frozen Windows executables should call `multiprocessing.freeze_support()` in their guarded entry point.
+Timeout results include `timed_out`, `timeout_seconds`, `worker_pid`,
+`excel_pid`, and targeted `cleanup` details. The shared worker uses a subprocess
+entry point and does not require `multiprocessing.freeze_support()`.
 
 Successful result example:
 

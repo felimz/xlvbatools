@@ -111,6 +111,47 @@ def test_project_lint_uses_resolved_source_path(tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("method", "kwargs", "operation", "worker_data"),
+    [
+        ("extract", {}, "extract", {"components": []}),
+        ("inject", {"backup": False}, "inject", []),
+        ("diff", {}, "diff", []),
+        ("modify", {"cell": "A1", "value": 4}, "modify", True),
+    ],
+)
+def test_com_backed_project_methods_use_shared_worker(
+    tmp_path, method, kwargs, operation, worker_data,
+):
+    from xlvbatools import XlvbaProject
+
+    project = XlvbaProject.for_workbook(tmp_path / "book.xlsm")
+    legacy = {
+        "success": True,
+        "phase": "complete",
+        "data": worker_data,
+        "worker_pid": 90,
+        "excel_pid": 91,
+        "cleanup": {
+            "pid": 91,
+            "quit_requested": True,
+            "exited_gracefully": True,
+            "force_terminated": False,
+            "still_running": False,
+        },
+    }
+    with patch(
+        "xlvbatools.core.worker.run_isolated_operation", return_value=legacy,
+    ) as worker:
+        result = getattr(project, method)(**kwargs)
+
+    assert result.success is True
+    assert result.diagnostics.worker_pid == 90
+    assert result.require_clean_shutdown().pid == 91
+    assert worker.call_args.args[0] == operation
+
+
+@pytest.mark.unit
 def test_project_from_nested_directory_resolves_config_paths(tmp_path):
     from xlvbatools import XlvbaProject
 
@@ -183,3 +224,65 @@ def test_project_facade_macro_reports_clean_owned_process(runtime_error_workbook
     assert result.success is True, result.to_dict()
     assert result.data["macro"] == "CompleteNormally"
     assert result.require_clean_shutdown().still_running is False
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_project_vba_round_trip_uses_clean_sequential_workers(
+    runtime_error_workbook, tmp_path,
+):
+    """The high-level VBA workflow never exposes COM to its caller."""
+    from xlvbatools import XlvbaProject
+
+    source = tmp_path / "isolated_source"
+    project = XlvbaProject.for_workbook(
+        runtime_error_workbook, vba_source=source,
+    )
+
+    extracted = project.extract(timeout=90)
+    assert extracted.success is True, extracted.to_dict()
+    assert extracted.data["components"]
+    assert extracted.require_clean_shutdown().still_running is False
+
+    compared = project.diff(timeout=90)
+    assert compared.success is True, compared.to_dict()
+    assert all(item["status"] == "identical" for item in compared.data)
+    assert compared.require_clean_shutdown().still_running is False
+
+    injected = project.inject(backup=False, timeout=90)
+    assert injected.success is True, injected.to_dict()
+    assert all(item["status"] == "injected" for item in injected.data)
+    assert injected.require_clean_shutdown().still_running is False
+
+    linted = project.lint(workbook=True, compile_test=False, timeout=90)
+    assert linted.success is True, linted.to_dict()
+    assert linted.require_clean_shutdown().still_running is False
+
+    executed = project.run_macro(
+        "CompleteNormally", timeout=90, save_on_exit=False,
+    )
+    assert executed.success is True, executed.to_dict()
+    assert executed.require_clean_shutdown().still_running is False
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_project_modify_then_inspect_across_isolated_workers(
+    minimal_workbook,
+):
+    from xlvbatools import XlvbaProject
+
+    project = XlvbaProject.for_workbook(minimal_workbook)
+    modified = project.modify(
+        sheet="Sheet1", cell="B2", value=73, timeout=90,
+    )
+    assert modified.success is True, modified.to_dict()
+    assert modified.require_clean_shutdown().still_running is False
+
+    inspected = project.inspect(
+        ["Sheet1"], cell_range="B2", include_screenshots=False, timeout=90,
+    )
+    assert inspected.success is True, inspected.to_dict()
+    cell = inspected.data.workbook_data["sheets"]["Sheet1"]["cells"]["B2"]
+    assert cell["value"] == 73
+    assert inspected.require_clean_shutdown().still_running is False

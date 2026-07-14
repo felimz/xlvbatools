@@ -3,27 +3,30 @@
 import gc
 import json
 import os
-import subprocess
 from types import SimpleNamespace
 
 import pytest
 
 
-def test_inspection_worker_result_is_returned(monkeypatch, tmp_path):
+def test_shared_worker_inspection_result_is_returned(monkeypatch, tmp_path):
+    from xlvbatools.core import worker
     from xlvbatools.workbook import dumper
 
     expected = {"success": True, "phase": "complete", "cleanup": {"pid": 42}}
 
-    def fake_run(command, **kwargs):
-        result_path = command[-2]
-        with open(result_path, "w", encoding="utf-8") as handle:
-            json.dump(expected, handle)
-        return subprocess.CompletedProcess(command, 0)
+    calls = []
 
-    monkeypatch.setattr(dumper.subprocess, "run", fake_run)
+    def fake_run(operation, arguments, *, timeout):
+        calls.append((operation, arguments, timeout))
+        return expected
+
+    monkeypatch.setattr(worker, "run_isolated_operation", fake_run)
     result = dumper.inspect_workbook("book.xlsm", ["Input"], output_dir=str(tmp_path))
 
     assert result == expected
+    assert calls[0][0] == "inspect"
+    assert calls[0][1]["workbook_path"].endswith("book.xlsm")
+    assert calls[0][2] == 60
 
 
 def test_excel_session_safe_defaults():

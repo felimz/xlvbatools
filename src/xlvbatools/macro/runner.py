@@ -1,13 +1,11 @@
-"""Execute complete Excel sessions in killable worker processes."""
+"""Execute complete Excel sessions through the shared isolated worker."""
 
 import logging
-import multiprocessing
 import os
 import time
 import uuid
 from typing import Callable, Optional
 
-from xlvbatools.core.process import is_process_running, kill_process_by_pid
 from xlvbatools.core.session import ExcelSession
 
 logger = logging.getLogger(__name__)
@@ -84,64 +82,6 @@ def _run_macro_once(
         }
 
 
-def _macro_worker(connection, arguments: dict) -> None:
-    """Spawn-safe worker entry point. All COM objects remain in this process."""
-    pythoncom = None
-    try:
-        try:
-            import pythoncom as _pythoncom
-            pythoncom = _pythoncom
-            pythoncom.CoInitialize()
-        except ImportError:
-            pass
-
-        def report_pid(pid: int) -> None:
-            connection.send({"kind": "excel_started", "excel_pid": pid, "phase": "workbook_open"})
-
-        def report_phase(phase: str) -> None:
-            connection.send({"kind": "phase", "phase": phase})
-
-        result = _run_macro_once(
-            **arguments, on_excel_started=report_pid, on_phase=report_phase
-        )
-        connection.send({"kind": "result", "result": result})
-    except BaseException as error:
-        try:
-            connection.send({
-                "kind": "worker_error",
-                "error": f"{type(error).__name__}: {error}",
-            })
-        except Exception:
-            pass
-    finally:
-        connection.close()
-        if pythoncom is not None:
-            pythoncom.CoUninitialize()
-
-
-def _terminate_timed_out_run(process, excel_pid: Optional[int], grace_period: float = 2.0) -> dict:
-    """Terminate the reported Excel PID first, then the blocked worker."""
-    force_terminated = False
-    if excel_pid is not None and is_process_running(excel_pid):
-        force_terminated = kill_process_by_pid(excel_pid)
-
-    process.join(grace_period)
-    worker_terminated = False
-    if process.is_alive():
-        process.terminate()
-        process.join(grace_period)
-        worker_terminated = True
-
-    return {
-        "pid": excel_pid,
-        "quit_requested": False,
-        "exited_gracefully": False,
-        "force_terminated": force_terminated,
-        "worker_terminated": worker_terminated,
-        "still_running": bool(excel_pid and is_process_running(excel_pid)),
-    }
-
-
 def run_macro(
     workbook_path: str,
     macro_name: str,
@@ -152,8 +92,7 @@ def run_macro(
     strict_named_ranges: bool = True,
 ) -> dict:
     """Run a complete isolated Excel session with a real parent-enforced timeout."""
-    if timeout <= 0:
-        raise ValueError("timeout must be greater than zero")
+    from xlvbatools.core.worker import run_isolated_operation
 
     run_id = str(uuid.uuid4())
     arguments = {
@@ -166,86 +105,4 @@ def run_macro(
         "strict_named_ranges": strict_named_ranges,
         "run_id": run_id,
     }
-
-    context = multiprocessing.get_context("spawn")
-    parent_connection, child_connection = context.Pipe(duplex=False)
-    process = context.Process(target=_macro_worker, args=(child_connection, arguments))
-    process.start()
-    child_connection.close()
-
-    started = time.monotonic()
-    deadline = started + timeout
-    excel_pid = None
-    phase = "session_start"
-    try:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                cleanup = _terminate_timed_out_run(process, excel_pid)
-                return {
-                    "success": False,
-                    "run_id": run_id,
-                    "macro": macro_name,
-                    "phase": phase,
-                    "elapsed_seconds": time.monotonic() - started,
-                    "timed_out": True,
-                    "timeout_seconds": timeout,
-                    "excel_pid": excel_pid,
-                    "primary_error": f"Execution timed out after {timeout:.3f} seconds",
-                    "dialog_events": [],
-                    "cleanup": cleanup,
-                }
-
-            if parent_connection.poll(min(remaining, 0.1)):
-                try:
-                    message = parent_connection.recv()
-                except EOFError:
-                    message = None
-                if message is None:
-                    break
-                if message["kind"] == "excel_started":
-                    excel_pid = message["excel_pid"]
-                    phase = message["phase"]
-                elif message["kind"] == "phase":
-                    phase = message["phase"]
-                elif message["kind"] == "result":
-                    process.join(5.0)
-                    return message["result"]
-                elif message["kind"] == "worker_error":
-                    process.join(2.0)
-                    cleanup = _terminate_timed_out_run(process, excel_pid, grace_period=1.0)
-                    return {
-                        "success": False,
-                        "run_id": run_id,
-                        "macro": macro_name,
-                        "phase": phase,
-                        "elapsed_seconds": time.monotonic() - started,
-                        "primary_error": message["error"],
-                        "error": message["error"],
-                        "dialog_events": [],
-                        "cleanup": cleanup,
-                    }
-
-            if not process.is_alive() and not parent_connection.poll():
-                break
-
-        process.join(1.0)
-        cleanup = _terminate_timed_out_run(process, excel_pid, grace_period=1.0)
-        return {
-            "success": False,
-            "run_id": run_id,
-            "macro": macro_name,
-            "phase": phase,
-            "elapsed_seconds": time.monotonic() - started,
-            "primary_error": f"Macro worker exited without a result (exit code {process.exitcode})",
-            "error": f"Macro worker exited without a result (exit code {process.exitcode})",
-            "dialog_events": [],
-            "cleanup": cleanup,
-        }
-    finally:
-        parent_connection.close()
-        if process.is_alive():
-            if excel_pid is not None and is_process_running(excel_pid):
-                kill_process_by_pid(excel_pid)
-            process.terminate()
-            process.join(2.0)
+    return run_isolated_operation("run_macro", arguments, timeout=timeout)

@@ -12,6 +12,7 @@ Usage:
 
 import logging
 import os
+from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
 
@@ -27,6 +28,9 @@ def modify_cell(
     name: str | None = None,
     refers_to: str | None = None,
     delete_name: bool = False,
+    *,
+    _session=None,
+    _raise_on_error: bool = False,
 ) -> bool:
     """
     Modify a cell value/formula or manage a named range.
@@ -57,11 +61,19 @@ def modify_cell(
     """
     wb_path = os.path.abspath(workbook_path)
     if not os.path.exists(wb_path):
-        logger.error(f"Workbook not found: {wb_path}")
+        message = f"Workbook not found: {wb_path}"
+        logger.error(message)
+        if _raise_on_error:
+            raise FileNotFoundError(message)
         return False
 
     success = True
-    with ExcelSession(wb_path, visible=False, save_on_exit=True) as session:
+    errors = []
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=True)
+    )
+    with session_context as session:
         excel, wb = session.excel, session.wb
 
         try:
@@ -72,6 +84,7 @@ def modify_cell(
                     logger.info(f"Deleted named range '{name}'")
                 except Exception as e:
                     logger.error(f"Failed to delete named range '{name}': {e}")
+                    errors.append(f"Failed to delete named range '{name}': {e}")
                     success = False
 
             # Named range creation
@@ -81,6 +94,7 @@ def modify_cell(
                     logger.info(f"Created named range '{name}' -> '{refers_to}'")
                 except Exception as e:
                     logger.error(f"Failed to create named range '{name}': {e}")
+                    errors.append(f"Failed to create named range '{name}': {e}")
                     success = False
 
             # Cell modification
@@ -91,12 +105,14 @@ def modify_cell(
                     target_cell = ws.Range(cell)
                 except Exception as e:
                     logger.error(f"Failed to resolve '{cell}' on '{sheet}': {e}")
+                    errors.append(f"Failed to resolve '{cell}' on '{sheet}': {e}")
                     success = False
             elif name and not refers_to and not delete_name:
                 try:
                     target_cell = wb.Names(name).RefersToRange
                 except Exception as e:
                     logger.error(f"Failed to resolve named range '{name}': {e}")
+                    errors.append(f"Failed to resolve named range '{name}': {e}")
                     success = False
 
             if target_cell is not None:
@@ -112,6 +128,9 @@ def modify_cell(
 
         except Exception as e:
             logger.error(f"Excel COM error: {e}")
+            errors.append(f"Excel COM error: {e}")
             success = False
 
+    if not success and _raise_on_error:
+        raise RuntimeError("; ".join(errors) or "Workbook modification failed")
     return success

@@ -155,16 +155,36 @@ class XlvbaProject:
         *,
         workbook: bool = False,
         compile_test: bool = True,
+        timeout: float = 120.0,
     ) -> OperationResult[tuple[Any, ...]]:
         """Lint project source offline, or lint/compile the workbook via COM."""
         try:
             if workbook:
-                from xlvbatools.analysis.preflight import lint_workbook
+                from xlvbatools.core.worker import run_isolated_operation
 
-                issues = lint_workbook(
-                    self.workbook_path,
-                    disabled_rules=self.config.lint.disabled_rules,
-                    compile_test=compile_test,
+                raw = run_isolated_operation(
+                    "lint_workbook",
+                    {
+                        "workbook_path": self.workbook_path,
+                        "disabled_rules": self.config.lint.disabled_rules,
+                        "compile_test": compile_test,
+                    },
+                    timeout=timeout,
+                )
+                issues = tuple(raw.get("data") or ())
+                errors = [
+                    issue for issue in issues
+                    if issue.get("severity") == "ERROR"
+                ]
+                return OperationResult.from_legacy(
+                    "lint",
+                    raw,
+                    data=issues,
+                    metadata={
+                        "error_count": len(errors),
+                        "issue_count": len(issues),
+                        "workbook": True,
+                    },
                 )
             else:
                 from xlvbatools.analysis.preflight import lint_files
@@ -196,27 +216,25 @@ class XlvbaProject:
         *,
         output_dir: str | os.PathLike[str] | None = None,
         component: Optional[str] = None,
+        timeout: float = 120.0,
     ) -> OperationResult[Any]:
-        """Extract one or all VBA components using resolved project paths."""
+        """Extract VBA through the shared isolated Excel worker."""
         target = os.fspath(output_dir) if output_dir else self.vba_source_path
         try:
-            if component:
-                from xlvbatools.vba.extractor import extract_component
+            from xlvbatools.core.worker import run_isolated_operation
 
-                data = extract_component(self.workbook_path, component, target)
-                if data is None:
-                    return OperationResult(
-                        operation="extract", success=False, phase="extract",
-                        error=ErrorInfo(
-                            f"Component not found: {component}", code="not_found",
-                        ),
-                    )
-            else:
-                from xlvbatools.vba.extractor import extract_all
-
-                data = extract_all(self.workbook_path, target)
-            return OperationResult(
-                operation="extract", success=True, phase="complete", data=data,
+            raw = run_isolated_operation(
+                "extract",
+                {
+                    "workbook_path": self.workbook_path,
+                    "output_dir": os.path.abspath(target),
+                    "component": component,
+                },
+                timeout=timeout,
+            )
+            return OperationResult.from_legacy(
+                "extract", raw, data=raw.get("data"),
+                metadata={"component": component, "output_dir": target},
             )
         except Exception as error:
             return OperationResult.failed("extract", error)
@@ -228,41 +246,33 @@ class XlvbaProject:
         component: Optional[str] = None,
         backup: bool = True,
         dry_run: bool = False,
+        timeout: float = 120.0,
     ) -> OperationResult[Any]:
-        """Inject one or all VBA components using resolved project paths."""
+        """Inject VBA through the shared isolated Excel worker."""
         source = os.fspath(source_dir) if source_dir else self.vba_source_path
         try:
+            if component and dry_run:
+                raise ValueError("dry_run is supported only for project injection")
+            from xlvbatools.core.worker import run_isolated_operation
+
+            raw = run_isolated_operation(
+                "inject",
+                {
+                    "workbook_path": self.workbook_path,
+                    "source_dir": os.path.abspath(source),
+                    "component": component,
+                    "backup": backup,
+                    "dry_run": dry_run,
+                    "backup_limit": self.config.backups.limit,
+                },
+                timeout=timeout,
+            )
+            data: Any = raw.get("data")
             if component:
-                if dry_run:
-                    raise ValueError("dry_run is supported only for project injection")
-                from xlvbatools.vba.injector import inject_component
-
-                success = inject_component(
-                    self.workbook_path, source, component, backup=backup,
-                )
-                data: Any = {"component": component, "injected": success}
-            else:
-                from xlvbatools.vba.injector import inject_all
-
-                data = inject_all(
-                    self.workbook_path,
-                    source,
-                    backup=backup,
-                    dry_run=dry_run,
-                    backup_limit=self.config.backups.limit,
-                )
-                success = all(item.get("status") != "error" for item in data)
-            return OperationResult(
-                operation="inject",
-                success=success,
-                phase="complete" if success else "inject",
-                data=data,
-                error=(
-                    None if success else ErrorInfo(
-                        "One or more VBA components failed to inject",
-                        code="injection_failed",
-                    )
-                ),
+                data = {"component": component, "injected": bool(data)}
+            return OperationResult.from_legacy(
+                "inject", raw, data=data,
+                metadata={"component": component, "dry_run": dry_run},
             )
         except Exception as error:
             return OperationResult.failed("inject", error)
@@ -272,27 +282,25 @@ class XlvbaProject:
         *,
         source_dir: str | os.PathLike[str] | None = None,
         component: Optional[str] = None,
+        timeout: float = 120.0,
     ) -> OperationResult[Any]:
-        """Compare live workbook VBA with resolved project source."""
+        """Compare live VBA through the shared isolated Excel worker."""
         source = os.fspath(source_dir) if source_dir else self.vba_source_path
         try:
-            if component:
-                from xlvbatools.vba.differ import diff_component
+            from xlvbatools.core.worker import run_isolated_operation
 
-                data = diff_component(self.workbook_path, source, component)
-                if data is None:
-                    return OperationResult(
-                        operation="diff", success=False, phase="diff",
-                        error=ErrorInfo(
-                            f"Component not found: {component}", code="not_found",
-                        ),
-                    )
-            else:
-                from xlvbatools.vba.differ import diff_all
-
-                data = diff_all(self.workbook_path, source)
-            return OperationResult(
-                operation="diff", success=True, phase="complete", data=data,
+            raw = run_isolated_operation(
+                "diff",
+                {
+                    "workbook_path": self.workbook_path,
+                    "source_dir": os.path.abspath(source),
+                    "component": component,
+                },
+                timeout=timeout,
+            )
+            return OperationResult.from_legacy(
+                "diff", raw, data=raw.get("data"),
+                metadata={"component": component, "source_dir": source},
             )
         except Exception as error:
             return OperationResult.failed("diff", error)
@@ -307,31 +315,31 @@ class XlvbaProject:
         name: Optional[str] = None,
         refers_to: Optional[str] = None,
         delete_name: bool = False,
+        timeout: float = 120.0,
     ) -> OperationResult[dict[str, Any]]:
-        """Modify a cell or named range through the compatibility implementation."""
+        """Modify a cell or named range through the isolated Excel worker."""
         try:
-            from xlvbatools.workbook.modifier import modify_cell
+            from xlvbatools.core.worker import run_isolated_operation
 
-            success = modify_cell(
-                self.workbook_path,
-                sheet=sheet,
-                cell=cell,
-                value=value,
-                formula=formula,
-                name=name,
-                refers_to=refers_to,
-                delete_name=delete_name,
+            raw = run_isolated_operation(
+                "modify",
+                {
+                    "workbook_path": self.workbook_path,
+                    "sheet": sheet,
+                    "cell": cell,
+                    "value": value,
+                    "formula": formula,
+                    "name": name,
+                    "refers_to": refers_to,
+                    "delete_name": delete_name,
+                },
+                timeout=timeout,
+                retry_transient=True,
             )
-            return OperationResult(
-                operation="modify",
-                success=success,
-                phase="complete" if success else "modify",
+            return OperationResult.from_legacy(
+                "modify",
+                raw,
                 data={"sheet": sheet, "cell": cell, "name": name},
-                error=(
-                    None if success else ErrorInfo(
-                        "Workbook modification failed", code="modification_failed",
-                    )
-                ),
             )
         except Exception as error:
             return OperationResult.failed("modify", error)

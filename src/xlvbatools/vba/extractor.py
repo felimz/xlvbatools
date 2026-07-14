@@ -21,6 +21,7 @@ import gc
 import logging
 import os
 import tempfile
+from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
 from xlvbatools.vba.manifest import (
@@ -33,7 +34,7 @@ from xlvbatools.vba.manifest import (
 logger = logging.getLogger(__name__)
 
 
-def list_components(workbook_path: str) -> list[dict]:
+def list_components(workbook_path: str, *, _session=None) -> list[dict]:
     """
     List all VBA components in a workbook without extracting.
 
@@ -42,7 +43,11 @@ def list_components(workbook_path: str) -> list[dict]:
     wb_path = os.path.abspath(workbook_path)
     components = []
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+    )
+    with session_context as session:
         for comp in session.vb_project.VBComponents:
             type_code = comp.Type
             type_info = get_type_info(type_code)
@@ -64,6 +69,8 @@ def extract_component(
     workbook_path: str,
     component_name: str,
     output_dir: str,
+    *,
+    _session=None,
 ) -> dict | None:
     """
     Extract a single VBA component by name.
@@ -73,7 +80,11 @@ def extract_component(
     wb_path = os.path.abspath(workbook_path)
     out_dir = os.path.abspath(output_dir)
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+    )
+    with session_context as session:
         vb_project = session.vb_project
         comp = None
         for c in vb_project.VBComponents:
@@ -99,6 +110,8 @@ def extract_component(
 def extract_all(
     workbook_path: str,
     output_dir: str,
+    *,
+    _session=None,
 ) -> dict:
     """
     Extract all VBA components from a workbook to disk.
@@ -121,7 +134,11 @@ def extract_all(
 
     components = []
 
-    with ExcelSession(wb_path, visible=False, save_on_exit=False) as session:
+    session_context = (
+        nullcontext(_session) if _session is not None
+        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+    )
+    with session_context as session:
         vb_project = session.vb_project
 
         for comp in vb_project.VBComponents:

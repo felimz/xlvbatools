@@ -23,9 +23,6 @@ Usage:
 import json
 import logging
 import os
-import subprocess
-import sys
-import tempfile
 import time
 from contextlib import nullcontext
 
@@ -839,6 +836,8 @@ def inspect_workbook(
     timeout_seconds: float = 60,
 ) -> dict:
     """Run combined workbook inspection in a timeout-controlled worker."""
+    from xlvbatools.core.worker import run_isolated_operation
+
     request = {
         "workbook_path": os.path.abspath(workbook_path), "sheets": sheets,
         "output_dir": os.path.abspath(output_dir), "custom_range": custom_range,
@@ -848,46 +847,7 @@ def inspect_workbook(
         "continue_on_render_error": continue_on_render_error,
         "include_hidden_sheets": include_hidden_sheets,
     }
-    with tempfile.TemporaryDirectory(prefix="xlvba-inspect-") as temp_dir:
-        request_path = os.path.join(temp_dir, "request.json")
-        result_path = os.path.join(temp_dir, "result.json")
-        progress_path = os.path.join(temp_dir, "progress.json")
-        with open(request_path, "w", encoding="utf-8") as handle:
-            json.dump(request, handle)
-        try:
-            completed = subprocess.run(
-                [sys.executable, "-m", "xlvbatools.workbook.inspection_worker",
-                 request_path, result_path, progress_path],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=timeout_seconds,
-            )
-        except subprocess.TimeoutExpired:
-            excel_pid = None
-            try:
-                with open(progress_path, encoding="utf-8") as handle:
-                    excel_pid = json.load(handle).get("excel_pid")
-            except Exception:
-                pass
-            force_terminated = False
-            if excel_pid:
-                from xlvbatools.core.process import kill_process_by_pid
-                force_terminated = kill_process_by_pid(excel_pid)
-            return {
-                "success": False, "phase": "timeout",
-                "primary_error": f"Inspection exceeded {timeout_seconds} seconds",
-                "dialog_events": [],
-                "cleanup": {"pid": excel_pid, "quit_requested": False,
-                            "exited_gracefully": False,
-                            "force_terminated": force_terminated},
-            }
-        if not os.path.exists(result_path):
-            return {
-                "success": False, "phase": "worker_exit",
-                "primary_error": f"Inspection worker exited with {completed.returncode}",
-                "dialog_events": [], "cleanup": {},
-            }
-        with open(result_path, encoding="utf-8") as handle:
-            return json.load(handle)
+    return run_isolated_operation("inspect", request, timeout=timeout_seconds)
 
 
 # ── Markdown Report Generation (D6) ──

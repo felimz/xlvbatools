@@ -12,12 +12,14 @@
 - **Call Dependency Graph** -- Parses Sub/Function definitions and call sites, outputs Mermaid/DOT/JSON
 - **Workbook Inspection** -- Screenshot worksheets, dump cell values/formulas, inspect named ranges and shapes
 
-Workbook inspection runs in an isolated, timeout-controlled Excel process. It
-opens files read-only with macros/events disabled, never closes an existing
-Excel session, and renders the original range directly without copying
-worksheet VBA. Combined screenshot and data requests reuse one owned session.
-Only visible worksheet tabs are rendered by default; hidden and VeryHidden
-worksheets require the explicit `--include-hidden-sheets` option.
+Every COM-backed facade and CLI operation runs through the same isolated,
+timeout-controlled worker protocol. Inspection, macro execution, VBA
+extract/inject/diff, workbook lint, and workbook modification all report the
+worker PID, owned Excel PID, execution phase, and cleanup result without
+exposing COM objects to a wrapper process. Inspection opens files read-only
+with macros/events disabled and renders the original range directly without
+copying worksheet VBA. Only visible worksheet tabs are rendered by default;
+hidden and VeryHidden worksheets require `--include-hidden-sheets`.
 - **Workbook Modification** -- Programmatically set cell values, formulas, and named ranges
 - **Macro Execution** -- Run VBA macros with full dialog protection and structured result reporting
 - **Snapshot System** -- Timestamped checkpoint/rollback for workbook and VBA source state
@@ -57,9 +59,10 @@ result.require_clean_shutdown()
 print(inspection.screenshots)
 ```
 
-The facade currently supports `inspect`, `run_macro`, `lint`, `extract`,
-`inject`, `diff`, `modify`, and a bound `snapshot_manager`. Existing function
-APIs remain available for compatibility.
+The facade supports `inspect`, `run_macro`, `lint`, `extract`, `inject`,
+`diff`, `modify`, and a bound `snapshot_manager`. Its COM-backed operations use
+the shared worker automatically. Existing function APIs remain available as
+advanced, caller-managed compatibility APIs.
 
 `OperationResult.to_dict()` produces a JSON-compatible contract with
 `schema_version`, `operation`, `phase`, `data`, `error`, `artifacts`, and
@@ -118,6 +121,8 @@ xlvbatools/
 │   │   └── init_cmd.py          # Project initialization
 │   ├── core/                    # Excel COM automation
 │   │   ├── session.py           # ExcelSession context manager
+│   │   ├── worker.py            # Shared parent-side worker executor
+│   │   ├── worker_entry.py      # Single spawn-clean worker entry point
 │   │   ├── watchdog.py          # DialogWatchdog background thread
 │   │   └── process.py           # Excel process management
 │   ├── vba/                     # VBA source operations
