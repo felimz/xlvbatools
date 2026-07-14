@@ -74,7 +74,7 @@ def minimal_workbook(tmp_path):
             # Excel commonly needs more than three seconds to finish COM/VBE
             # shutdown. Killing it mid-shutdown can destabilize the next
             # DispatchEx call in the same interpreter.
-            deadline = time.time() + 10.0
+            deadline = time.time() + 20.0
             while time.time() < deadline and is_process_running(excel_pid):
                 time.sleep(0.1)
             if is_process_running(excel_pid):
@@ -163,7 +163,7 @@ def runtime_error_workbook(tmp_path):
         gc.collect()
         if excel_pid is not None:
             from xlvbatools.core.process import is_process_running, kill_process_by_pid
-            deadline = time.time() + 10.0
+            deadline = time.time() + 20.0
             while time.time() < deadline and is_process_running(excel_pid):
                 time.sleep(0.1)
             if is_process_running(excel_pid):

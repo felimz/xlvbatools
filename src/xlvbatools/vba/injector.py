@@ -299,7 +299,7 @@ def _create_backup(workbook_path: str, source_dir: str, limit: int = _DEFAULT_BA
     mgr = SnapshotManager(
         workbook_path=workbook_path,
         vba_source_dir=source_dir,
-        snapshots_dir=config.snapshots_dir,
+        snapshots_dir=config.snapshots_path,
         rolling_limit=limit,
     )
     mgr.create(description="pre-injection_backup", milestone=False)

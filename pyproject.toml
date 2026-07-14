@@ -40,6 +40,8 @@ lint-offline = [
 dev = [
     "pytest",
     "pytest-cov",
+    "setuptools>=68.0",
+    "wheel",
     "oletools; sys_platform != 'win32'",
 ]
 all = [
@@ -68,4 +70,5 @@ markers = [
     "integration: Requires live Excel or multi-component integration",
     "com: Requires Excel COM automation (Windows only, slower)",
     "e2e: Full end-to-end pipeline tests (slowest)",
+    "distribution: Builds and imports the installed wheel contract",
 ]

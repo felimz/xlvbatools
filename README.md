@@ -36,6 +36,39 @@ pip install "xlvbatools[all]"
 
 ### As a Python Library
 
+Project-specific wrappers should use the config-bound facade. It resolves all
+paths relative to `xlvbatools.toml` and returns the same versioned result
+envelope for every operation:
+
+```python
+from xlvbatools import XlvbaProject
+
+project = XlvbaProject.from_config()
+result = project.inspect(
+    sheets=["Input"],
+    cell_range="B91:K99",
+    include_data=True,
+    include_screenshots=True,
+    timeout=60,
+)
+
+inspection = result.require_success()
+result.require_clean_shutdown()
+print(inspection.screenshots)
+```
+
+The facade currently supports `inspect`, `run_macro`, `lint`, `extract`,
+`inject`, `diff`, `modify`, and a bound `snapshot_manager`. Existing function
+APIs remain available for compatibility.
+
+`OperationResult.to_dict()` produces a JSON-compatible contract with
+`schema_version`, `operation`, `phase`, `data`, `error`, `artifacts`, and
+headless diagnostics. `require_success()` and `require_clean_shutdown()` turn
+failed contracts into stable public exceptions when exception-style control
+flow is preferred.
+
+For advanced, caller-managed COM work, use the low-level session directly:
+
 ```python
 from xlvbatools.core.session import ExcelSession
 
@@ -72,6 +105,7 @@ xlvba search "MsgBox"               # Search VBA source
 xlvba fmt                           # Format VBA code
 xlvba graph                         # Call dependency graph
 xlvba debug                         # Open Excel + VBE visibly
+xlvba version --json                # Exact package and Git provenance
 ```
 
 ## Project Structure

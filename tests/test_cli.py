@@ -23,6 +23,16 @@ def test_cli_version(capsys):
 
 
 @pytest.mark.unit
+def test_cli_detailed_version_is_structured_json(capsys):
+    main(["version", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["version"]
+    assert os.path.basename(payload["python_executable"]).lower().startswith("python")
+    assert payload["package_path"].endswith("xlvbatools")
+
+
+@pytest.mark.unit
 def test_cli_help(capsys):
     """Test running xlvba with no args displays help."""
     with pytest.raises(SystemExit) as exc_info:
@@ -322,3 +332,30 @@ def test_cli_extract_inject_diff(tmp_path, capsys):
         # Test diff
         main(["diff"])
         mock_diff.assert_called_once_with("test.xlsm", "vba_source")
+
+
+@pytest.mark.unit
+def test_cli_resolves_config_paths_from_nested_directory(
+    tmp_path, monkeypatch,
+):
+    project = tmp_path / "project"
+    nested = project / "tools" / "nested"
+    nested.mkdir(parents=True)
+    (project / "xlvbatools.toml").write_text(
+        "[xlvbatools]\n"
+        'workbook = "workbook/book.xlsm"\n'
+        'vba_source = "workbook/vba_source"\n'
+        'log_dir = "logs"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(nested)
+
+    with patch("xlvbatools.vba.extractor.extract_all") as extract:
+        extract.return_value = {"components": []}
+        main(["extract"])
+
+    extract.assert_called_once_with(
+        str((project / "workbook" / "book.xlsm").resolve()),
+        str((project / "workbook" / "vba_source").resolve()),
+    )
+    assert (project / "logs").is_dir()

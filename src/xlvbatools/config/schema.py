@@ -62,26 +62,31 @@ class XlvbaConfig:
     lint: LintConfig = field(default_factory=LintConfig)
     config_dir: Optional[str] = None
 
+    def _resolve_path(self, value: str) -> str:
+        """Resolve a configured project path relative to the TOML directory."""
+        if self.config_dir and not os.path.isabs(value):
+            return os.path.abspath(os.path.join(self.config_dir, value))
+        return os.path.abspath(value)
+
     @property
     def workbook_path(self) -> str:
         """Resolve workbook path to absolute."""
-        if self.config_dir and not os.path.isabs(self.workbook):
-            return os.path.abspath(os.path.join(self.config_dir, self.workbook))
-        return os.path.abspath(self.workbook)
+        return self._resolve_path(self.workbook)
 
     @property
     def vba_source_path(self) -> str:
         """Resolve vba_source path to absolute."""
-        if self.config_dir and not os.path.isabs(self.vba_source):
-            return os.path.abspath(os.path.join(self.config_dir, self.vba_source))
-        return os.path.abspath(self.vba_source)
+        return self._resolve_path(self.vba_source)
 
     @property
     def snapshots_path(self) -> str:
         """Resolve snapshots directory to absolute."""
-        if self.config_dir and not os.path.isabs(self.snapshots_dir):
-            return os.path.abspath(os.path.join(self.config_dir, self.snapshots_dir))
-        return os.path.abspath(self.snapshots_dir)
+        return self._resolve_path(self.snapshots_dir)
+
+    @property
+    def log_dir_path(self) -> str:
+        """Resolve log directory relative to the project configuration."""
+        return self._resolve_path(self.log_dir)
 
     def validate(self) -> list[str]:
         """Validate configuration, returning list of error messages."""

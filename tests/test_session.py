@@ -76,6 +76,35 @@ class TestSessionProperties:
         assert session.cleanup_result["still_running"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_exit_releases_owned_com_apartment_before_waiting_for_pid(
+        self, monkeypatch,
+    ):
+        from xlvbatools.core import session as session_module
+
+        calls = []
+        session = session_module.ExcelSession("dummy.xlsm")
+        session.excel_pid = 4242
+        session.excel = SimpleNamespace(Quit=lambda: None)
+        session.wb = SimpleNamespace(Close=lambda value: None)
+        session._com_initialized = True
+        session._com_thread_id = 1
+
+        def release_com():
+            calls.append("release_com")
+            session._com_initialized = False
+
+        def process_running(pid):
+            calls.append("check_pid")
+            return False
+
+        monkeypatch.setattr(session, "_uninitialize_com", release_com)
+        monkeypatch.setattr(session_module, "is_process_running", process_running)
+
+        session.__exit__(None, None, None)
+
+        assert calls[:2] == ["release_com", "check_pid"]
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_sequential_macro_runs_use_event_sequences(self):
         from xlvbatools.core.session import ExcelSession
         from xlvbatools.core.watchdog import DialogEvent

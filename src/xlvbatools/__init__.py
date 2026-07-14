@@ -1,52 +1,48 @@
-"""
-xlvbatools -- General-Purpose Python Toolkit for Headless Excel VBA Automation
-===============================================================================
+"""General-purpose toolkit for reliable, headless Excel VBA automation."""
 
-Top-level public API re-exports for convenient access.
+from importlib import import_module
 
-Core automation:
-    from xlvbatools import ExcelSession
+from xlvbatools.version import get_version_info
 
-VBA source management:
-    from xlvbatools.vba import extract_all, inject_all, diff_all
 
-Static analysis:
-    from xlvbatools.analysis import lint_workbook, lint_files
+__version__ = get_version_info().version
 
-Snapshots:
-    from xlvbatools.snapshot import SnapshotManager
-
-Workbook inspection:
-    from xlvbatools.workbook import dump_sheet_data, export_screenshots, modify_cell
-"""
-
-__version__ = "0.1.0"
-
-# Lazy imports to avoid pulling in win32com on import for cross-platform use.
-# The actual COM-dependent classes guard themselves with require_windows().
+_LAZY_IMPORTS = {
+    "Artifact": ("xlvbatools.results", "Artifact"),
+    "CleanupReport": ("xlvbatools.results", "CleanupReport"),
+    "ConfigurationError": ("xlvbatools.errors", "ConfigurationError"),
+    "Diagnostics": ("xlvbatools.results", "Diagnostics"),
+    "DialogEvent": ("xlvbatools.core.watchdog", "DialogEvent"),
+    "DialogWatchdog": ("xlvbatools.core.watchdog", "DialogWatchdog"),
+    "ErrorInfo": ("xlvbatools.results", "ErrorInfo"),
+    "ExcelSession": ("xlvbatools.core.session", "ExcelSession"),
+    "HeadlessCleanupError": ("xlvbatools.errors", "HeadlessCleanupError"),
+    "InspectionOutput": ("xlvbatools.results", "InspectionOutput"),
+    "OperationFailedError": ("xlvbatools.errors", "OperationFailedError"),
+    "OperationResult": ("xlvbatools.results", "OperationResult"),
+    "SnapshotManager": ("xlvbatools.snapshot.manager", "SnapshotManager"),
+    "TrustCenterError": ("xlvbatools.errors", "TrustCenterError"),
+    "VersionInfo": ("xlvbatools.version", "VersionInfo"),
+    "XlvbaConfig": ("xlvbatools.config.schema", "XlvbaConfig"),
+    "XlvbaError": ("xlvbatools.errors", "XlvbaError"),
+    "XlvbaProject": ("xlvbatools.project", "XlvbaProject"),
+    "inspect_workbook": ("xlvbatools.workbook.dumper", "inspect_workbook"),
+    "lint_files": ("xlvbatools.analysis.preflight", "lint_files"),
+    "lint_workbook": ("xlvbatools.analysis.preflight", "lint_workbook"),
+    "load_config": ("xlvbatools.config.loader", "load_config"),
+    "run_macro": ("xlvbatools.macro.runner", "run_macro"),
+}
 
 
 def __getattr__(name):
-    """Lazy-load core classes on first access to avoid import-time COM dependency."""
-    if name == "ExcelSession":
-        from xlvbatools.core.session import ExcelSession
-        return ExcelSession
-    if name == "DialogWatchdog":
-        from xlvbatools.core.watchdog import DialogWatchdog
-        return DialogWatchdog
-    if name == "DialogEvent":
-        from xlvbatools.core.watchdog import DialogEvent
-        return DialogEvent
-    if name == "SnapshotManager":
-        from xlvbatools.snapshot.manager import SnapshotManager
-        return SnapshotManager
-    raise AttributeError(f"module 'xlvbatools' has no attribute {name!r}")
+    """Lazy-load public APIs so importing xlvbatools never initializes COM."""
+    target = _LAZY_IMPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module 'xlvbatools' has no attribute {name!r}")
+    module_name, attribute = target
+    value = getattr(import_module(module_name), attribute)
+    globals()[name] = value
+    return value
 
 
-__all__ = [
-    "ExcelSession",
-    "DialogWatchdog",
-    "DialogEvent",
-    "SnapshotManager",
-    "__version__",
-]
+__all__ = sorted([*_LAZY_IMPORTS, "__version__", "get_version_info"])

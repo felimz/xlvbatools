@@ -4,6 +4,68 @@ This document provides a detailed reference of the core Python API of `xlvbatool
 
 ---
 
+## Project Facade and Result Contract
+
+### `xlvbatools.XlvbaProject`
+
+`XlvbaProject` is the recommended entry point for project-specific wrappers.
+It binds the nearest `xlvbatools.toml`, resolves paths relative to that file,
+and keeps operation results independent of CLI output or internal module paths.
+
+```python
+from xlvbatools import XlvbaProject
+
+project = XlvbaProject.from_config()
+
+inspection = project.inspect(
+    ["Input"],
+    cell_range="B91:K99",
+    include_data=True,
+    include_screenshots=True,
+)
+inspection.require_success()
+inspection.require_clean_shutdown()
+
+macro = project.run_macro("OnCalculate", timeout=120)
+macro.require_success()
+macro.require_clean_shutdown()
+```
+
+The facade exposes:
+
+- `inspect(...)`
+- `run_macro(...)`
+- `lint(...)`
+- `extract(...)`
+- `inject(...)`
+- `diff(...)`
+- `modify(...)`
+- `snapshot_manager()`
+
+`XlvbaProject.for_workbook(...)` provides the same interface without requiring
+a TOML file.
+
+### `xlvbatools.OperationResult[T]`
+
+Every facade method returns a schema-versioned `OperationResult` containing:
+
+- `schema_version`
+- `operation`, `success`, and `phase`
+- typed `data`
+- `ErrorInfo`
+- produced `Artifact` records
+- `Diagnostics`, including dialog events and `CleanupReport`
+- operation metadata and warnings
+
+`to_dict()` returns only JSON-compatible containers. `require_success()` raises
+`OperationFailedError`; `require_clean_shutdown()` raises
+`HeadlessCleanupError` unless Excel reported a graceful, non-forced exit.
+
+Existing function-level APIs remain supported and are used internally during
+the compatibility phase.
+
+---
+
 ## Core COM Session
 
 ### `xlvbatools.core.session.ExcelSession`
@@ -20,7 +82,7 @@ with ExcelSession(
     init_delay=1.5,
     enable_watchdog=True,
     watchdog_poll_interval=0.25,
-    exit_grace_period=10.0,
+    exit_grace_period=20.0,
     terminate_owned_process=True,
 ) as session:
     excel = session.excel
@@ -36,7 +98,7 @@ with ExcelSession(
 * **`init_delay` (float, default `1.5`):** delay in seconds to wait for VBA project initialization.
 * **`enable_watchdog` (bool, default `True`):** Starts dialog dismissal daemon if `True`.
 * **`watchdog_poll_interval` (float, default `0.25`):** Watchdog polling interval in seconds.
-* **`exit_grace_period` (float, default `10.0`):** Seconds to wait for the owned Excel PID after requesting quit. Excel/VBE shutdown can exceed three seconds; allowing it to finish avoids destabilizing the next COM session.
+* **`exit_grace_period` (float, default `20.0`):** Seconds to wait for the owned Excel PID after requesting quit. Excel/VBE shutdown can exceed ten seconds under a loaded desktop test sequence; allowing it to finish avoids destabilizing the next COM session.
 * **`terminate_owned_process` (bool, default `True`):** Force-terminates only the spawned PID if it outlives the grace period.
 
 #### Properties

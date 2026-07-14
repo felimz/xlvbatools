@@ -70,6 +70,9 @@ disabled_rules = ["PF001", "PF003"]
         assert cfg.vba_source == "src/vba"
         assert cfg.snapshots.rolling_limit == 5
         assert "PF001" in cfg.lint.disabled_rules
+        assert cfg.workbook_path == str((tmp_path / "my_project.xlsm").resolve())
+        assert cfg.vba_source_path == str((tmp_path / "src" / "vba").resolve())
+        assert cfg.log_dir_path == str((tmp_path / "output" / "logs").resolve())
 
     def test_find_walks_up(self, tmp_path, monkeypatch):
         from xlvbatools.config.loader import find_config

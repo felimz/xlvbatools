@@ -65,6 +65,7 @@ def main(args: Optional[List[str]] = None) -> None:
     _register_search(subparsers)
     _register_fmt(subparsers)
     _register_graph(subparsers)
+    _register_version(subparsers)
     _register_agents(subparsers)
 
     args = parser.parse_args(args)
@@ -109,6 +110,14 @@ def _get_version() -> str:
         return __version__
     except ImportError:
         return "unknown"
+
+
+def _cfg_path(cfg, resolved_attr: str, raw_attr: str) -> str:
+    """Use config-relative paths while tolerating lightweight test doubles."""
+    resolved = getattr(cfg, resolved_attr, None)
+    if isinstance(resolved, str):
+        return resolved
+    return os.fspath(getattr(cfg, raw_attr))
 
 
 # ── Subcommand registration ──
@@ -282,6 +291,14 @@ def _register_agents(subparsers):
     p.set_defaults(func=_cmd_agents)
 
 
+def _register_version(subparsers):
+    p = subparsers.add_parser(
+        "version", help="Show package, interpreter, and source revision details"
+    )
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_version)
+
+
 # ── Command handlers ──
 
 def _cmd_init(args):
@@ -296,10 +313,11 @@ def _cmd_extract(args):
     from xlvbatools.logging import setup_logging
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="extract",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
-    wb = args.workbook or cfg.workbook
-    out = args.output or cfg.vba_source
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
+    out = args.output or _cfg_path(cfg, "vba_source_path", "vba_source")
 
     if getattr(args, "list", False):
         from xlvbatools.vba.extractor import list_components
@@ -336,10 +354,11 @@ def _cmd_inject(args):
     from xlvbatools.logging import setup_logging
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="inject",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
-    wb = args.workbook or cfg.workbook
-    src = args.source or cfg.vba_source
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
+    src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
 
     if args.component:
         from xlvbatools.vba.injector import inject_component
@@ -365,10 +384,11 @@ def _cmd_diff(args):
     from xlvbatools.logging import setup_logging
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="diff",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
-    wb = args.workbook or cfg.workbook
-    src = args.source or cfg.vba_source
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
+    src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
 
     if args.component:
         from xlvbatools.vba.differ import diff_component
@@ -407,7 +427,8 @@ def _cmd_lint(args):
     from xlvbatools.analysis.preflight import print_report
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="lint",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
     disabled = cfg.lint.disabled_rules
 
@@ -423,13 +444,16 @@ def _cmd_lint(args):
         issues = lint_workbook(args.workbook, disabled_rules=disabled)
     else:
         # Try source dir first (no COM needed), then workbook
-        src = cfg.vba_source
+        src = _cfg_path(cfg, "vba_source_path", "vba_source")
         if os.path.isdir(src):
             from xlvbatools.analysis.preflight import lint_files
             issues = lint_files(src, disabled_rules=disabled)
         else:
             from xlvbatools.analysis.preflight import lint_workbook
-            issues = lint_workbook(cfg.workbook, disabled_rules=disabled)
+            issues = lint_workbook(
+                _cfg_path(cfg, "workbook_path", "workbook"),
+                disabled_rules=disabled,
+            )
 
     if getattr(args, "json", False):
         import json
@@ -447,9 +471,10 @@ def _cmd_run(args):
     from xlvbatools.logging import setup_logging
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="run",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
-    wb = args.workbook or cfg.workbook
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     from xlvbatools.macro.runner import run_macro
     result = run_macro(wb, args.macro, timeout=args.timeout)
 
@@ -473,14 +498,22 @@ def _cmd_snapshot(args):
     from xlvbatools.config.loader import load_config
     from xlvbatools.logging import setup_logging
     cfg = load_config()
-    setup_logging(tool_name="snapshot", log_dir=cfg.log_dir, log_name=cfg.log_name)
+    setup_logging(
+        tool_name="snapshot",
+        log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+        log_name=cfg.log_name,
+    )
 
-    wb = getattr(args, "workbook", None) or cfg.workbook
-    src = getattr(args, "source", None) or cfg.vba_source
+    wb = getattr(args, "workbook", None) or _cfg_path(
+        cfg, "workbook_path", "workbook"
+    )
+    src = getattr(args, "source", None) or _cfg_path(
+        cfg, "vba_source_path", "vba_source"
+    )
 
     from xlvbatools.snapshot.manager import SnapshotManager
     mgr = SnapshotManager(
-        wb, src, cfg.snapshots_dir,
+        wb, src, _cfg_path(cfg, "snapshots_path", "snapshots_dir"),
         rolling_limit=cfg.snapshots.rolling_limit,
     )
 
@@ -518,9 +551,10 @@ def _cmd_dump(args):
     from xlvbatools.logging import setup_logging
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="dump",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
-    wb = args.workbook or cfg.workbook
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     sheets = args.sheets.split(",") if args.sheets else None
 
     if not sheets:
@@ -555,9 +589,10 @@ def _cmd_modify(args):
     from xlvbatools.logging import setup_logging
     cfg = load_config()
     setup_logging(verbose=getattr(args, "verbose", False), tool_name="modify",
-                  log_dir=cfg.log_dir, log_name=cfg.log_name)
+                  log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+                  log_name=cfg.log_name)
 
-    wb = args.workbook or cfg.workbook
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
 
     # Parse value with type detection
     value = args.value
@@ -588,7 +623,7 @@ def _cmd_debug(args):
     """Launch interactive debug session."""
     from xlvbatools.config.loader import load_config
     cfg = load_config()
-    wb = args.workbook or cfg.workbook
+    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
 
     from xlvbatools.workbook.debugger import launch_debug_session
     launch_debug_session(wb, open_vbe=not args.no_vbe)
@@ -599,9 +634,13 @@ def _cmd_search(args):
     from xlvbatools.config.loader import load_config
     from xlvbatools.logging import setup_logging
     cfg = load_config()
-    setup_logging(tool_name="search", log_dir=cfg.log_dir, log_name=cfg.log_name)
+    setup_logging(
+        tool_name="search",
+        log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+        log_name=cfg.log_name,
+    )
 
-    src = args.source or cfg.vba_source
+    src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
     ctx = getattr(args, "context", 0)
     from xlvbatools.vba.search import search_vba
     matches = search_vba(src, args.pattern, regex=args.regex, context_lines=ctx)
@@ -626,7 +665,7 @@ def _cmd_fmt(args):
     """Format VBA source files."""
     from xlvbatools.config.loader import load_config
     cfg = load_config()
-    src = args.source or cfg.vba_source
+    src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
 
     if os.path.isfile(src):
         from xlvbatools.vba.formatter import format_file
@@ -657,7 +696,7 @@ def _cmd_graph(args):
     """Generate VBA call dependency graph."""
     from xlvbatools.config.loader import load_config
     cfg = load_config()
-    src = args.source or cfg.vba_source
+    src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
 
     from xlvbatools.vba.dependency import build_call_graph, render_mermaid, render_dot
     graph = build_call_graph(src)
@@ -694,6 +733,23 @@ def _cmd_snapshot_help(args):
     if not hasattr(args, "snapshot_command") or args.snapshot_command is None:
         print("Usage: xlvba snapshot <create|list|info|restore|diff|prune>")
         sys.exit(0)
+
+
+def _cmd_version(args):
+    """Show exact installed package and source provenance."""
+    from xlvbatools.version import get_version_info
+
+    info = get_version_info()
+    if getattr(args, "json", False):
+        print(json.dumps(info.to_dict(), indent=2))
+        return
+    print(f"xlvba {info.version}")
+    print(f"Python: {info.python_executable}")
+    print(f"Package: {info.package_path}")
+    print(f"Source: {info.source_url or 'unknown'}")
+    print(f"Commit: {info.commit_id or 'unknown'}")
+    if info.requested_revision:
+        print(f"Requested revision: {info.requested_revision}")
 
 
 def _cmd_agents(args):

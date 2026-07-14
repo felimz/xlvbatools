@@ -46,6 +46,7 @@ from xlvbatools.core.process import (
     is_process_running,
     kill_process_by_pid,
 )
+from xlvbatools.errors import TrustCenterError
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class ExcelSession:
         init_delay: float = 1.5,
         enable_watchdog: bool = True,
         watchdog_poll_interval: float = 0.25,
-        exit_grace_period: float = 10.0,
+        exit_grace_period: float = 20.0,
         terminate_owned_process: bool = True,
         on_excel_started: Optional[Callable[[int], None]] = None,
         read_only: bool = False,
@@ -312,6 +313,23 @@ class ExcelSession:
             gc.collect()
 
         self.cleanup_result.update({"pid": self.excel_pid, "quit_requested": quit_requested})
+
+        # Release this session's COM apartment before waiting for the out-of-
+        # process Excel server. When the caller owns the apartment, retain its
+        # ownership but still ask pywin32 to release unused COM libraries.
+        # Waiting first can leave Excel alive until the grace deadline even
+        # though Workbook.Close and Application.Quit both succeeded.
+        gc.collect()
+        gc.collect()
+        if self._com_initialized:
+            self._uninitialize_com()
+        else:
+            try:
+                import pythoncom
+                pythoncom.CoFreeUnusedLibraries()
+            except Exception:
+                pass
+
         if self.excel_pid is not None:
             deadline = time.time() + self.exit_grace_period
             while time.time() < deadline:
@@ -332,10 +350,6 @@ class ExcelSession:
             self.cleanup_result["workbook_close_error"] = str(close_error)
         if save_error:
             self.cleanup_result["workbook_save_error"] = str(save_error)
-
-        gc.collect()
-        self._uninitialize_com()
-
         return False  # Don't suppress exceptions
 
     # -- Convenience Properties --
@@ -376,7 +390,7 @@ class ExcelSession:
         except Exception as e:
             err_str = str(e).lower()
             if "programmatic access" in err_str or "not trusted" in err_str or "0x800a03ec" in err_str:
-                raise RuntimeError(
+                raise TrustCenterError(
                     "Programmatic access to Visual Basic Project is not trusted in Excel.\n"
                     "To enable this, go to: Excel Options -> Trust Center -> Trust Center Settings "
                     "-> Macro Settings -> check 'Trust access to the VBA project object model'."
