@@ -33,7 +33,7 @@ description: "VBA coding, headless execution, COM safety, and encoding rules."
 4. `xlvba lint`
 5. `xlvba inject`
 6. `xlvba diff` and confirm no unintended differences.
-7. `xlvba run <MacroName> --json` and inspect the complete result envelope.
+7. `xlvba run <MacroName>` and inspect the default JSON result envelope.
 8. Restore the snapshot if verification fails.
 
 ## Encoding

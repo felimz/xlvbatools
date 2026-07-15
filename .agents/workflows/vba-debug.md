@@ -7,7 +7,7 @@ description: Diagnose VBA failures, timeouts, and dialogs through the v1 result 
 1. Run the macro with a bounded deadline:
 
    ```powershell
-   xlvba run <MacroName> --timeout 120 --json
+   xlvba run <MacroName> --timeout 120
    ```
 
 2. Inspect the result envelope:
@@ -31,7 +31,7 @@ description: Diagnose VBA failures, timeouts, and dialogs through the v1 result 
    ```powershell
    xlvba search "MsgBox" --source vba_source
    xlvba search "ActiveSheet" --source vba_source
-   xlvba lint --source vba_source --json
+   xlvba lint --source vba_source
    ```
 
 5. Inject, diff, and rerun. If headless evidence is insufficient, use

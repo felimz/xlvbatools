@@ -9,7 +9,6 @@ xlvbatools are always UTF-8. This module provides a single implementation
 of the encoding fallback logic so every call site behaves consistently.
 """
 
-import os
 from typing import List
 
 

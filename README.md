@@ -63,9 +63,16 @@ The public workflow methods are:
 - `modify`
 - `snapshots`
 
-Every operation returns `OperationResult`. It contains typed data, a structured
-error, produced artifacts, request timing, dialog diagnostics, the exact worker
-and Excel PIDs, and a cleanup report. `to_dict()` is the versioned JSON form.
+Every operation returns `OperationResult`. Its data uses immutable public
+models such as `MacroOutput`, `ExtractionOutput`, `InjectionOutput`,
+`ComponentDiff`, and `ModificationOutput`; no worker dictionaries escape into
+application wrappers. Results also contain structured errors, artifacts,
+timing, dialog diagnostics, exact worker and Excel PIDs, and cleanup reports.
+`to_dict()` is the versioned JSON form.
+
+`project.snapshots()` returns a typed `SnapshotService`. It creates immutable
+`SnapshotRecord` values and persists metadata with atomic writes and
+crash-safe file locking.
 
 Only names in `xlvbatools.__all__` are public. The implementation subpackages
 are private worker backends and should not be used by application wrappers.
@@ -84,12 +91,36 @@ xlvba modify --sheet Input --cell C33 --value 42
 xlvba snapshot create --desc "before change"
 xlvba search "FileCount"
 xlvba fmt --dry-run
-xlvba graph --format mermaid
-xlvba version --json
+xlvba graph
+xlvba version
 ```
 
+Discover the interface without scraping presentation text:
+
+```powershell
+xlvba --help          # conventional terminal help
+xlvba help            # versioned JSON command catalog for agents
+xlvba help extract    # JSON discovery for one command
+xlvba extract --help  # complete options and copy-ready examples
+```
+
+Install the packaged agent guidance into an existing repository with
+`xlvba agents install`. For a new repository, `xlvba init --agents` initializes
+the configuration and installs the guidance together. The exact destination is
+`.agents/` (plural). Installation is incremental: missing packaged files are
+copied, existing files and project-specific extras are preserved, and only an
+explicit `xlvba agents install --force` overwrites packaged file paths. Start
+with `.agents/AGENTS.md`, then follow the referenced skill, rules, and workflow
+for the task. Commit project-specific customizations with the repository.
+
 All Excel-backed CLI commands use the same `Project` and executor as the Python
-API. With `--json`, commands emit the complete `OperationResult` envelope.
+API. Every non-interactive command emits one complete `OperationResult` JSON
+envelope to stdout by default. Request presentation output explicitly with
+`--text`, `--table`, or `--output-format text|table`.
+
+`xlvba graph --graph-format mermaid --text` renders Mermaid text. Graph payload
+format and CLI presentation format are separate choices. The intentionally
+interactive `xlvba debug` command remains text-based.
 
 Hidden and VeryHidden worksheets are excluded from inspection by default. Use
 `--include-hidden-sheets` only when hidden sheets are intentionally required.
@@ -149,6 +180,14 @@ Version 1.0.0 establishes the intentional public API. See
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\ruff.exe check src tests
+.venv\Scripts\mypy.exe --follow-imports=skip `
+  src/xlvbatools/project.py `
+  src/xlvbatools/execution.py `
+  src/xlvbatools/results.py `
+  src/xlvbatools/outputs.py `
+  src/xlvbatools/snapshots.py `
+  src/xlvbatools/cli
 .venv\Scripts\python.exe -m pytest -m unit
 .venv\Scripts\python.exe -m pytest
 ```
@@ -162,10 +201,12 @@ Documentation:
 - [Agent integration](docs/agent-integration.md)
 - [Inspection and modification](docs/dumper-and-modifier.md)
 - [Linting and formatting](docs/lint-and-format.md)
-- [Headless reliability contract](docs/headless-reliability-migration.md)
+- [Headless reliability contract](docs/headless-reliability.md)
 - [Internal worker protocol](docs/worker-protocol.md)
 - [Dialog watchdog architecture](docs/watchdog-architecture.md)
 - [Versioning and releases](docs/versioning.md)
+- [Machine-first CLI output](docs/cli-output.md)
+- [Release validation](docs/release-validation.md)
 
 ## License
 

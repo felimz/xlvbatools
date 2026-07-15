@@ -10,7 +10,7 @@ Before testing, record:
 ```powershell
 .venv\Scripts\python.exe --version
 .venv\Scripts\python.exe -m pip show xlvbatools pywin32 pytest
-.venv\Scripts\xlvba.exe version --json
+.venv\Scripts\xlvba.exe version
 ```
 
 Excel-backed tests require Windows, desktop Excel, and Trust Center access to
@@ -22,6 +22,17 @@ an agent host.
 ```powershell
 # Broad offline and packaging coverage.
 .venv\Scripts\python.exe -m pytest -m "not com and not e2e"
+
+# Static quality and minimum offline coverage gates.
+.venv\Scripts\ruff.exe check src tests
+.venv\Scripts\mypy.exe --follow-imports=skip `
+  src/xlvbatools/project.py `
+  src/xlvbatools/execution.py `
+  src/xlvbatools/results.py `
+  src/xlvbatools/outputs.py `
+  src/xlvbatools/snapshots.py `
+  src/xlvbatools/cli
+.venv\Scripts\python.exe -m pytest -m "not com and not e2e" --cov=xlvbatools --cov-fail-under=60
 
 # Build-isolated wheel installed into a fresh consumer environment.
 .venv\Scripts\python.exe -m pytest tests/test_distribution.py -v
@@ -40,7 +51,8 @@ an agent host.
 The wheel test uses normal PEP 517 isolation, installs the wheel without
 editable/source-path leakage into a fresh virtual environment outside the
 repository, and verifies the public API plus package, result-schema, and
-worker-protocol versions.
+worker-protocol versions. It also invokes the installed `xlvba help` catalog
+and installs packaged guidance into a consumer `.agents/` directory.
 
 ## Real-workbook acceptance
 
@@ -48,7 +60,7 @@ Run at least one representative downstream workbook through the installed v1
 surface. For WA-OCEAN:
 
 ```powershell
-.venv\Scripts\xlvba.exe lint --workbook C:\Users\felim\AntigravityProjects\wa_ocean\workbook\WA-OCEAN-AFR.xlsm --json --timeout 240
+.venv\Scripts\xlvba.exe lint --workbook C:\Users\felim\AntigravityProjects\wa_ocean\workbook\WA-OCEAN-AFR.xlsm --timeout 240
 ```
 
 Acceptance requires:

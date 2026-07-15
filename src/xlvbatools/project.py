@@ -13,7 +13,17 @@ from xlvbatools.config.loader import load_config
 from xlvbatools.config.schema import XlvbaConfig
 from xlvbatools.errors import ConfigurationError
 from xlvbatools.execution import Executor, IsolatedExecutor, Operation, OperationRequest
+from xlvbatools.outputs import (
+    ComponentDiff,
+    ExtractionOutput,
+    InjectionChange,
+    InjectionOutput,
+    MacroOutput,
+    ModificationOutput,
+    VBAComponent,
+)
 from xlvbatools.results import Artifact, ErrorInfo, InspectionOutput, OperationResult
+from xlvbatools.snapshots import SnapshotService
 
 
 @dataclass(frozen=True)
@@ -130,12 +140,20 @@ class Project:
             )
         )
 
-    def list_components(self, *, timeout: float = 60.0) -> OperationResult[Any]:
-        return self.execute(
+    def list_components(
+        self, *, timeout: float = 60.0,
+    ) -> OperationResult[tuple[VBAComponent, ...]]:
+        result = self.execute(
             Operation.LIST_COMPONENTS,
             {"workbook_path": str(self.workbook)},
             timeout=timeout,
         )
+        components = tuple(
+            VBAComponent._from_mapping(item)
+            for item in (result.data or ())
+            if isinstance(item, Mapping)
+        )
+        return replace(result, data=components)
 
     def inspect(
         self,
@@ -171,7 +189,7 @@ class Project:
             timeout=timeout,
         )
         if result.data is None:
-            return result  # type: ignore[return-value]
+            return result
         payload = dict(result.data)
         screenshots = dict(payload.get("screenshots") or {})
         artifacts = tuple(
@@ -206,7 +224,7 @@ class Project:
         visible: bool = False,
         save: bool = True,
         strict_named_ranges: bool = True,
-    ) -> OperationResult[dict[str, Any]]:
+    ) -> OperationResult[MacroOutput]:
         if not macro.strip():
             raise ValueError("macro must be non-empty")
         result = self.execute(
@@ -223,7 +241,12 @@ class Project:
             },
             timeout=timeout,
         )
-        return replace(result, metadata={"macro": macro})
+        payload = result.data if isinstance(result.data, Mapping) else {}
+        return replace(
+            result,
+            data=MacroOutput._from_mapping(macro, payload),
+            metadata={"macro": macro},
+        )
 
     def lint_source(
         self,
@@ -289,9 +312,9 @@ class Project:
         output: str | os.PathLike[str] | None = None,
         component: str | None = None,
         timeout: float = 120.0,
-    ) -> OperationResult[Any]:
+    ) -> OperationResult[ExtractionOutput]:
         target = Path(output).resolve() if output else self.source
-        return self.execute(
+        result = self.execute(
             Operation.EXTRACT,
             {
                 "workbook_path": str(self.workbook),
@@ -299,6 +322,32 @@ class Project:
                 "component": component,
             },
             timeout=timeout,
+        )
+        payload = result.data if isinstance(result.data, Mapping) else {}
+        components: tuple[VBAComponent, ...]
+        if component:
+            components = (
+                (VBAComponent._from_mapping(payload),) if payload else ()
+            )
+            workbook = self.workbook.name
+            extracted_at = ""
+        else:
+            raw_components = payload.get("components") or ()
+            components = tuple(
+                VBAComponent._from_mapping(item)
+                for item in raw_components
+                if isinstance(item, Mapping)
+            )
+            workbook = str(payload.get("workbook") or self.workbook.name)
+            extracted_at = str(payload.get("extracted_at") or "")
+        return replace(
+            result,
+            data=ExtractionOutput(
+                workbook=workbook,
+                output_dir=str(target),
+                extracted_at=extracted_at,
+                components=components,
+            ),
         )
 
     def inject(
@@ -309,11 +358,11 @@ class Project:
         backup: bool = True,
         dry_run: bool = False,
         timeout: float = 120.0,
-    ) -> OperationResult[Any]:
+    ) -> OperationResult[InjectionOutput]:
         if component and dry_run:
             raise ValueError("dry_run cannot be combined with component injection")
         source_path = Path(source).resolve() if source else self.source
-        return self.execute(
+        result = self.execute(
             Operation.INJECT,
             {
                 "workbook_path": str(self.workbook),
@@ -325,6 +374,28 @@ class Project:
             },
             timeout=timeout,
         )
+        changes: tuple[InjectionChange, ...]
+        if component:
+            changes = (
+                InjectionChange(
+                    name=component,
+                    status="injected" if bool(result.data) else "error",
+                ),
+            )
+        else:
+            changes = tuple(
+                InjectionChange._from_mapping(item)
+                for item in (result.data or ())
+                if isinstance(item, Mapping)
+            )
+        return replace(
+            result,
+            data=InjectionOutput(
+                changes=changes,
+                dry_run=dry_run,
+                backup_requested=backup,
+            ),
+        )
 
     def diff(
         self,
@@ -332,9 +403,9 @@ class Project:
         source: str | os.PathLike[str] | None = None,
         component: str | None = None,
         timeout: float = 120.0,
-    ) -> OperationResult[Any]:
+    ) -> OperationResult[tuple[ComponentDiff, ...]]:
         source_path = Path(source).resolve() if source else self.source
-        return self.execute(
+        result = self.execute(
             Operation.DIFF,
             {
                 "workbook_path": str(self.workbook),
@@ -343,6 +414,16 @@ class Project:
             },
             timeout=timeout,
         )
+        if component:
+            raw_diffs = (result.data,) if isinstance(result.data, Mapping) else ()
+        else:
+            raw_diffs = result.data or ()
+        diffs = tuple(
+            ComponentDiff._from_mapping(item)
+            for item in raw_diffs
+            if isinstance(item, Mapping)
+        )
+        return replace(result, data=diffs)
 
     def modify(
         self,
@@ -355,8 +436,8 @@ class Project:
         refers_to: str | None = None,
         delete_name: bool = False,
         timeout: float = 120.0,
-    ) -> OperationResult[Any]:
-        return self.execute(
+    ) -> OperationResult[ModificationOutput]:
+        result = self.execute(
             Operation.MODIFY,
             {
                 "workbook_path": str(self.workbook),
@@ -371,14 +452,30 @@ class Project:
             timeout=timeout,
             retry_transient=True,
         )
+        if delete_name:
+            action = "delete_name"
+        elif name and refers_to:
+            action = "create_name"
+        elif formula is not None:
+            action = "set_formula"
+        else:
+            action = "set_value"
+        return replace(
+            result,
+            data=ModificationOutput(
+                applied=bool(result.data),
+                sheet=sheet if cell else None,
+                cell=cell,
+                name=name,
+                action=action,
+            ),
+        )
 
-    def snapshots(self):
+    def snapshots(self) -> SnapshotService:
         """Return the snapshot service bound to this project."""
-        from xlvbatools.snapshot.manager import SnapshotManager
-
-        return SnapshotManager(
-            str(self.workbook),
-            str(self.source),
-            str(self.settings.snapshots),
+        return SnapshotService(
+            self.workbook,
+            self.source,
+            self.settings.snapshots,
             rolling_limit=self.settings.snapshot_limit,
         )

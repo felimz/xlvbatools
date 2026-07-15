@@ -9,14 +9,15 @@ Supports dual-layer snapshots: git commits for VBA source + binary .xlsm copies.
 Usage:
     from xlvbatools import Project
 
-    manager = Project.from_config().snapshots()
-    sid = manager.create(description="before refactor")
-    manager.list()
-    manager.restore("latest")
-    manager.prune(keep=10)
+    snapshots = Project.from_config().snapshots()
+    record = snapshots.create(description="before refactor")
+    snapshots.list()
+    snapshots.restore(record)
+    snapshots.prune(keep=10)
 """
 
 import datetime
+import functools
 import hashlib
 import json
 import logging
@@ -30,7 +31,16 @@ logger = logging.getLogger(__name__)
 TS_FORMAT = "%Y%m%dT%H%M%S"
 
 
-class SnapshotManager:
+def _serialized(method):
+    """Serialize a complete snapshot mutation, including metadata updates."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock():
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+class _SnapshotStore:
     """
     Manages timestamped snapshots for workbook and VBA source state.
 
@@ -119,6 +129,7 @@ class SnapshotManager:
         except Exception:
             return None
 
+    @_serialized
     def create(
         self,
         description: str = "",
@@ -198,6 +209,7 @@ class SnapshotManager:
         """Get details for a specific snapshot."""
         return self._find(identifier)
 
+    @_serialized
     def restore(self, identifier: str, safety_snapshot: bool = True) -> bool:
         """
         Restore workbook and VBA source from a snapshot.
@@ -274,6 +286,7 @@ class SnapshotManager:
         else:
             return "Snapshot VBA directory/archive not found"
 
+    @_serialized
     def prune(self, keep: int = 10) -> int:
         """Remove old rolling snapshots, keeping the most recent `keep`."""
         log = self._load_log()
@@ -342,29 +355,49 @@ class SnapshotManager:
                 return
 
             os.makedirs(self.snapshots_dir, exist_ok=True)
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+            if os.path.getsize(lock_path) == 0:
+                os.write(lock_fd, b"\0")
             acquired = False
             for _ in range(50):  # Retry up to 5 seconds
                 try:
-                    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                    os.close(fd)
+                    os.lseek(lock_fd, 0, os.SEEK_SET)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     acquired = True
                     break
-                except FileExistsError:
+                except OSError:
                     time.sleep(0.1)
 
             if not acquired:
-                logger.warning("Could not acquire snapshot log lock; proceeding without lock.")
+                os.close(lock_fd)
+                raise TimeoutError(
+                    f"Could not acquire snapshot lock within 5 seconds: {lock_path}"
+                )
 
             self._lock_depth = 1
             try:
                 yield
             finally:
                 self._lock_depth = 0
-                if acquired:
-                    try:
-                        os.remove(lock_path)
-                    except Exception:
-                        pass
+                try:
+                    os.lseek(lock_fd, 0, os.SEEK_SET)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
         return _inner_lock()
 
     def _load_log(self) -> list:
@@ -380,8 +413,16 @@ class SnapshotManager:
         with self._lock():
             os.makedirs(self.snapshots_dir, exist_ok=True)
             entries.sort(key=lambda e: e.get("snapshot_id", ""))
-            with open(self._log_path, "w", encoding="utf-8") as f:
-                json.dump(entries, f, indent=2)
+            temp_path = f"{self._log_path}.{os.getpid()}.tmp"
+            try:
+                with open(temp_path, "w", encoding="utf-8") as handle:
+                    json.dump(entries, handle, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, self._log_path)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
     def _delete_snapshot_files(self, entry: dict):
         wb = os.path.join(self.snapshots_dir, entry["workbook_file"])

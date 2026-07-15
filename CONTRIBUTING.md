@@ -74,9 +74,20 @@ environment before tagging.
 
 When public behavior changes, update `README.md`, the relevant file under
 `docs/`, `CHANGELOG.md`, and the active `.agents/` skill in the same change.
-The source templates under `templates/agents/` and the packaged copies under
-`src/xlvbatools/templates/agents/` must remain byte-for-byte identical.
+The packaged templates under `src/xlvbatools/templates/agents/` are canonical.
+The active `.agents/` tree must remain byte-for-byte identical so repository
+work and newly initialized consumer projects use the same guidance.
 
 Validate documented CLI examples against `xlvba <command> --help`. Safety
 guidance must never recommend global Excel termination or direct use of
 implementation subpackages.
+
+Keep the `xlvba help` discovery catalog, argparse summaries/examples, and
+command handlers synchronized. Distribution tests must prove that the wheel
+contains the `.agents/` resources and that its installed `xlvba` entry point
+can discover commands and install those resources outside the source checkout.
+
+CLI stdout is a public machine interface: non-interactive commands emit one
+versioned JSON result envelope by default. New presentation behavior belongs
+behind `--output-format text|table` (or the `--text`/`--table` shortcuts) and
+must not add incidental text to default stdout.

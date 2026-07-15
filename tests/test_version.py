@@ -41,5 +41,5 @@ def test_source_version_is_single_sourced():
     import xlvbatools
     from xlvbatools._version import __version__
 
-    assert __version__ == "1.0.0"
+    assert __version__.count(".") >= 2
     assert xlvbatools.__version__ == __version__

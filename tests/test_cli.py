@@ -3,7 +3,6 @@ Unit tests for the xlvba command line interface.
 """
 
 import os
-import sys
 import json
 import pytest
 from unittest.mock import patch
@@ -23,24 +22,56 @@ def _result(operation, data=None, *, success=True):
 
 @pytest.mark.unit
 def test_cli_version(capsys):
-    """Test xlvba --version."""
+    """Even the short version flag is machine-readable by default."""
     with pytest.raises(SystemExit) as exc_info:
         main(["--version"])
     assert exc_info.value.code == 0
-    # version prints to stdout or stderr depending on python version
     captured = capsys.readouterr()
     output = captured.out or captured.err
-    assert "xlvba" in output
+    assert json.loads(output)["version"]
 
 
 @pytest.mark.unit
 def test_cli_detailed_version_is_structured_json(capsys):
-    main(["version", "--json"])
+    main(["version"])
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["version"]
-    assert os.path.basename(payload["python_executable"]).lower().startswith("python")
-    assert payload["package_path"].endswith("xlvbatools")
+    assert payload["operation"] == "version"
+    assert payload["success"] is True
+    assert payload["data"]["version"]
+    assert os.path.basename(payload["data"]["python_executable"]).lower().startswith("python")
+    assert payload["data"]["package_path"].endswith("xlvbatools")
+
+
+@pytest.mark.unit
+def test_human_and_table_presentations_are_explicit_opt_ins(capsys):
+    main(["version", "--text"])
+    assert capsys.readouterr().out.startswith("xlvba ")
+
+    main(["version", "--table"])
+    output = capsys.readouterr().out
+    assert "field" in output
+    assert "version" in output
+
+
+@pytest.mark.unit
+def test_unexpected_command_failure_is_a_json_envelope(tmp_path, capsys):
+    fake_project = patch("xlvbatools.cli.commands._project").start().return_value
+    fake_project.run.side_effect = RuntimeError("unexpected worker boundary failure")
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "MyMacro"])
+
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unhandled_cli_error"
+    assert "unexpected worker boundary failure" in payload["error"]["message"]
+    patch.stopall()
 
 
 @pytest.mark.unit
@@ -50,7 +81,64 @@ def test_cli_help(capsys):
         main([])
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "usage:" in captured.out.lower() or "usage:" in captured.err.lower()
+    output = captured.out or captured.err
+    assert "usage:" in output.lower()
+    assert "xlvba help" in output
+    assert "xlvba agents install" in output
+    assert ".agents/" in output
+    assert "OperationResult JSON envelope" in output
+
+
+@pytest.mark.unit
+def test_every_public_command_has_conventional_help(capsys):
+    """All discovery-catalog commands expose useful argparse help."""
+    from xlvbatools.cli.discovery import COMMAND_SPECS
+
+    for spec in COMMAND_SPECS:
+        with pytest.raises(SystemExit) as exc_info:
+            main([spec.name, "--help"])
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert "usage:" in output.lower(), spec.name
+        assert spec.summary in output, spec.name
+
+    for command in ("create", "list", "info", "restore", "diff", "prune"):
+        with pytest.raises(SystemExit) as exc_info:
+            main(["snapshot", command, "--help"])
+        assert exc_info.value.code == 0
+        assert "usage:" in capsys.readouterr().out.lower()
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agents", "install", "--help"])
+    assert exc_info.value.code == 0
+    install_help = capsys.readouterr().out
+    assert "--destination" in install_help
+    assert "--force" in install_help
+
+
+@pytest.mark.unit
+def test_machine_readable_help_catalog_supports_command_detail(capsys):
+    main(["help"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "help"
+    assert payload["data"]["discovery_schema_version"] == "1.0"
+    assert payload["data"]["output_contract"]["default"] == "json"
+    assert payload["data"]["agent_templates"]["destination"] == ".agents/"
+    assert any(item["name"] == "extract" for item in payload["data"]["commands"])
+
+    main(["help", "extract"])
+    detail = json.loads(capsys.readouterr().out)["data"]["command"]
+    assert detail["name"] == "extract"
+    assert detail["excel_required"] is True
+    assert detail["examples"]
+    options = {item["name"]: item for item in detail["options"]}
+    assert options["workbook"]["flags"] == ["--workbook", "-w"]
+    assert options["timeout"]["default"] == 120.0
+
+    main(["help", "agents"])
+    agents = json.loads(capsys.readouterr().out)["data"]["command"]
+    install = next(item for item in agents["subcommands"] if item["name"] == "install")
+    assert any(option["name"] == "destination" for option in install["options"])
 
 
 @pytest.mark.unit
@@ -64,9 +152,10 @@ def test_cli_search(temp_vba_source, sample_bas_file, tmp_path, capsys):
         mock_cfg.log_name = "test_search"
         main(["search", "TestSub"])
     
-    captured = capsys.readouterr()
-    assert "modTest.bas:4: Public Sub TestSub()" in captured.out
-    assert "1 match(es)" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "search"
+    assert payload["metadata"]["match_count"] == 1
+    assert payload["data"][0]["line"] == "Public Sub TestSub()"
 
     # Test regex search
     with patch("xlvbatools.config.loader.load_config") as mock_config:
@@ -76,8 +165,8 @@ def test_cli_search(temp_vba_source, sample_bas_file, tmp_path, capsys):
         mock_cfg.log_name = "test_search"
         main(["search", "--regex", r"Dim\s+\w+\s+As"])
 
-    captured = capsys.readouterr()
-    assert "Dim x As Double" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["data"][0]["line"].strip() == "Dim x As Double"
 
 
 @pytest.mark.unit
@@ -91,24 +180,34 @@ def test_cli_fmt(temp_vba_source, sample_bas_file, tmp_path, capsys):
         mock_cfg.log_name = "test_fmt"
         main(["fmt", "--dry-run"])
     
-    captured = capsys.readouterr()
-    assert "file(s) would be changed" in captured.out or "No changes" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "format"
+    assert payload["metadata"]["dry_run"] is True
+    assert payload["metadata"]["file_count"] >= 1
 
 
 @pytest.mark.unit
 def test_cli_graph(temp_vba_source, sample_bas_file, tmp_path, capsys):
     """Test xlvba graph subcommand."""
-    # Test generating graph to stdout (mermaid format)
+    # Default graph output is structured JSON.
     with patch("xlvbatools.config.loader.load_config") as mock_config:
         mock_cfg = mock_config.return_value
         mock_cfg.vba_source = str(temp_vba_source)
         mock_cfg.log_dir = str(tmp_path)
         mock_cfg.log_name = "test_graph"
-        main(["graph", "--format", "mermaid"])
+        main(["graph"])
 
-    captured = capsys.readouterr()
-    assert "graph TD" in captured.out
-    assert "modTest.TestSub" in captured.out or "modTest" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "graph"
+    assert payload["data"]["graph_format"] == "json"
+    assert payload["data"]["graph"]["node_count"] >= 1
+
+    with patch("xlvbatools.config.loader.load_config") as mock_config:
+        mock_config.return_value.vba_source = str(temp_vba_source)
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test_graph"
+        main(["graph", "--graph-format", "mermaid", "--text"])
+    assert "graph TD" in capsys.readouterr().out
 
 
 @pytest.mark.unit
@@ -118,8 +217,9 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
     
     # 1. First init
     main(["init", "--workbook", "my_test.xlsm"])
-    captured = capsys.readouterr()
-    assert "xlvbatools.toml" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True
+    assert payload["data"]["config_path"].endswith("xlvbatools.toml")
     assert os.path.exists("xlvbatools.toml")
     
     # Check config content
@@ -131,19 +231,21 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["init", "--workbook", "new.xlsm"])
     assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert "already exists" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is False
+    assert "already exists" in payload["error"]["message"]
 
     # 3. Re-init with force (should succeed)
     main(["init", "--workbook", "new.xlsm", "--force"])
-    captured = capsys.readouterr()
-    assert "xlvbatools.toml" in captured.out
+    assert json.loads(capsys.readouterr().out)["success"] is True
     with open("xlvbatools.toml", "r") as f:
         content = f.read()
     assert 'workbook = "new.xlsm"' in content
 
     # 4. Re-init with force and --agents (should install templates)
     main(["init", "--workbook", "new.xlsm", "--force", "--agents"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["data"]["agents_status"] == "installed"
     assert os.path.exists(".agents")
     assert os.path.exists(".agents/AGENTS.md")
     assert os.path.exists(".agents/skills/xlvba-toolchain/SKILL.md")
@@ -159,12 +261,42 @@ def test_global_agents_help_exits_successfully(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["--agents"])
     assert exc_info.value.code == 0
-    assert "xlvbatools v1 agent integration" in capsys.readouterr().out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "agents"
+    assert payload["data"]["default_output"] == "json"
+
+
+@pytest.mark.unit
+def test_agents_install_is_incremental_and_force_is_scoped(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    main(["agents", "install"])
+    first = json.loads(capsys.readouterr().out)
+    assert first["operation"] == "agents_install"
+    assert first["data"]["destination"] == str((tmp_path / ".agents").resolve())
+    assert "AGENTS.md" in first["data"]["installed"]
+    assert first["data"]["skipped"] == []
+
+    agents_file = tmp_path / ".agents/AGENTS.md"
+    agents_file.write_text("project customization", encoding="utf-8")
+    custom_file = tmp_path / ".agents/project-only.md"
+    custom_file.write_text("keep me", encoding="utf-8")
+
+    main(["agents", "install"])
+    second = json.loads(capsys.readouterr().out)
+    assert "AGENTS.md" in second["data"]["skipped"]
+    assert agents_file.read_text(encoding="utf-8") == "project customization"
+
+    main(["agents", "install", "--force"])
+    forced = json.loads(capsys.readouterr().out)
+    assert "AGENTS.md" in forced["data"]["overwritten"]
+    assert "xlvbatools v1 - Agent Guide" in agents_file.read_text(encoding="utf-8")
+    assert custom_file.read_text(encoding="utf-8") == "keep me"
 
 
 @pytest.mark.unit
 def test_cli_run_forwards_timeout(tmp_path):
-    project = patch("xlvbatools.cli.main._project").start().return_value
+    project = patch("xlvbatools.cli.commands._project").start().return_value
     project.run.return_value = _result("run_macro", {"macro": "MyMacro"})
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
          patch("xlvbatools.logging.setup_logging"):
@@ -188,7 +320,7 @@ def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, 
         "inspect",
         InspectionOutput(None, {"Input": "screenshots/Input.png"}),
     )
-    fake_project = patch("xlvbatools.cli.main._project").start().return_value
+    fake_project = patch("xlvbatools.cli.commands._project").start().return_value
     fake_project.inspect.return_value = expected
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
          patch("xlvbatools.logging.setup_logging"):
@@ -197,7 +329,7 @@ def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, 
         mock_config.return_value.log_name = "test_dump"
         main([
             "dump", "--workbook", "book.xlsm", "--sheets", "Input",
-            "--screenshot", "--range", "B91:K99", "--json",
+            "--screenshot", "--range", "B91:K99",
         ])
 
     assert json.loads(capsys.readouterr().out) == expected.to_dict()
@@ -231,9 +363,9 @@ def test_cli_lint_supports_one_source_file(tmp_path, capsys):
 
     assert exc_info.value.code == 1
     output = capsys.readouterr()
-    assert "IP001" in output.out
-    assert "FAIL:" in output.out
-    assert "PASS" not in output.out
+    payload = json.loads(output.out)
+    assert payload["success"] is False
+    assert any(issue["rule_id"] == "IP001" for issue in payload["data"])
 
 
 @pytest.mark.unit
@@ -253,14 +385,16 @@ def test_cli_lint_missing_target_fails_without_pass(tmp_path, capsys):
 
     assert exc_info.value.code == 2
     output = capsys.readouterr()
-    assert "expected a directory or VBA source file" in output.err
-    assert "PASS" not in output.out + output.err
+    payload = json.loads(output.out)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_lint_target"
+    assert "expected a directory or VBA source file" in payload["error"]["message"]
 
 
 @pytest.mark.unit
 def test_cli_modify(tmp_path, capsys):
     """Test xlvba modify subcommand."""
-    fake_project = patch("xlvbatools.cli.main._project").start().return_value
+    fake_project = patch("xlvbatools.cli.commands._project").start().return_value
     fake_project.modify.return_value = _result("modify", True)
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
          patch("xlvbatools.logging.setup_logging"):
@@ -282,16 +416,19 @@ def test_cli_modify(tmp_path, capsys):
             delete_name=False,
             timeout=120.0,
         )
-    captured = capsys.readouterr()
-    assert "OK" in captured.out
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "modify"
+    assert payload["success"] is True
     patch.stopall()
 
 
 @pytest.mark.unit
 def test_cli_snapshot_commands(tmp_path, capsys):
     """Test xlvba snapshot create and list subcommands."""
+    from xlvbatools import SnapshotRecord
+
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
-         patch("xlvbatools.snapshot.manager.SnapshotManager") as mock_mgr_cls:
+         patch("xlvbatools.SnapshotService") as mock_service_cls:
         
         mock_cfg = mock_config.return_value
         mock_cfg.workbook = "test.xlsm"
@@ -301,36 +438,59 @@ def test_cli_snapshot_commands(tmp_path, capsys):
         mock_cfg.log_name = "test_snapshot"
         mock_cfg.snapshots.rolling_limit = 10
         
-        mock_mgr = mock_mgr_cls.return_value
-        mock_mgr.create.return_value = "20260707T120000000000"
-        mock_mgr.list.return_value = [
-            {"snapshot_id": "snap1", "description": "checkpoint 1", "milestone": True}
-        ]
+        mock_service = mock_service_cls.return_value
+        created = SnapshotRecord(
+            snapshot_id="20260707T120000",
+            timestamp="2026-07-07T12:00:00",
+            description="checkpoint 1",
+            workbook_file="rolling/20260707T120000.xlsm",
+            workbook_hash="abc",
+            workbook_size_bytes=10,
+            vba_source_dir=None,
+            vba_hash="def",
+            milestone=True,
+        )
+        mock_service.create.return_value = created
+        mock_service.list.return_value = (created,)
         
         # Test create
         main(["snapshot", "create", "--desc", "checkpoint 1", "--milestone"])
-        mock_mgr.create.assert_called_once_with(description="checkpoint 1", milestone=True)
-        captured = capsys.readouterr()
-        assert "Snapshot created: 20260707T120000000000" in captured.out
+        mock_service.create.assert_called_once_with(
+            description="checkpoint 1", milestone=True
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["operation"] == "snapshot_create"
+        assert payload["data"]["snapshot_id"] == "20260707T120000"
 
         # Test list
         main(["snapshot", "list"])
-        mock_mgr.list.assert_called_once()
-        captured = capsys.readouterr()
-        assert "snap1" in captured.out
-        assert "checkpoint 1" in captured.out
-        assert "[MILESTONE]" in captured.out
+        mock_service.list.assert_called_once()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["operation"] == "snapshot_list"
+        assert payload["data"][0]["description"] == "checkpoint 1"
+        assert payload["data"][0]["milestone"] is True
 
 
 @pytest.mark.unit
 def test_cli_extract_inject_diff(tmp_path, capsys):
     """Test xlvba extract, inject, and diff subcommands."""
-    fake_project = patch("xlvbatools.cli.main._project").start().return_value
+    from xlvbatools import ExtractionOutput, InjectionChange, InjectionOutput
+
+    fake_project = patch("xlvbatools.cli.commands._project").start().return_value
     fake_project.extract.return_value = _result(
-        "extract", {"components": [{"name": "modTest"}]},
+        "extract",
+        ExtractionOutput(
+            workbook="test.xlsm",
+            output_dir="vba_source",
+            extracted_at="",
+            components=(),
+        ),
     )
     fake_project.inject.return_value = _result(
-        "inject", [{"name": "modTest", "status": "injected"}],
+        "inject",
+        InjectionOutput(
+            changes=(InjectionChange(name="modTest", status="injected"),),
+        ),
     )
     fake_project.diff.return_value = _result("diff", [])
     with patch("xlvbatools.config.loader.load_config") as mock_config, \
@@ -345,12 +505,15 @@ def test_cli_extract_inject_diff(tmp_path, capsys):
         
         # Test extract
         main(["extract"])
+        assert json.loads(capsys.readouterr().out)["operation"] == "extract"
         
         # Test inject
         main(["inject"])
+        assert json.loads(capsys.readouterr().out)["operation"] == "inject"
 
         # Test diff
         main(["diff"])
+        assert json.loads(capsys.readouterr().out)["operation"] == "diff"
         fake_project.extract.assert_called_once_with(
             output="vba_source", component=None, timeout=120.0,
         )

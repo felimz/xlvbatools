@@ -9,7 +9,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION
 

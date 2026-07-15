@@ -16,16 +16,12 @@ Usage:
 import difflib
 import logging
 import os
-import re
-import tempfile
 from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
-from xlvbatools.vba.manifest import get_type_info
+from xlvbatools.vba.constants import VBE_HEADER_STRIP_RE as _VBE_HEADER_RE
 
 logger = logging.getLogger(__name__)
-
-from xlvbatools.vba.constants import VBE_HEADER_STRIP_RE as _VBE_HEADER_RE
 
 
 def diff_all(workbook_path: str, source_dir: str, *, _session=None) -> list[dict]:

@@ -260,7 +260,6 @@ class TestSessionCOM:
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_graceful_close_target_only(self, tmp_path):
-        import os
         import shutil
         import win32com.client
         import win32process

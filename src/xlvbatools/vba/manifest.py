@@ -12,16 +12,9 @@ import os
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional
 
-logger = logging.getLogger(__name__)
+from xlvbatools.vba.constants import VB_COMP_TYPES
 
-from xlvbatools.vba.constants import (
-    TYPE_STD_MODULE,
-    TYPE_CLASS_MODULE,
-    TYPE_USERFORM,
-    TYPE_ACTIVEX_DESIGNER,
-    TYPE_DOCUMENT,
-    VB_COMP_TYPES,
-)
+logger = logging.getLogger(__name__)
 
 
 def get_type_info(vb_type: int) -> dict:

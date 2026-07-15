@@ -36,3 +36,11 @@ class HeadlessCleanupError(XlvbaError):
 
 class TrustCenterError(XlvbaError):
     """Raised when Excel denies programmatic access to the VBA project."""
+
+
+class SnapshotError(XlvbaError):
+    """Raised when snapshot persistence or restoration fails."""
+
+
+class SnapshotNotFoundError(SnapshotError):
+    """Raised when a requested snapshot cannot be resolved."""

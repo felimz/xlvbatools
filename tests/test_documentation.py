@@ -7,14 +7,6 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_FILES = (
-    Path("AGENTS.md"),
-    Path("rules/python-rules.md"),
-    Path("rules/vba-rules.md"),
-    Path("skills/xlvba-toolchain/SKILL.md"),
-    Path("workflows/vba-debug.md"),
-    Path("workflows/vba-edit.md"),
-)
 
 
 def _documentation_files() -> tuple[Path, ...]:
@@ -22,7 +14,6 @@ def _documentation_files() -> tuple[Path, ...]:
     trees = (
         ROOT / "docs",
         ROOT / ".agents",
-        ROOT / "templates/agents",
         ROOT / "src/xlvbatools/templates/agents",
     )
     return top_level + tuple(
@@ -33,14 +24,45 @@ def _documentation_files() -> tuple[Path, ...]:
 
 
 @pytest.mark.unit
-def test_agent_templates_are_identical_across_all_three_surfaces():
-    for relative in TEMPLATE_FILES:
+def test_active_agent_guidance_matches_packaged_templates():
+    active_root = ROOT / ".agents"
+    packaged_root = ROOT / "src/xlvbatools/templates/agents"
+    active_files = {
+        path.relative_to(active_root)
+        for path in active_root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    packaged_files = {
+        path.relative_to(packaged_root)
+        for path in packaged_root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    assert active_files == packaged_files
+    for relative in active_files:
         active = (ROOT / ".agents" / relative).read_bytes()
-        repository = (ROOT / "templates/agents" / relative).read_bytes()
-        packaged = (
-            ROOT / "src/xlvbatools/templates/agents" / relative
-        ).read_bytes()
-        assert active == repository == packaged, relative
+        packaged = (packaged_root / relative).read_bytes()
+        assert active == packaged, relative
+    assert not (ROOT / "templates/agents").exists()
+
+
+@pytest.mark.unit
+def test_readme_indexes_every_document():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    missing = [
+        path.name
+        for path in (ROOT / "docs").glob("*.md")
+        if f"docs/{path.name}" not in readme
+    ]
+    assert not missing, missing
+
+
+@pytest.mark.unit
+def test_api_reference_names_every_public_export():
+    import xlvbatools
+
+    reference = (ROOT / "docs/api-reference.md").read_text(encoding="utf-8")
+    missing = [name for name in xlvbatools.__all__ if f"`{name}`" not in reference]
+    assert not missing, missing
 
 
 @pytest.mark.unit
@@ -74,6 +96,35 @@ def test_application_guidance_uses_only_the_v1_public_boundary():
         assert re.search(pattern, combined) is None, pattern
     assert "xlvbatools.Project" in combined
     assert "require_clean_shutdown()" in combined
+
+
+@pytest.mark.unit
+def test_documentation_describes_machine_first_cli_output():
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in _documentation_files()
+    )
+    assert "machine-first" in combined
+    assert "JSON envelope by default" in combined
+    assert "--output-format text" in combined
+    assert "--output-format table" in combined
+    assert " --json" not in combined
+
+
+@pytest.mark.unit
+def test_agent_installation_and_discovery_are_documented():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs/agent-integration.md").read_text(encoding="utf-8")
+    agents = (ROOT / ".agents/AGENTS.md").read_text(encoding="utf-8")
+    combined = "\n".join((readme, guide, agents))
+
+    assert "xlvba help" in combined
+    assert "xlvba COMMAND --help" in combined
+    assert "xlvba agents install" in combined
+    assert "xlvba init --agents" in combined
+    assert ".agents/` (plural)" in combined
+    assert "project-specific extra files" in combined
+    assert "does not install the Python package" in combined
+    assert "does not" in combined and "xlvbatools.toml" in combined
 
 
 @pytest.mark.unit

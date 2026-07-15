@@ -4,17 +4,68 @@ xlvbatools v1 gives coding agents the same supported surface as any other
 application: the `Project` Python API and the `xlvba` CLI. Agents must not
 manage COM sessions or private worker files directly.
 
-## Bootstrap
+Install a pinned release into the repository virtual environment before using
+the CLI:
 
-Initialize a new repository and install the packaged agent guidance:
+```powershell
+.venv\Scripts\python.exe -m pip install "xlvbatools==X.Y.Z"
+```
+
+Replace `X.Y.Z` with the exact approved release. For an unreleased reviewed
+revision, pin its exact full Git commit instead.
+Installing the Python package does not modify the repository's `.agents/` tree
+or create `xlvbatools.toml`; those are explicit steps below.
+
+## Discover the CLI
+
+Use conventional help when reading in a terminal and the versioned JSON
+catalog when an agent needs to discover commands programmatically:
+
+```powershell
+xlvba --help
+xlvba help
+xlvba help lint
+xlvba lint --help
+```
+
+`xlvba help` returns one `OperationResult` envelope containing the discovery
+schema version, command purposes, usage, examples, Excel requirements, the
+actual parser flags, defaults, choices, nested subcommands, the output contract,
+and agent-template installation commands. Option metadata is derived from the
+execution parser so it cannot drift into a separate hand-maintained list.
+Agents should parse this catalog instead of scraping human-formatted help text.
+
+## Install the packaged templates
+
+The installation directory is `.agents/` (plural). Add guidance to an existing
+repository without modifying its xlvbatools configuration:
+
+```powershell
+xlvba agents install
+```
+
+For a new repository, initialize the configuration and install the same
+packaged guidance in one operation:
 
 ```powershell
 xlvba init --workbook workbook/MyProject.xlsm --agents
-xlvba version --json
+xlvba version
 ```
-Template installation is non-destructive. If `.agents/` already exists,
-xlvbatools leaves it unchanged; update customized guidance through source
-control rather than silently overwriting it.
+
+Installation copies every missing packaged file and skips existing paths, so a
+partial `.agents/` tree is repaired without overwriting customizations. To
+refresh packaged file paths deliberately, run `xlvba agents install --force`.
+Even in force mode, xlvbatools does not delete project-specific extra files.
+The JSON result lists `installed`, `skipped`, and `overwritten` paths.
+
+After installation:
+
+1. Read `.agents/AGENTS.md` for the repository-wide contract.
+2. Read `.agents/skills/xlvba-toolchain/SKILL.md` before Excel/VBA work.
+3. Select the relevant Python or VBA rule file.
+4. Follow `vba-edit.md` for changes or `vba-debug.md` for diagnosis.
+5. Customize paths or project-specific acceptance commands and commit those
+   changes with the repository.
 
 ## Standard edit-verify cycle
 
@@ -22,10 +73,10 @@ control rather than silently overwriting it.
 xlvba snapshot create --desc "before change"
 xlvba extract
 # Edit files under vba_source/
-xlvba lint --source vba_source --json
-xlvba inject --json
+xlvba lint --source vba_source
+xlvba inject
 xlvba diff --summary
-xlvba run OnCalculate --timeout 120 --json
+xlvba run OnCalculate --timeout 120
 ```
 
 A passing macro is not the only acceptance condition. In JSON output, verify
@@ -63,8 +114,8 @@ or expose COM objects in downstream wrappers.
 ## Workbook inspection
 
 ```powershell
-xlvba dump --sheets "Input,Results" --data --json
-xlvba dump --sheets Input --screenshot --range B91:K99 --json
+xlvba dump --sheets "Input,Results" --data
+xlvba dump --sheets Input --screenshot --range B91:K99
 ```
 
 Only visible worksheets are rendered by default. Add
@@ -105,7 +156,7 @@ Public declarations in standard modules therefore resolve across modules.
 Live lint can additionally request Excel's compile test:
 
 ```powershell
-xlvba lint --workbook workbook/MyProject.xlsm --json --timeout 240
+xlvba lint --workbook workbook/MyProject.xlsm --timeout 240
 ```
 
 Treat Excel compilation as the semantic authority. Do not suppress a reported

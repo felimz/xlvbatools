@@ -2,7 +2,6 @@
 Tests for xlvbatools.config -- Configuration loading and validation.
 """
 
-import os
 import pytest
 
 

@@ -26,20 +26,20 @@ description: Safely modify, lint, inject, diff, and verify VBA through xlvbatool
 4. Lint source and resolve every ERROR:
 
    ```powershell
-   xlvba lint --source vba_source --json
+   xlvba lint --source vba_source
    ```
 
 5. Inject and confirm round-trip equality:
 
    ```powershell
-   xlvba inject --json
+   xlvba inject
    xlvba diff --summary
    ```
 
 6. Run the relevant macro and inspect both the outcome and cleanup:
 
    ```powershell
-   xlvba run <MacroName> --timeout 120 --json
+   xlvba run <MacroName> --timeout 120
    ```
 
 7. Commit the workbook and matching source together if verification passes.

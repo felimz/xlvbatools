@@ -616,7 +616,7 @@ def dump_sheet_data(
         read_only=True, disable_macros=True,
     )
     with session_context as session:
-        excel, wb = session.excel, session.wb
+        wb = session.wb
 
         if dump_names:
             dump_data["named_ranges"] = dump_named_ranges(wb)

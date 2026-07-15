@@ -8,14 +8,14 @@ non-destructive VBA formatter.
 Source lint does not require Excel:
 
 ```powershell
-xlvba lint --source vba_source --json
+xlvba lint --source vba_source
 ```
 
 Live lint extracts every VBProject component into one in-memory project model,
 runs the same rules, and optionally asks Excel for compile evidence:
 
 ```powershell
-xlvba lint --workbook workbook/MyModel.xlsm --json --timeout 240
+xlvba lint --workbook workbook/MyModel.xlsm --timeout 240
 ```
 
 ```python

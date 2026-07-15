@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Generic, Mapping, Optional, TypeVar
+from typing import Any, Callable, Generic, Mapping, Optional, TypeVar, cast
 
 from xlvbatools.errors import HeadlessCleanupError, OperationFailedError
 
@@ -163,15 +163,26 @@ class OperationResult(Generic[T]):
         success = bool(value.get("success"))
         error = None
         if not success:
+            raw_error = value.get("error")
+            structured_error = raw_error if isinstance(raw_error, Mapping) else {}
             message = str(
                 value.get("primary_error")
-                or value.get("error")
+                or structured_error.get("message")
+                or raw_error
                 or f"{operation} failed"
             )
+            details = dict(structured_error.get("details") or {})
+            for key in ("traceback", "worker_output", "timed_out"):
+                if value.get(key) is not None:
+                    details[key] = value[key]
             error = ErrorInfo(
                 message=message,
-                code="timeout" if value.get("timed_out") else "operation_failed",
-                error_type=value.get("error_type"),
+                code=str(
+                    structured_error.get("code")
+                    or ("timeout" if value.get("timed_out") else "operation_failed")
+                ),
+                error_type=value.get("error_type") or structured_error.get("error_type"),
+                details=details,
             )
         return cls(
             operation=operation,
@@ -229,8 +240,11 @@ class OperationResult(Generic[T]):
     ) -> "OperationResult[U]":
         """Transform available operation data while preserving its envelope."""
         if self.data is None:
-            return self  # type: ignore[return-value]
-        return replace(self, data=transform(self.data))
+            return cast("OperationResult[U]", self)
+        return cast(
+            "OperationResult[U]",
+            replace(self, data=cast(Any, transform(self.data))),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return the versioned JSON-compatible public representation."""

@@ -26,11 +26,13 @@ import tempfile
 from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
-from xlvbatools.vba.manifest import (
-    ComponentInfo, Manifest, get_type_info, compute_file_hash,
+from xlvbatools.vba.constants import (
     TYPE_STD_MODULE as _TYPE_STD_MODULE,
     TYPE_CLASS_MODULE as _TYPE_CLASS_MODULE,
     TYPE_DOCUMENT as _TYPE_DOCUMENT,
+)
+from xlvbatools.vba.manifest import (
+    ComponentInfo, Manifest, get_type_info, compute_file_hash,
 )
 
 logger = logging.getLogger(__name__)

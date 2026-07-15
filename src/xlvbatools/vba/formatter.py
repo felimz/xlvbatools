@@ -14,7 +14,8 @@ Usage:
 import logging
 import os
 import re
-from typing import Optional
+
+from xlvbatools.vba.constants import VBE_HEADER_FORMAT_RE as _VBE_HEADER
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,6 @@ _INDENT_DECREASE = re.compile(
     r"Next\b|Loop\b|Wend\b)",
     re.IGNORECASE,
 )
-
-from xlvbatools.vba.constants import VBE_HEADER_FORMAT_RE as _VBE_HEADER
 
 # Module-level declarations (no indent)
 _MODULE_LEVEL = re.compile(
@@ -200,7 +199,11 @@ def format_file(
         fromfile=os.path.basename(filepath),
         tofile=os.path.basename(filepath) + " (formatted)",
     ))
-    lines_changed = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
+    lines_changed = sum(
+        1
+        for line in diff_lines
+        if line.startswith("+") and not line.startswith("+++")
+    )
 
     if dry_run:
         return {

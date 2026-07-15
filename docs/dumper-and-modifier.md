@@ -28,8 +28,8 @@ result.require_clean_shutdown()
 The equivalent CLI commands are:
 
 ```powershell
-xlvba dump --sheets "Input,Results" --data --json
-xlvba dump --sheets Input --screenshot --range A1:K100 --json
+xlvba dump --sheets "Input,Results" --data
+xlvba dump --sheets Input --screenshot --range A1:K100
 ```
 
 ### Structured cells

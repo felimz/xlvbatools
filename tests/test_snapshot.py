@@ -2,16 +2,15 @@
 Tests for xlvbatools.snapshot.manager -- Snapshot system.
 """
 
-import os
 import pytest
 
 
 @pytest.mark.unit
-class TestSnapshotManager:
+class TestSnapshotStore:
     """Test snapshot create/list/restore/prune lifecycle."""
 
     def _make_manager(self, tmp_path):
-        from xlvbatools.snapshot.manager import SnapshotManager
+        from xlvbatools.snapshot.manager import _SnapshotStore
 
         # Create a fake workbook file
         wb = tmp_path / "test.xlsm"
@@ -23,7 +22,7 @@ class TestSnapshotManager:
         (vba / "modTest.bas").write_text("Public Sub Test()\nEnd Sub\n", encoding="utf-8")
 
         snaps = tmp_path / "snapshots"
-        return SnapshotManager(
+        return _SnapshotStore(
             workbook_path=str(wb),
             vba_source_dir=str(tmp_path / "vba_source"),
             snapshots_dir=str(snaps),
@@ -128,7 +127,7 @@ class TestSnapshotManager:
     def test_physical_directories_and_zip(self, tmp_path):
         mgr = self._make_manager(tmp_path)
         # Create rolling snapshot
-        sid_r = mgr.create(description="Rolling Snapshot Example", milestone=False)
+        mgr.create(description="Rolling Snapshot Example", milestone=False)
         # Create milestone snapshot
         sid_m = mgr.create(description="Milestone Snapshot Example", milestone=True)
 

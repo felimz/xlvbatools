@@ -1,7 +1,6 @@
 """Unit coverage for isolated workbook inspection orchestration."""
 
 import gc
-import json
 import os
 from types import SimpleNamespace
 

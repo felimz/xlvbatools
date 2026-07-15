@@ -13,7 +13,7 @@ xlvbatools versions three contracts independently:
 3. **Worker protocol** — `WORKER_PROTOCOL_VERSION` identifies the private
    parent/worker transport. It may evolve without changing the Python API.
 
-`xlvba version --json` reports all three identifiers plus installed-package
+`xlvba version` reports all three identifiers plus installed-package
 and VCS provenance.
 
 ## Public compatibility boundary
@@ -43,12 +43,13 @@ Production/Stable`. Pre-release work must use a PEP 440 suffix such as
    using the repository `.venv`.
 3. Build the wheel with normal PEP 517 build isolation.
 4. Install the wheel into a fresh virtual environment outside the source tree
-   and verify the public API, package version, result schema, and protocol.
+   and verify the public API, package version, result schema, protocol, CLI
+   discovery catalog, and packaged `.agents/` installation.
 5. Commit the release, create an annotated `vMAJOR.MINOR.PATCH` Git tag, and
    push the commit and tag.
 6. Publish the exact wheel built from that tagged commit and record its hash.
 
-The release commit, tag, wheel metadata, `xlvba version --json`, and changelog
+The release commit, tag, wheel metadata, `xlvba version`, and changelog
 must all report the same package version. Do not derive the package version
 from an editable checkout's branch name or local environment.
 

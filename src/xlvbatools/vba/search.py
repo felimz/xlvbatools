@@ -104,8 +104,14 @@ def search_vba(
                     if context_lines > 0:
                         start_idx = max(0, i - 1 - context_lines)
                         end_idx = min(len(lines), i + context_lines)
-                        ctx_before = [l.rstrip() for l in lines[start_idx:i - 1]]
-                        ctx_after = [l.rstrip() for l in lines[i:end_idx]]
+                        ctx_before = [
+                            context_line.rstrip()
+                            for context_line in lines[start_idx:i - 1]
+                        ]
+                        ctx_after = [
+                            context_line.rstrip()
+                            for context_line in lines[i:end_idx]
+                        ]
 
                     matches.append(SearchMatch(
                         file=rel_path,

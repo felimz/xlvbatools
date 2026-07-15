@@ -29,12 +29,16 @@ logs/
 
 # Test artifacts
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 htmlcov/
 .coverage
+.coverage.*
 
 # Workbook backups and snapshots (user-generated, not tracked)
 backups/
 snapshots/
+.snapshots/
 workbook/backups/
 workbook/snapshots/
 

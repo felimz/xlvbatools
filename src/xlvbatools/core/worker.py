@@ -116,6 +116,8 @@ def execute_worker_request(
         raise ValueError("timeout must be greater than zero")
     if not operation or not isinstance(operation, str):
         raise ValueError("operation must be a non-empty string")
+    if retry_transient and operation != "modify":
+        raise ValueError("transient retries are supported only for modification")
 
     attempts = 2 if retry_transient else 1
     result: dict[str, Any] | None = None

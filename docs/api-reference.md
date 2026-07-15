@@ -7,12 +7,34 @@ surface consists of:
 
 - `Project` and `ProjectSettings`;
 - `Operation`, `OperationRequest`, `Executor`, and `IsolatedExecutor`;
-- `OperationResult` and its typed diagnostic, error, artifact, and inspection
-  models;
+- `OperationResult` and its typed diagnostic, error, artifact, inspection,
+  operation-output, and snapshot models;
 - documented public exceptions, `VBAIssue`, and version helpers.
 
 Modules under `core`, `vba`, `macro`, `workbook`, `analysis`, and
 `snapshot` are private backends.
+
+### Exact public exports
+
+The following names are the complete supported import surface:
+
+| Area | Public names |
+|:---|:---|
+| Project | `Project`, `ProjectSettings` |
+| Execution | `Operation`, `OperationRequest`, `Executor`, `IsolatedExecutor` |
+| Result envelope | `OperationResult`, `RESULT_SCHEMA_VERSION` |
+| Result evidence | `ErrorInfo`, `Diagnostics`, `CleanupReport`, `Artifact` |
+| Inspection data | `InspectionOutput` |
+| VBA component data | `VBAComponent`, `ExtractionOutput`, `InjectionChange`, `InjectionOutput` |
+| VBA action data | `ComponentDiff`, `MacroOutput`, `ModificationOutput` |
+| Snapshots | `SnapshotService`, `SnapshotRecord`, `SnapshotGitInfo` |
+| Analysis | `VBAIssue` |
+| Operation errors | `XlvbaError`, `ConfigurationError`, `OperationFailedError`, `HeadlessCleanupError` |
+| Excel and snapshot errors | `TrustCenterError`, `SnapshotError`, `SnapshotNotFoundError` |
+| Versioning | `__version__`, `VersionInfo`, `get_version_info` |
+
+Anything not listed here and in `xlvbatools.__all__` is an implementation
+detail, even if it can be imported from a source checkout.
 
 ## Project construction
 
@@ -57,16 +79,16 @@ Paths are resolved at construction. Workbooks must use `.xlsm`, `.xlsb`, or
 
 | Method | Excel worker | Result data |
 |:---|:---:|:---|
-| `list_components(timeout=60)` | yes | component records |
+| `list_components(timeout=60)` | yes | tuple of `VBAComponent` |
 | `inspect(sheets, ..., timeout=60)` | yes | `InspectionOutput` |
-| `run(macro, ..., timeout=120)` | yes | macro result mapping |
-| `extract(..., timeout=120)` | yes | extraction records |
-| `inject(..., timeout=120)` | yes, except dry-run backend | injection records |
-| `diff(..., timeout=120)` | yes | component differences |
+| `run(macro, ..., timeout=120)` | yes | `MacroOutput` |
+| `extract(..., timeout=120)` | yes | `ExtractionOutput` |
+| `inject(..., timeout=120)` | yes, except dry-run backend | `InjectionOutput` |
+| `diff(..., timeout=120)` | yes | tuple of `ComponentDiff` |
 | `lint_workbook(compile_test=True, timeout=120)` | yes | tuple of `VBAIssue` |
-| `modify(..., timeout=120)` | yes | modification details |
+| `modify(..., timeout=120)` | yes | `ModificationOutput` |
 | `lint_source(source=None)` | no | tuple of `VBAIssue` |
-| `snapshots()` | no | project-bound snapshot service |
+| `snapshots()` | no | `SnapshotService` |
 
 All Excel-backed calls cross the configured `Executor`. Raw COM proxies never
 leave the worker.
@@ -108,6 +130,9 @@ data = result.require_success()
 cleanup = result.require_clean_shutdown()
 ```
 
+`MacroOutput` exposes `macro`, `run_id`, and `excel_pid`. Additional
+JSON-compatible worker values are retained in its immutable `details` mapping.
+
 The deadline covers worker startup, workbook open, input setup, macro execution,
 save, and cleanup. Macro execution is never automatically retried.
 
@@ -121,6 +146,18 @@ workbook_result = project.lint_workbook(compile_test=True, timeout=240)
 Both adapters use the same project-level symbol index. Workbook lint can add
 Excel compile evidence. A lint result is unsuccessful when ERROR-severity
 issues exist.
+
+### Snapshots
+
+```python
+snapshots = project.snapshots()
+record = snapshots.create("before refactor")
+snapshots.restore(record)
+```
+
+`SnapshotService` returns immutable `SnapshotRecord` values. Snapshot metadata
+is written atomically under an operating-system file lock; missing snapshots
+raise `SnapshotNotFoundError` during restore or diff.
 
 ## OperationResult
 
@@ -173,6 +210,13 @@ result = project.execute(
 
 `OperationRequest` requires a positive timeout and freezes a copy of its
 arguments. Applications should prefer the named `Project` methods.
+
+## CLI serialization
+
+Every non-interactive CLI command serializes this same `OperationResult`
+envelope to stdout by default, including local commands such as `search`,
+`format`, `graph`, `snapshot`, and `version`. Text and table output are explicit
+presentation options. See [Machine-first CLI output](cli-output.md).
 
 ## Versions
 

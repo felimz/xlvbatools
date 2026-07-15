@@ -37,7 +37,7 @@ import logging
 import threading
 import uuid
 import sys
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from xlvbatools._compat import require_windows
 from xlvbatools.core.process import (
@@ -47,6 +47,9 @@ from xlvbatools.core.process import (
     kill_process_by_pid,
 )
 from xlvbatools.errors import TrustCenterError
+
+if TYPE_CHECKING:
+    from xlvbatools.core.watchdog import DialogWatchdog
 
 logger = logging.getLogger(__name__)
 

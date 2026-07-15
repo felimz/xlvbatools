@@ -25,6 +25,29 @@ class Operation(str, Enum):
     MODIFY = "modify"
 
 
+def _freeze(value: Any) -> Any:
+    """Return a recursively immutable copy of JSON-compatible request data."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(
+        "operation arguments must contain only JSON-compatible mappings, "
+        f"sequences, and scalar values; got {type(value).__name__}"
+    )
+
+
+def _thaw(value: Any) -> Any:
+    """Convert frozen request data into ordinary JSON-compatible containers."""
+    if isinstance(value, Mapping):
+        return {str(key): _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True)
 class OperationRequest:
     """Validated request passed from the public API to an executor."""
@@ -37,7 +60,13 @@ class OperationRequest:
     def __post_init__(self) -> None:
         if self.timeout <= 0:
             raise ValueError("timeout must be greater than zero")
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        if self.retry_transient and self.operation is not Operation.MODIFY:
+            raise ValueError("transient retries are supported only for modification")
+        object.__setattr__(self, "arguments", _freeze(self.arguments))
+
+    def _worker_arguments(self) -> dict[str, Any]:
+        """Return a detached mutable payload for the private worker transport."""
+        return _thaw(self.arguments)
 
 
 class Executor(Protocol):
@@ -55,7 +84,7 @@ class IsolatedExecutor:
         try:
             response = execute_worker_request(
                 request.operation.value,
-                request.arguments,
+                request._worker_arguments(),
                 timeout=request.timeout,
                 retry_transient=request.retry_transient,
             )

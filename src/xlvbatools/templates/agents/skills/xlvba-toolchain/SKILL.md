@@ -11,6 +11,10 @@ description: >
 Use this skill for headless Excel/VBA work. Application code must use
 `xlvbatools.Project`; raw COM sessions and worker transport are internal.
 
+Before using the commands, install a pinned xlvbatools version in the project
+`.venv` and create or verify `xlvbatools.toml`. Installing this `.agents/`
+template alone does not install the package or configure a workbook.
+
 ## Edit-verify cycle
 
 ```text
@@ -20,7 +24,7 @@ Use this skill for headless Excel/VBA work. Application code must use
 4. Lint:      xlvba lint
 5. Inject:    xlvba inject
 6. Diff:      xlvba diff
-7. Run:       xlvba run <MacroName> --json
+7. Run:       xlvba run <MacroName>
 8. Pass:      commit workbook/source changes together
 9. Fail:      xlvba snapshot restore latest
 ```
@@ -29,11 +33,12 @@ Use this skill for headless Excel/VBA work. Application code must use
 
 | Command | Purpose |
 |:---|:---|
+| `xlvba help [command]` | Return versioned machine-readable CLI discovery |
 | `xlvba extract` | Extract VBA into the configured source tree |
 | `xlvba inject` | Inject configured VBA source into the workbook |
 | `xlvba diff` | Compare live workbook VBA with extracted source |
 | `xlvba lint` | Analyze source, or a live workbook with `--workbook` |
-| `xlvba run <macro> --json` | Run one macro in an isolated worker |
+| `xlvba run <macro>` | Run one macro in an isolated worker |
 | `xlvba snapshot` | Create, list, inspect, restore, diff, or prune checkpoints |
 | `xlvba dump` | Inspect sheet data and optionally render screenshots |
 | `xlvba modify` | Change cells, formulas, or named ranges |
@@ -41,8 +46,15 @@ Use this skill for headless Excel/VBA work. Application code must use
 | `xlvba search <pattern>` | Search extracted VBA |
 | `xlvba fmt` | Format extracted VBA |
 | `xlvba graph` | Generate Mermaid, DOT, or JSON call graphs |
-| `xlvba version --json` | Report package, result-schema, and protocol versions |
+| `xlvba version` | Report package, result-schema, and protocol versions |
 | `xlvba agents` | Print agent integration guidance |
+| `xlvba agents install` | Safely install packaged guidance into `.agents/` |
+
+For an existing consumer repository, run `xlvba agents install`, then read
+`.agents/AGENTS.md` and this skill. For a new project, `xlvba init --agents`
+performs project initialization and template installation together. Existing
+template paths are preserved unless `xlvba agents install --force` is used;
+project-specific extra files are never deleted.
 
 ## Python API
 
@@ -55,8 +67,12 @@ lint_result = project.lint_source()
 issues = lint_result.require_success()
 
 run_result = project.run("OnCalculate", timeout=120, save=False)
-run_result.require_success()
+macro = run_result.require_success()
+print(macro.run_id)
 run_result.require_clean_shutdown()
+
+snapshot = project.snapshots().create("before change")
+project.snapshots().restore(snapshot)
 ```
 
 For explicit paths:
@@ -78,20 +94,25 @@ Every operation returns an `OperationResult`. Check:
 - `artifacts` for screenshots and other durable outputs;
 - `request_id`, `elapsed_seconds`, and `attempt_count` for tracing.
 
-CLI `--json` output uses the same versioned envelope. Do not parse private
+Operation data is modeled, not a private dictionary: use attributes on
+`MacroOutput`, `ExtractionOutput`, `InjectionOutput`, `ComponentDiff`,
+`ModificationOutput`, and `SnapshotRecord`.
+
+CLI output is one versioned JSON envelope by default. Use `--text` or `--table`
+only when presentation output is explicitly requested. Do not parse private
 worker files.
 
 ## Troubleshooting
 
 | Scenario | Action |
 |:---|:---|
-| Need module names | `xlvba extract --list --json` |
+| Need module names | `xlvba extract --list` |
 | Need a procedure or symbol | `xlvba search "FunctionName"` |
-| Need source-only analysis | `xlvba lint --source vba_source/ --json` |
-| Need live compile/analyzer validation | `xlvba lint --workbook workbook.xlsm --json` |
-| Need call relationships | `xlvba graph --format json` |
-| Need sheet values | `xlvba dump --sheets Sheet1 --data --json` |
-| Need a visible-sheet screenshot | `xlvba dump --sheets Sheet1 --screenshot --json` |
+| Need source-only analysis | `xlvba lint --source vba_source/` |
+| Need live compile/analyzer validation | `xlvba lint --workbook workbook.xlsm` |
+| Need call relationships | `xlvba graph` |
+| Need sheet values | `xlvba dump --sheets Sheet1 --data` |
+| Need a visible-sheet screenshot | `xlvba dump --sheets Sheet1 --screenshot` |
 | Need hidden sheets intentionally | Add `--include-hidden-sheets` |
 | Need to set a value | `xlvba modify --sheet Sheet1 --cell A1 --value 42` |
 | Macro timed out or Excel failed | Inspect cleanup diagnostics; never kill Excel globally |

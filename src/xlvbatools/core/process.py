@@ -1,7 +1,7 @@
 """
 Excel Process Management
 =========================
-Utilities for managing Excel.exe processes: kill, detect, gracefully close.
+Utilities for detecting Excel and gracefully closing one targeted workbook.
 
 These are standalone functions with no state -- safe to call from anywhere.
 """
@@ -17,34 +17,6 @@ from typing import Optional
 from xlvbatools._compat import IS_WINDOWS
 
 logger = logging.getLogger(__name__)
-
-
-def kill_excel(timeout: float = 2.0) -> bool:
-    """
-    Force-kill all running Excel processes.
-
-    Parameters
-    ----------
-    timeout : float
-        Seconds to wait after killing for process cleanup.
-
-    Returns
-    -------
-    bool
-        True if any processes were killed.
-    """
-    if not IS_WINDOWS:
-        logger.debug("kill_excel: skipped (not Windows)")
-        return False
-    result = subprocess.run(
-        ["taskkill", "/f", "/im", "EXCEL.EXE"],
-        capture_output=True, text=True
-    )
-    killed = result.returncode == 0
-    if killed:
-        logger.info("Killed stale Excel processes")
-        time.sleep(timeout)
-    return killed
 
 
 def is_excel_running() -> bool:

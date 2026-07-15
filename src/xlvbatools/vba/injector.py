@@ -20,17 +20,16 @@ Usage:
 
 import logging
 import os
-import shutil
 import tempfile
 from contextlib import nullcontext
 
 from xlvbatools.core.session import ExcelSession
-from xlvbatools.vba.manifest import (
-    Manifest, get_type_info,
+from xlvbatools.vba.constants import (
     TYPE_STD_MODULE as _TYPE_STD_MODULE,
     TYPE_CLASS_MODULE as _TYPE_CLASS_MODULE,
     TYPE_DOCUMENT as _TYPE_DOCUMENT,
 )
+from xlvbatools.vba.manifest import Manifest, get_type_info
 
 logger = logging.getLogger(__name__)
 
@@ -320,10 +319,10 @@ def _scan_source_dir(source_dir: str) -> Manifest:
 
 def _create_backup(workbook_path: str, source_dir: str, limit: int = _DEFAULT_BACKUP_LIMIT):
     """Create a backup of the workbook and VBA source as a rolling snapshot."""
-    from xlvbatools.snapshot.manager import SnapshotManager
+    from xlvbatools.snapshot.manager import _SnapshotStore
     from xlvbatools.config.loader import load_config
     config = load_config(os.path.dirname(workbook_path))
-    mgr = SnapshotManager(
+    mgr = _SnapshotStore(
         workbook_path=workbook_path,
         vba_source_dir=source_dir,
         snapshots_dir=config.snapshots_path,

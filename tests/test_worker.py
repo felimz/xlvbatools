@@ -129,6 +129,14 @@ def test_opt_in_transient_retry_starts_one_fresh_worker(monkeypatch):
 
 
 @pytest.mark.unit
+def test_worker_rejects_retry_for_non_idempotent_operation():
+    from xlvbatools.core.worker import execute_worker_request
+
+    with pytest.raises(ValueError, match="only for modification"):
+        execute_worker_request("run_macro", {}, retry_transient=True)
+
+
+@pytest.mark.unit
 def test_worker_mode_injection_raises_before_partial_save(tmp_path, monkeypatch):
     from xlvbatools.vba import injector
 

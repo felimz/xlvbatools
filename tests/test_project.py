@@ -86,7 +86,7 @@ def test_project_run_uses_typed_request_and_result(tmp_path):
 
     result = project.run("Calculate", timeout=5, save=False)
 
-    assert result.data["result"] == 42
+    assert result.data.details["result"] == 42
     assert result.metadata == {"macro": "Calculate"}
     request = executor.requests[0]
     assert request.operation is Operation.RUN
@@ -133,6 +133,47 @@ def test_excel_methods_share_one_executor(
     assert result.require_clean_shutdown().pid == 91
     assert executor.requests[0].operation is operation
     assert executor.requests[0].retry_transient is (operation is Operation.MODIFY)
+
+
+@pytest.mark.unit
+def test_excel_methods_normalize_operation_specific_outputs(tmp_path):
+    executor = RecordingExecutor([
+        _successful(
+            Operation.LIST_COMPONENTS.value,
+            [{"name": "modMain", "type_code": 1, "type_name": "standard_module", "line_count": 4}],
+        ),
+        _successful(
+            Operation.EXTRACT.value,
+            {
+                "workbook": "book.xlsm",
+                "extracted_at": "2026-07-15T12:00:00",
+                "components": [
+                    {
+                        "name": "modMain",
+                        "type_code": 1,
+                        "type_name": "standard_module",
+                        "file": "modules/modMain.bas",
+                    }
+                ],
+            },
+        ),
+        _successful(
+            Operation.INJECT.value,
+            [{"name": "modMain", "status": "injected"}],
+        ),
+        _successful(
+            Operation.DIFF.value,
+            [{"name": "modMain", "status": "identical"}],
+        ),
+        _successful(Operation.MODIFY.value, True),
+    ])
+    project = Project.open(tmp_path / "book.xlsm", executor=executor)
+
+    assert project.list_components().data[0].name == "modMain"
+    assert project.extract().data.components[0].file == "modules/modMain.bas"
+    assert project.inject().data.changes[0].status == "injected"
+    assert project.diff().data[0].status == "identical"
+    assert project.modify(cell="A1", value=4).data.action == "set_value"
 
 
 @pytest.mark.unit
@@ -198,7 +239,7 @@ def test_project_macro_reports_clean_owned_process(runtime_error_workbook):
     )
 
     assert result.success is True, result.to_dict()
-    assert result.data["macro"] == "CompleteNormally"
+    assert result.data.macro == "CompleteNormally"
     assert result.require_clean_shutdown().still_running is False
 
 
@@ -212,16 +253,16 @@ def test_project_vba_round_trip_uses_clean_sequential_workers(
 
     extracted = project.extract(timeout=90)
     assert extracted.success is True, extracted.to_dict()
-    assert extracted.data["components"]
+    assert extracted.data.components
     assert extracted.require_clean_shutdown().still_running is False
 
     compared = project.diff(timeout=90)
     assert compared.success is True, compared.to_dict()
-    assert all(item["status"] == "identical" for item in compared.data)
+    assert all(item.status == "identical" for item in compared.data)
 
     injected = project.inject(backup=False, timeout=90)
     assert injected.success is True, injected.to_dict()
-    assert all(item["status"] == "injected" for item in injected.data)
+    assert all(item.status == "injected" for item in injected.data.changes)
 
     linted = project.lint_workbook(compile_test=False, timeout=90)
     assert linted.require_clean_shutdown().still_running is False

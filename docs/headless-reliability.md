@@ -1,7 +1,7 @@
 # Headless reliability contract
 
-These invariants define xlvbatools v1. Application code receives them through
-`Project`; implementation subpackages are not an alternate public API.
+These current invariants define xlvbatools v1. Application code receives them
+through `Project`; implementation subpackages are not an alternate public API.
 
 ## Isolation and ownership
 

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Iterable, Mapping, Sequence
 import os
 import re
+
+if TYPE_CHECKING:
+    from xlvbatools.analysis.issue import VBAIssue
 
 
 STANDARD_MODULE = "standard_module"

@@ -1,0 +1,21 @@
+name: Excel acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-excel:
+    runs-on: [self-hosted, Windows, Excel]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m venv .venv
+      - run: .venv\Scripts\python.exe -m pip install -e ".[dev]"
+      - run: .venv\Scripts\python.exe -m pytest tests/test_project.py -m "com or e2e" -v
+      - run: .venv\Scripts\python.exe -m pytest tests/test_sequential_com.py -q

@@ -5,10 +5,12 @@ Creates an xlvbatools.toml configuration file and optional directory structure
 in the current working directory.
 """
 
-import os
-import sys
-import shutil
 import importlib.resources
+import os
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 
 TEMPLATE_TOML = '''[xlvbatools]
@@ -30,14 +32,43 @@ disabled_rules = []
 '''
 
 
-def run_init(args):
-    """Execute the `xlvba init` command."""
+@dataclass(frozen=True)
+class InitOutput:
+    """Structured result of project initialization."""
+
+    config_path: str
+    workbook: str
+    directories: tuple[str, ...]
+    agents_status: str
+    used_default_workbook: bool
+
+
+@dataclass(frozen=True)
+class AgentTemplateInstallOutput:
+    """Files affected by a non-destructive agent-template installation."""
+
+    destination: str
+    installed: tuple[str, ...]
+    skipped: tuple[str, ...]
+    overwritten: tuple[str, ...]
+
+    @property
+    def status(self) -> str:
+        if self.overwritten:
+            return "updated"
+        if self.installed:
+            return "installed"
+        return "skipped_existing"
+
+
+def run_init(args) -> InitOutput:
+    """Initialize a project without writing presentation text to stdout."""
     config_path = os.path.join(os.getcwd(), "xlvbatools.toml")
 
     if os.path.exists(config_path) and not getattr(args, "force", False):
-        print(f"xlvbatools.toml already exists at {config_path}")
-        print("Use --force to overwrite")
-        sys.exit(1)
+        raise FileExistsError(
+            f"xlvbatools.toml already exists at {config_path}; use --force to overwrite"
+        )
 
     # Determine workbook path
     workbook = args.workbook or _find_workbook()
@@ -46,22 +77,31 @@ def run_init(args):
     content = TEMPLATE_TOML.format(workbook=workbook.replace("\\", "/"))
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Created: {config_path}")
 
     # Create standard directories
-    for dirname in ["vba_source/modules", "vba_source/classes", "vba_source/sheets",
-                    "snapshots", "logs"]:
+    directories = (
+        "vba_source/modules",
+        "vba_source/classes",
+        "vba_source/sheets",
+        "snapshots",
+        "logs",
+    )
+    for dirname in directories:
         path = os.path.join(os.getcwd(), dirname)
         os.makedirs(path, exist_ok=True)
-        print(f"Created: {dirname}/")
 
     # Optionally install .agents/ template
+    agents_status = "not_requested"
     if args.agents:
-        _install_agents_template()
+        agents_status = install_agents_template().status
 
-    print(f"\nProject initialized. Edit xlvbatools.toml to configure your workbook path.")
-    if workbook == "workbook.xlsm":
-        print("  Hint: set 'workbook' to your actual .xlsm file path.")
+    return InitOutput(
+        config_path=os.path.abspath(config_path),
+        workbook=workbook,
+        directories=tuple(os.path.abspath(path) for path in directories),
+        agents_status=agents_status,
+        used_default_workbook=workbook == "workbook.xlsm",
+    )
 
 
 def _find_workbook() -> str:
@@ -72,30 +112,45 @@ def _find_workbook() -> str:
     return "workbook.xlsm"
 
 
-def _install_agents_template():
-    """Copy the .agents/ template into the current project."""
-    agents_dir = os.path.join(os.getcwd(), ".agents")
-    if os.path.exists(agents_dir):
-        print("  .agents/ already exists, skipping template installation")
-        return
-
+def install_agents_template(
+    destination: str | os.PathLike[str] = ".agents",
+    *,
+    force: bool = False,
+) -> AgentTemplateInstallOutput:
+    """Copy packaged guidance without deleting project-specific agent files."""
+    destination_path = Path(destination).resolve()
+    installed: list[str] = []
+    skipped: list[str] = []
+    overwritten: list[str] = []
     try:
         templates_path = importlib.resources.files("xlvbatools").joinpath("templates/agents")
-        
-        def copy_resource_dir(resource_path, dest_dir):
-            os.makedirs(dest_dir, exist_ok=True)
+
+        def copy_resource_dir(resource_path: Any, relative: Path) -> None:
             for entry in resource_path.iterdir():
-                dest_path = os.path.join(dest_dir, entry.name)
                 if entry.name == "__pycache__":
                     continue
+                entry_relative = relative / entry.name
+                dest_path = destination_path / entry_relative
                 if entry.is_dir():
-                    copy_resource_dir(entry, dest_path)
+                    copy_resource_dir(entry, entry_relative)
                 elif entry.is_file():
+                    relative_text = entry_relative.as_posix()
+                    if dest_path.exists() and not force:
+                        skipped.append(relative_text)
+                        continue
+                    existed = dest_path.exists()
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
                     with entry.open("rb") as sf:
-                        with open(dest_path, "wb") as df:
+                        with dest_path.open("wb") as df:
                             shutil.copyfileobj(sf, df)
+                    (overwritten if existed else installed).append(relative_text)
 
-        copy_resource_dir(templates_path, agents_dir)
-        print("  Created .agents/ template successfully from package data.")
+        copy_resource_dir(templates_path, Path())
+        return AgentTemplateInstallOutput(
+            destination=str(destination_path),
+            installed=tuple(sorted(installed)),
+            skipped=tuple(sorted(skipped)),
+            overwritten=tuple(sorted(overwritten)),
+        )
     except Exception as e:
-        print(f"  Error installing agents template: {e}")
+        raise RuntimeError(f"Could not install .agents/ templates: {e}") from e

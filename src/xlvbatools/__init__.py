@@ -6,6 +6,8 @@ from xlvbatools.errors import (
     ConfigurationError,
     HeadlessCleanupError,
     OperationFailedError,
+    SnapshotError,
+    SnapshotNotFoundError,
     TrustCenterError,
     XlvbaError,
 )
@@ -14,6 +16,15 @@ from xlvbatools.execution import (
     IsolatedExecutor,
     Operation,
     OperationRequest,
+)
+from xlvbatools.outputs import (
+    ComponentDiff,
+    ExtractionOutput,
+    InjectionChange,
+    InjectionOutput,
+    MacroOutput,
+    ModificationOutput,
+    VBAComponent,
 )
 from xlvbatools.project import Project, ProjectSettings
 from xlvbatools.results import (
@@ -25,19 +36,26 @@ from xlvbatools.results import (
     OperationResult,
     RESULT_SCHEMA_VERSION,
 )
+from xlvbatools.snapshots import SnapshotGitInfo, SnapshotRecord, SnapshotService
 from xlvbatools.version import VersionInfo, get_version_info
 
 
 __all__ = [
     "Artifact",
     "CleanupReport",
+    "ComponentDiff",
     "ConfigurationError",
     "Diagnostics",
     "ErrorInfo",
     "Executor",
+    "ExtractionOutput",
     "HeadlessCleanupError",
     "InspectionOutput",
+    "InjectionChange",
+    "InjectionOutput",
     "IsolatedExecutor",
+    "MacroOutput",
+    "ModificationOutput",
     "Operation",
     "OperationFailedError",
     "OperationRequest",
@@ -45,7 +63,13 @@ __all__ = [
     "Project",
     "ProjectSettings",
     "RESULT_SCHEMA_VERSION",
+    "SnapshotError",
+    "SnapshotGitInfo",
+    "SnapshotNotFoundError",
+    "SnapshotRecord",
+    "SnapshotService",
     "TrustCenterError",
+    "VBAComponent",
     "VBAIssue",
     "VersionInfo",
     "XlvbaError",

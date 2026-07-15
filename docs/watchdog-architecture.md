@@ -50,5 +50,5 @@ not arrive, it targets the reported Excel PID, allows the blocked COM call to
 unwind, and then terminates the exact worker if required. There is no
 image-wide Excel fallback.
 
-See [Headless reliability contract](headless-reliability-migration.md) and
+See [Headless reliability contract](headless-reliability.md) and
 [Worker protocol](worker-protocol.md).

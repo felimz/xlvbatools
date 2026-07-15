@@ -1,5 +1,20 @@
 # xlvbatools v1 - Agent Guide
 
+## Using this template
+
+The Python package, project configuration, and agent guidance are separate:
+
+1. Install a pinned `xlvbatools` release in the repository `.venv`.
+2. Run `xlvba agents install` to copy this `.agents/` guidance into an existing
+   project, or `xlvba init --agents` to create configuration and guidance
+   together.
+3. Read this file, then the task-specific skill, rule, and workflow.
+4. Customize workbook paths and acceptance commands for the repository and
+   commit those customizations.
+
+Installing `.agents/` files does not install the Python package or create an
+`xlvbatools.toml` unless `xlvba init --agents` is used.
+
 ## Project contract
 
 `xlvbatools` provides isolated, headless Excel/VBA automation. Application
@@ -19,8 +34,16 @@ and implementation subpackages are private.
 - Use `tmp_path` or operating-system temporary directories for generated test
   artifacts; do not pollute the workspace root.
 - Treat names in `xlvbatools.__all__` as the only supported Python API.
-- Check `xlvba version --json` when reproducibility matters. Package, result-
+- Check `xlvba version` when reproducibility matters. Package, result-
   schema, and worker-protocol versions are independent contracts.
+- Parse the default JSON envelope. Use `--text` or `--table` only when a human
+  presentation is explicitly requested.
 
 Task-specific Python, VBA, skill, and workflow guidance lives under
-`.agents/`. Run `xlvba agents` to print the integration guide.
+`.agents/` (plural). In a consumer repository, install these packaged files
+with `xlvba agents install`, or use `xlvba init --agents` while initializing a
+new project. Installation preserves existing files unless `--force` is
+explicitly requested and never deletes project-specific extras. Read this file
+first, then the task-specific skill, rule, and workflow. Use `xlvba help` for a
+machine-readable command catalog and `xlvba COMMAND --help` for conventional
+option help and examples.
