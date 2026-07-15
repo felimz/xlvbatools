@@ -23,6 +23,22 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
 
+def _require_owned_excel_exit(excel_pid: int, *, grace_period: float = 20.0) -> None:
+    """Do not let a fixture-owned Excel process leak into the next test."""
+    from xlvbatools.core.process import is_process_running, kill_process_by_pid
+
+    deadline = time.time() + grace_period
+    while time.time() < deadline and is_process_running(excel_pid):
+        time.sleep(0.1)
+    if is_process_running(excel_pid):
+        kill_process_by_pid(excel_pid)
+        deadline = time.time() + 10.0
+        while time.time() < deadline and is_process_running(excel_pid):
+            time.sleep(0.1)
+    if is_process_running(excel_pid):
+        pytest.fail(f"Fixture-owned Excel PID {excel_pid} did not exit")
+
+
 @pytest.fixture
 def fixtures_dir():
     """Path to the test fixtures directory."""
@@ -70,15 +86,10 @@ def minimal_workbook(tmp_path):
         excel = None
         gc.collect()
         if excel_pid is not None:
-            from xlvbatools.core.process import is_process_running, kill_process_by_pid
             # Excel commonly needs more than three seconds to finish COM/VBE
             # shutdown. Killing it mid-shutdown can destabilize the next
             # DispatchEx call in the same interpreter.
-            deadline = time.time() + 20.0
-            while time.time() < deadline and is_process_running(excel_pid):
-                time.sleep(0.1)
-            if is_process_running(excel_pid):
-                kill_process_by_pid(excel_pid)
+            _require_owned_excel_exit(excel_pid)
 
 
 @pytest.fixture
@@ -162,12 +173,7 @@ def runtime_error_workbook(tmp_path):
         excel = None
         gc.collect()
         if excel_pid is not None:
-            from xlvbatools.core.process import is_process_running, kill_process_by_pid
-            deadline = time.time() + 20.0
-            while time.time() < deadline and is_process_running(excel_pid):
-                time.sleep(0.1)
-            if is_process_running(excel_pid):
-                kill_process_by_pid(excel_pid)
+            _require_owned_excel_exit(excel_pid)
 
 
 @pytest.fixture

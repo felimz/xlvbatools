@@ -93,11 +93,11 @@ COM proxies are released while Excel remains alive.
 
 The integrated v1 refactor completed with:
 
-- 237 passing tests in the complete suite;
+- 257 passing tests in the complete suite;
 - four passing live `Project` API tests;
 - a build-isolated wheel imported from a clean consumer environment;
 - WA-OCEAN live lint with zero errors, zero `FileCount` false positives, and
-  zero compile findings;
+  zero compile findings across 1,069 reported issues;
 - zero residual Excel and worker processes.
 
 Re-run these gates for the release commit; do not treat this historical record

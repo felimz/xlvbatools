@@ -238,7 +238,7 @@ def test_project_macro_reports_clean_owned_process(runtime_error_workbook):
         "CompleteNormally", timeout=60, save=False,
     )
 
-    assert result.success is True, result.to_dict()
+    assert result.success is True, json.dumps(result.to_dict(), indent=2)
     assert result.data.macro == "CompleteNormally"
     assert result.require_clean_shutdown().still_running is False
 
@@ -269,6 +269,7 @@ def test_project_vba_round_trip_uses_clean_sequential_workers(
 
     executed = project.run("CompleteNormally", timeout=90, save=False)
     assert executed.success is True, executed.to_dict()
+    assert executed.diagnostics.cleanup.is_clean, executed.to_dict()
     assert executed.require_clean_shutdown().still_running is False
 
 
