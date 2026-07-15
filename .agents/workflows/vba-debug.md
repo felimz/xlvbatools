@@ -1,42 +1,41 @@
 ---
-description: Troubleshooting workflow for diagnosing runtime errors, hangs, and alert dialogs.
+description: Diagnose VBA failures, timeouts, and dialogs through the v1 result contract.
 ---
 
 # xlvbatools VBA Debug Workflow
 
-Use this workflow to debug VBA runtime errors and hangs.
+1. Run the macro with a bounded deadline:
 
-## Steps
-
-1. **Check dialog events** from the last run:
-   ```bash
-   xlvba run <MacroName> --json
-   ```
-   Look for `dialog_events` in the output.
-
-2. **Classify the error**:
-   - `compile_error`: Syntax or missing reference -- check module and line
-   - `runtime_error`: Logic error -- check Err.Number and Description
-   - `msgbox`: Unguarded MsgBox -- replace with Debug.Print
-   - `file_dialog`: Missing UserControl guard
-
-3. **Search for the issue**:
-   ```bash
-   xlvba search "MsgBox" --source vba_source/
-   xlvba search "ActiveSheet"
+   ```powershell
+   xlvba run <MacroName> --timeout 120 --json
    ```
 
-4. **Fix the code** following the VBA Edit workflow.
+2. Inspect the result envelope:
 
-5. **If stuck, debug visually**:
-   ```bash
-   xlvba debug
+   - `success`, `phase`, and `error`;
+   - `diagnostics.dialog_events`;
+   - `diagnostics.cleanup`;
+   - the `request_id` used to correlate logs.
+
+3. Classify the failure:
+
+   - `compile_error`: fix the reported module, line, and column;
+   - `runtime_error`: inspect the VBA error number and description;
+   - `msgbox` or `file_dialog`: add an `Application.UserControl` guard;
+   - `named_range_setup`: fix the missing or invalid input before retrying;
+   - `timeout`: inspect cleanup and the owned PID; do not terminate unrelated
+     Excel processes.
+
+4. Search and lint before reinjection:
+
+   ```powershell
+   xlvba search "MsgBox" --source vba_source
+   xlvba search "ActiveSheet" --source vba_source
+   xlvba lint --source vba_source --json
    ```
-   This opens Excel and VBE visibly so you can set breakpoints.
 
-## Common Fixes
+5. Inject, diff, and rerun. If headless evidence is insufficient, use
+   `xlvba debug` explicitly; it is the only workflow intended to expose Excel
+   and the VBE interactively.
 
-- **MsgBox in headless mode**: Replace with `Debug.Print` or remove
-- **ActiveSheet reference**: Replace with explicit `ws.Range(...)` reference
-- **Dim after executable code**: Move all `Dim` statements to top of procedure
-- **Missing On Error handler**: Add `On Error GoTo ErrHandler` at procedure start
+Never run image-wide Excel termination during diagnosis.

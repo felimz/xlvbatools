@@ -1,78 +1,114 @@
 ---
 name: xlvba-toolchain
 description: >
-  How to use the xlvbatools CLI and Python API for VBA extraction, injection,
-  linting, diffing, macro execution, snapshot/rollback, workbook inspection,
-  code formatting, and dependency graph analysis.
+  Use xlvbatools v1 through its Project API and CLI for isolated VBA
+  extraction, injection, linting, diffing, macro execution, snapshots,
+  workbook inspection, modification, formatting, and dependency analysis.
 ---
 
-# xlvba-toolchain Skill
+# xlvbatools v1 Toolchain
 
-This skill teaches agents how to use `xlvbatools` for headless VBA development.
+Use this skill for headless Excel/VBA work. Application code must use
+`xlvbatools.Project`; raw COM sessions and worker transport are internal.
 
-## Core Workflow: Edit-Verify Cycle
+## Edit-verify cycle
 
+```text
+1. Snapshot:  xlvba snapshot create --desc "before-change"
+2. Extract:   xlvba extract
+3. Edit:      change files under vba_source/
+4. Lint:      xlvba lint
+5. Inject:    xlvba inject
+6. Diff:      xlvba diff
+7. Run:       xlvba run <MacroName> --json
+8. Pass:      commit workbook/source changes together
+9. Fail:      xlvba snapshot restore latest
 ```
-1. Snapshot:    xlvba snapshot create --desc "before-change"
-2. Extract:    xlvba extract
-3. Edit:       Modify vba_source/modules/<name>.bas
-4. Lint:       xlvba lint
-5. Inject:     xlvba inject
-6. Run:        xlvba run <MacroName> --json
-7. If PASS:    git add vba_source/ && git commit
-8. If FAIL:    xlvba snapshot restore latest
-```
 
-## CLI Quick Reference
+## CLI quick reference
 
 | Command | Purpose |
 |:---|:---|
-| `xlvba extract` | Extract VBA from workbook to vba_source/ |
-| `xlvba inject` | Inject vba_source/ files into workbook |
-| `xlvba diff` | Compare workbook VBA vs vba_source/ |
-| `xlvba lint` | Run static analysis (30+ built-in rules) |
-| `xlvba run <macro>` | Execute macro with dialog protection |
-| `xlvba snapshot` | Checkpoint and rollback (create/list/restore/prune) |
-| `xlvba dump` | Dump sheet data and screenshots |
-| `xlvba modify` | Modify cells, formulas, named ranges |
-| `xlvba debug` | Open Excel + VBE visibly for debugging |
-| `xlvba search <pattern>` | Search VBA source files |
-| `xlvba fmt` | Format VBA code (normalize indentation) |
-| `xlvba graph` | Generate call dependency graph (Mermaid/DOT/JSON) |
-| `xlvba agents` | Show AI agent integration help and best practices |
-
-## Troubleshooting Matrix
-
-| Scenario | Command |
-|:---|:---|
-| Need to see what VBA modules exist | `xlvba extract --list` |
-| Need to find a specific function | `xlvba search "FunctionName"` |
-| Need to check for common VBA issues | `xlvba lint --source vba_source/` |
-| Need to understand call relationships | `xlvba graph --format json` |
-| Need to read a cell value | `xlvba dump --sheets Sheet1 --json` |
-| Need to set a cell value before running | `xlvba modify --cell A1 --value 42` |
-| COM session hangs or crashes | `taskkill /f /im EXCEL.EXE` then retry |
-| Need to rollback after a failed change | `xlvba snapshot restore latest` |
-| Need help on agent integration / templates | `xlvba agents` or `xlvba --agents` |
+| `xlvba extract` | Extract VBA into the configured source tree |
+| `xlvba inject` | Inject configured VBA source into the workbook |
+| `xlvba diff` | Compare live workbook VBA with extracted source |
+| `xlvba lint` | Analyze source, or a live workbook with `--workbook` |
+| `xlvba run <macro> --json` | Run one macro in an isolated worker |
+| `xlvba snapshot` | Create, list, inspect, restore, diff, or prune checkpoints |
+| `xlvba dump` | Inspect sheet data and optionally render screenshots |
+| `xlvba modify` | Change cells, formulas, or named ranges |
+| `xlvba debug` | Open Excel and the VBE for explicit interactive debugging |
+| `xlvba search <pattern>` | Search extracted VBA |
+| `xlvba fmt` | Format extracted VBA |
+| `xlvba graph` | Generate Mermaid, DOT, or JSON call graphs |
+| `xlvba version --json` | Report package, result-schema, and protocol versions |
+| `xlvba agents` | Print agent integration guidance |
 
 ## Python API
 
 ```python
-from xlvbatools.core.session import ExcelSession
-from xlvbatools.analysis.preflight import lint_files
-from xlvbatools.vba.search import search_vba
-from xlvbatools.snapshot.manager import SnapshotManager
+from xlvbatools import Project
+
+project = Project.from_config()
+
+lint_result = project.lint_source()
+issues = lint_result.require_success()
+
+run_result = project.run("OnCalculate", timeout=120, save=False)
+run_result.require_success()
+run_result.require_clean_shutdown()
 ```
 
-## Rules
+For explicit paths:
 
-1. **Always snapshot before risky changes**
-2. **Run lint after every VBA edit** before injecting
-3. **Never use MsgBox in VBA** -- use Debug.Print or logging
-4. **All Dim statements at top** of Sub/Function blocks
-5. **Use explicit types** -- `Dim x As Double`, never `Dim x`
-6. **Guard interactive code** with `If Not Application.UserControl Then`
-7. **Use `session.vb_project`** instead of `session.wb.VBProject` directly to benefit from Trust Center access validation.
-8. **Ignore lock files** -- always filter out Excel's temporary owner lock files starting with `~$` when scanning workbooks.
-9. **Targeted session closure** -- clean up Excel sessions using targeted graceful closure (`ExcelSession` with `kill_on_enter=True` usesROT/Hwnd tracking) to protect unrelated user workbooks.
-10. **Path Log Normalization** -- format all file paths in logs with forward slashes (`/`) for cross-platform consistency.
+```python
+project = Project.open(
+    "workbook/MyModel.xlsm",
+    source="workbook/vba_source",
+)
+```
+
+## Result handling
+
+Every operation returns an `OperationResult`. Check:
+
+- `success`, `phase`, and `error` for the operation outcome;
+- `diagnostics.dialog_events` for captured Excel/VBE dialogs;
+- `diagnostics.cleanup` for the owned Excel lifecycle;
+- `artifacts` for screenshots and other durable outputs;
+- `request_id`, `elapsed_seconds`, and `attempt_count` for tracing.
+
+CLI `--json` output uses the same versioned envelope. Do not parse private
+worker files.
+
+## Troubleshooting
+
+| Scenario | Action |
+|:---|:---|
+| Need module names | `xlvba extract --list --json` |
+| Need a procedure or symbol | `xlvba search "FunctionName"` |
+| Need source-only analysis | `xlvba lint --source vba_source/ --json` |
+| Need live compile/analyzer validation | `xlvba lint --workbook workbook.xlsm --json` |
+| Need call relationships | `xlvba graph --format json` |
+| Need sheet values | `xlvba dump --sheets Sheet1 --data --json` |
+| Need a visible-sheet screenshot | `xlvba dump --sheets Sheet1 --screenshot --json` |
+| Need hidden sheets intentionally | Add `--include-hidden-sheets` |
+| Need to set a value | `xlvba modify --sheet Sheet1 --cell A1 --value 42` |
+| Macro timed out or Excel failed | Inspect cleanup diagnostics; never kill Excel globally |
+| Need rollback | `xlvba snapshot restore latest` |
+
+## Safety rules
+
+1. Snapshot before risky workbook or VBA mutations.
+2. Lint before injection; diff and run the relevant macro after injection.
+3. Never terminate `EXCEL.EXE` by image name. Only xlvbatools may clean up
+   the PID owned by its current operation.
+4. Never use raw COM from application wrappers.
+5. Avoid unguarded `MsgBox`, `FileDialog`, focus-dependent selection, and
+   silent error suppression in headless VBA paths.
+6. Hidden and VeryHidden worksheets are not rendered unless explicitly
+   requested.
+7. Ignore Excel owner-lock files whose names begin with `~$`.
+8. Use the repository `.venv` for development and validation.
+9. Pin released versions or exact full Git revisions in downstream projects.
+10. Use forward slashes when presenting paths in portable logs and JSON.

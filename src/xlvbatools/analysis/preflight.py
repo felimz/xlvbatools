@@ -3,11 +3,8 @@ VBA Preflight Static Analysis
 ===============================
 Top-level API for running static analysis on VBA source files or workbooks.
 
-Usage:
-    from xlvbatools.analysis import lint_files, lint_workbook
-
-    issues = lint_files("vba_source/")
-    issues = lint_workbook("workbook.xlsm")
+This is an internal backend. Public callers use ``Project.lint_source`` or
+``Project.lint_workbook``.
 """
 
 import logging
@@ -16,7 +13,11 @@ import re
 from typing import List
 
 from xlvbatools.analysis.issue import VBAIssue
-from xlvbatools.analysis.rules import run_all_rules
+from xlvbatools.analysis.project_context import (
+    VBAModuleSource,
+    lint_project_modules,
+    module_kind_from_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,20 +66,7 @@ def lint_files(
             f"{source_path}"
         )
 
-    all_issues = []
-
-    # First pass: collect all Public module-level variable names across all files
-    # so UV001 can recognize cross-module scope.
-    global_public_names = set()
-    _public_re = re.compile(r"^(Public|Global)\s+", re.IGNORECASE)
-    _proc_start_re = re.compile(
-        r"^(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+\w+)\s+",
-        re.IGNORECASE,
-    )
-    global_public_names = set()
-    seen_public_procs = {}
-    class_registry = {}
-
+    modules = []
     for root, files in source_groups:
         for fname in files:
             if not fname.lower().endswith(normalized_extensions):
@@ -86,95 +74,16 @@ def lint_files(
             filepath = os.path.join(root, fname)
             rel_path = os.path.relpath(filepath, src_dir)
             file_lines = _code_lines_for_lint(filepath, _read_file_lines(filepath))
-            
-            # Extract public names from header
-            for fline in file_lines:
-                stripped = fline.strip()
-                if _proc_start_re.match(stripped):
-                    break  # Stop at first procedure (module-level scope ends)
-                if _public_re.match(stripped):
-                    # Skip Public Sub/Function/Property/Const declarations
-                    if re.match(r"^(Public\s+)?(Sub|Function|Property|Const)\s+", stripped, re.IGNORECASE):
-                        # But extract Const names
-                        const_m = re.match(r"^Public\s+Const\s+(\w+)", stripped, re.IGNORECASE)
-                        if const_m:
-                            global_public_names.add(const_m.group(1).lower())
-                        continue
-                    # Extract variable names from Public declarations
-                    from xlvbatools.analysis.rules import _parse_vba_declarations
-                    for var_name, _ in _parse_vba_declarations(stripped):
-                        global_public_names.add(var_name.lower())
-
-            # Extract class members if this is a class module
-            if fname.lower().endswith(".cls"):
-                cls_name = os.path.splitext(fname)[0].lower()
-                cls_members = set()
-                for fline in file_lines:
-                    stripped = fline.strip()
-                    if stripped.startswith("'") or stripped.lower().startswith("rem "):
-                        continue
-                    m = re.match(
-                        r"^(Public\s+)?(?:Sub|Function|Property\s+(?:Get|Let|Set))\s+(\w+)",
-                        stripped,
-                        re.IGNORECASE,
-                    )
-                    if m:
-                        cls_members.add(m.group(2).lower())
-                    m_var = re.match(r"^Public\s+(\w+)", stripped, re.IGNORECASE)
-                    if m_var:
-                        cls_members.add(m_var.group(1).lower())
-                class_registry[cls_name] = cls_members
-
-            # Check duplicate public procedures
-            disabled = set(disabled_rules or [])
-            if "DP001" not in disabled:
-                from xlvbatools.analysis.rules import _PROC_START_RE, _extract_proc_name
-                for i, fline in enumerate(file_lines, 1):
-                    stripped = fline.strip()
-                    if _PROC_START_RE.match(stripped):
-                        is_private = False
-                        for prefix in ("private ", "friend "):
-                            if stripped.lower().startswith(prefix):
-                                is_private = True
-                                break
-                        if not is_private:
-                            proc_name = _extract_proc_name(stripped)
-                            proc_key = proc_name.lower()
-                            is_standard_module = (
-                                fname.lower().endswith(".bas") and
-                                "sheets" not in rel_path.lower() and 
-                                not fname.lower().startswith("sheet") and 
-                                not fname.lower().startswith("thisworkbook")
-                            )
-                            if is_standard_module and proc_key:
-                                if proc_key in seen_public_procs:
-                                    prev_path, prev_line = seen_public_procs[proc_key]
-                                    if prev_path != rel_path:
-                                        all_issues.append(VBAIssue(
-                                            rule_id="DP001",
-                                            severity="ERROR",
-                                            module=rel_path,
-                                            line_num=i,
-                                            message=f"Duplicate public procedure '{proc_name}' found in both '{rel_path}' and '{prev_path}' (L{prev_line}). VBA raises a compile error (Ambiguous name detected) for duplicate public names.",
-                                        ))
-                                else:
-                                    seen_public_procs[proc_key] = (rel_path, i)
-
-    # Second pass: run all rules with cross-module context
-    for root, files in source_groups:
-        for fname in files:
-            if not fname.lower().endswith(normalized_extensions):
-                continue
-            filepath = os.path.join(root, fname)
-            rel_path = os.path.relpath(filepath, src_dir)
-
-            lines = _code_lines_for_lint(filepath, _read_file_lines(filepath))
-            issues = run_all_rules(
-                rel_path, lines, disabled_rules,
-                global_names=global_public_names,
-                class_registry=class_registry
+            modules.append(
+                VBAModuleSource.create(
+                    name=os.path.splitext(fname)[0],
+                    rel_path=rel_path,
+                    module_kind=module_kind_from_path(rel_path),
+                    lines=file_lines,
+                )
             )
-            all_issues.extend(issues)
+
+    all_issues, _ = lint_project_modules(modules, disabled_rules)
 
     disabled = set(disabled_rules or [])
     if "DC003" not in disabled and not is_single_file:
@@ -260,8 +169,10 @@ def lint_workbook(
         else ExcelSession(wb_path, visible=False, save_on_exit=False)
     )
     with session_context as session:
-        # Run rules against each component's code
+        # Acquire every component first.  Name resolution is project-scoped, so
+        # rules must not run while the COM collection is still being streamed.
         component_codes = {}
+        modules = []
         for comp in session.vb_project.VBComponents:
             name = comp.Name
             type_info = get_type_info(comp.Type)
@@ -274,13 +185,21 @@ def lint_workbook(
             component_codes[name] = (code, type_info)
             lines = code.split("\r\n") if "\r\n" in code else code.split("\n")
             rel_path = f"{type_info['dir']}/{name}{type_info['ext']}"
-
-            issues = run_all_rules(rel_path, lines, disabled_rules)
-            all_issues.extend(issues)
+            modules.append(
+                VBAModuleSource.create(
+                    name=name,
+                    rel_path=rel_path,
+                    module_kind=type_info["name"],
+                    lines=lines,
+                )
+            )
         if "comp" in locals():
             del comp
         if "cm" in locals():
             del cm
+
+        project_issues, _ = lint_project_modules(modules, disabled_rules)
+        all_issues.extend(project_issues)
 
         # Optional compile test
         if compile_test:

@@ -1,39 +1,45 @@
 ---
 trigger: model_decision
-description: "VBA coding standards, COM automation safety rules, and encoding constraints for Visual Basic for Applications (VBA) code and Excel automation."
+description: "VBA coding, headless execution, COM safety, and encoding rules."
 ---
 
 # VBA Development Rules
 
-## VBA Coding Standards
+## VBA code
 
-1. **All Dim statements at top**: VBA does not support Dim inside For loops or after executable statements.
-2. **Explicit types only**: `Dim x As Double`, never `Dim x` (creates Variant).
-3. **No MsgBox in production code**: Use `Debug.Print` or structured error handling.
-4. **Guard interactive code**: Wrap FileDialog/MsgBox with `If Not Application.UserControl Then`.
-5. **Error handlers required**: Use `On Error GoTo ErrHandler` + `Err.Raise` (never MsgBox).
+1. Put procedure-level `Dim` statements before executable statements.
+2. Use explicit types; avoid implicit `Variant` declarations.
+3. Do not use an unguarded `MsgBox` or `FileDialog` in headless paths.
+4. Guard interactive behavior with `Application.UserControl`.
+5. Use structured error handlers and re-raise failures; do not hide them with
+   unbounded `On Error Resume Next`.
+6. Prefer explicit workbook, worksheet, range, and object references over
+   `ActiveSheet`, `Selection`, or `.Select`.
 
-## COM Automation Rules
+## Automation safety
 
-1. **Clean up only session-owned Excel** through `ExcelSession`; never terminate every `EXCEL.EXE` process.
-2. **Use ExcelSession** from `xlvbatools.core.session` -- never manually call `Dispatch("Excel.Application")`
-3. **Check dialog events** after every macro run
-4. **Use try/finally** to ensure cleanup
+1. Use the `xlvba` CLI or `xlvbatools.Project`; raw COM sessions are private.
+2. Never run `taskkill /im EXCEL.EXE` or otherwise terminate Excel globally.
+3. Inspect `diagnostics.dialog_events` when an operation fails.
+4. Require both operation success and clean owned-process shutdown.
+5. Let the isolated worker enforce deadlines; do not wrap a blocking COM call
+   in a Python thread.
 
-## Development Workflow
+## Edit and verify
 
-After any VBA change:
-1. Run `xlvba lint` to check for issues
-2. Run `xlvba inject` to push changes to workbook
-3. Run `xlvba extract` to keep vba_source/ in sync
-4. Run `xlvba run <macro> --json` to verify
+1. `xlvba snapshot create --desc "before change"`
+2. `xlvba extract`
+3. Edit files under `vba_source/`.
+4. `xlvba lint`
+5. `xlvba inject`
+6. `xlvba diff` and confirm no unintended differences.
+7. `xlvba run <MacroName> --json` and inspect the complete result envelope.
+8. Restore the snapshot if verification fails.
 
-Before risky changes:
-- `xlvba snapshot create --desc "description"`
-- Use `--milestone` for permanent architecture checkpoints
+## Encoding
 
-## Encoding Constraints
-
-- VBE standard/class modules are restricted to the system ANSI code page
-- Avoid Unicode characters (math symbols, Greek letters, box-drawing) in VBA code
-- Use standard ASCII for all code, comments, and strings
+- VBE standard and class modules use the system ANSI code page.
+- Keep VBA source, comments, and string literals representable in that code
+  page; prefer ASCII when portability is required.
+- Let xlvbatools perform UTF-8/source-to-VBE conversion during extraction and
+  injection.

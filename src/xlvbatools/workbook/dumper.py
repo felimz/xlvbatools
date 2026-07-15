@@ -14,7 +14,9 @@ Features:
 - Screenshot export with Pillow-composited headers and gridlines
 
 Usage:
-    from xlvbatools.workbook import dump_sheet_data, export_screenshots
+    from xlvbatools import Project
+
+    result = Project.open("book.xlsm").inspect(["Sheet1"])
 
     export_screenshots("workbook.xlsm", ["Sheet1"], "screenshots/")
     dump_sheet_data("workbook.xlsm", ["Sheet1"], output_json="dump.json")
@@ -836,7 +838,7 @@ def inspect_workbook(
     timeout_seconds: float = 60,
 ) -> dict:
     """Run combined workbook inspection in a timeout-controlled worker."""
-    from xlvbatools.core.worker import run_isolated_operation
+    from xlvbatools.core.worker import execute_worker_request
 
     request = {
         "workbook_path": os.path.abspath(workbook_path), "sheets": sheets,
@@ -847,7 +849,7 @@ def inspect_workbook(
         "continue_on_render_error": continue_on_render_error,
         "include_hidden_sheets": include_hidden_sheets,
     }
-    return run_isolated_operation("inspect", request, timeout=timeout_seconds)
+    return execute_worker_request("inspect", request, timeout=timeout_seconds)
 
 
 # ── Markdown Report Generation (D6) ──

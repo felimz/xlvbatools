@@ -1,62 +1,92 @@
-# Headless Reliability Release Validation
+# Release validation
 
-## Environment
+A release is accepted only after source, wheel, live Excel, process lifecycle,
+and real-workbook checks pass from the repository `.venv`.
 
-- Interpreter: repository `.venv`
-- Python: 3.14.4, 64-bit
-- pywin32: 312
-- pytest: 9.1.1
-- Excel: desktop COM automation on Windows
+## Environment record
 
-All authoritative commands use `.venv\Scripts\python.exe -m pytest` rather than an interpreter inherited from the calling agent or shell.
-
-## Repository validation
-
-The release validation tiers are:
+Before testing, record:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -m unit
-.venv\Scripts\python.exe -m pytest -m integration
-.venv\Scripts\python.exe -m pytest tests/test_watchdog.py -v
-.venv\Scripts\python.exe -m pytest tests/test_session.py -v
-.venv\Scripts\python.exe -m pytest tests/test_integration_samples.py -v
+.venv\Scripts\python.exe --version
+.venv\Scripts\python.exe -m pip show xlvbatools pywin32 pytest
+.venv\Scripts\xlvba.exe version --json
 ```
 
-The `integration` marker includes live Excel sessions, sample-workbook extraction, modal UI handling, worker timeouts, and PID-isolation cases.
+Excel-backed tests require Windows, desktop Excel, and Trust Center access to
+the VBA project object model. Do not substitute an interpreter inherited from
+an agent host.
 
-## WA-OCEAN-AFR disposable-copy matrix
-
-Validation used copies of `workbook/WA-OCEAN-AFR.xlsm` and the configured metric RISA model. The dirty project workbook and tracked VBA source were not modified.
-
-| Case | Result |
-|---|---|
-| Baseline compile | No compile error found; control 578 remained enabled, so `compile_verified` is false with a warning |
-| `OnRetrieve` | Success; no dialogs; owned PID exited gracefully |
-| `OnCalculate` | Success; no dialogs; owned PID exited gracefully |
-| Injected multiline runtime error | Correct `runtime_error`; both lines captured; `&End` clicked; owned PID exited |
-| Injected `Option Explicit` compile error | Failure located at injected module, line, and column without a visible VBE window |
-| Missing named range | Stopped in `named_range_setup`; macro was not invoked |
-| Infinite VBA loop | Parent returned at deadline and terminated only the worker-owned Excel PID |
-| Modal `MsgBox` and file picker | Captured and dismissed headlessly |
-| Unrelated live Excel instance | Remained open during worker timeout cleanup |
-| Extreme CG-position inputs | Calculation completed successfully; this did not produce a deterministic unreachable-target fixture |
-
-The project-specific unreachable-CG error case remains dependent on a known model/input combination that violates the solver's rank or residual acceptance criteria. It should be added when such a fixture is identified; extreme coordinate magnitude alone is not a valid substitute.
-
-## Headless UI verification
-
-Compile tests inspect control 578 but do not execute the VBE command-bar control, because that API can synchronously flash its File menu. Compilation is forced through a temporary unsaved no-op VBA probe, while `VBE.MainWindow.Visible` remains false. Integration coverage asserts that the editor remains hidden for an injected compile failure.
-
-## Process safety
-
-No release-validation path uses image-wide Excel termination. Timeout and exit cleanup use the PID reported by the isolated session. Final validation must end with no session-owned `EXCEL.EXE` process remaining.
-
-COM teardown validation also runs in a subprocess and inspects both stdout and stderr. A zero pytest or process exit code is not sufficient if output contains `Windows fatal exception`, `0x800706ba`, or `0x80010108`. Yield fixtures clear worksheet/range/VBE child proxies and collect them while their owning Excel session is still alive.
-
-The sequential session acceptance check must complete in one interpreter:
+## Validation tiers
 
 ```powershell
+# Broad offline and packaging coverage.
+.venv\Scripts\python.exe -m pytest -m "not com and not e2e"
+
+# Build-isolated wheel installed into a fresh consumer environment.
+.venv\Scripts\python.exe -m pytest tests/test_distribution.py -v
+
+# Public Project API through live Excel.
+.venv\Scripts\python.exe -m pytest tests/test_project.py -m "com or e2e" -v
+
+# Sequential COM lifecycle in one interpreter and a parent subprocess.
 .venv\Scripts\python.exe -m pytest tests/test_session.py -m com -q
+.venv\Scripts\python.exe -m pytest tests/test_sequential_com.py -q
+
+# Complete release gate.
+.venv\Scripts\python.exe -m pytest
 ```
 
-The expected result is five passing tests and process exit code 0. `tests/test_sequential_com.py` enforces the same check from a parent subprocess and rejects native COM finalizer diagnostics even when pytest reports success.
+The wheel test uses normal PEP 517 isolation, installs the wheel without
+editable/source-path leakage into a fresh virtual environment outside the
+repository, and verifies the public API plus package, result-schema, and
+worker-protocol versions.
+
+## Real-workbook acceptance
+
+Run at least one representative downstream workbook through the installed v1
+surface. For WA-OCEAN:
+
+```powershell
+.venv\Scripts\xlvba.exe lint --workbook C:\Users\felim\AntigravityProjects\wa_ocean\workbook\WA-OCEAN-AFR.xlsm --json --timeout 240
+```
+
+Acceptance requires:
+
+- process exit code 0;
+- no ERROR-severity lint finding;
+- no false UV001 finding for cross-module public symbols such as `FileCount`;
+- no CT001 compile finding;
+- cleanup reports graceful exit without forced worker termination;
+- no session-owned Excel or worker remains.
+
+Use disposable copies for injection, deliberate compile/runtime failures,
+infinite-loop timeouts, modal dialog fixtures, and destructive macro tests.
+
+## UI and dialog checks
+
+Compile probing must leave the VBE hidden and must not invoke command-bar
+control 578, which can flash the VBE File menu. Modal tests must confirm
+multiline error capture, bounded dismissal, and PID scope. A separate unrelated
+Excel instance must remain open during a worker timeout test.
+
+## Native teardown checks
+
+A zero pytest exit code is insufficient when stdout or stderr contains native
+finalizer evidence such as `Windows fatal exception`, `0x800706ba`, or
+`0x80010108`. Sequential tests must inspect both streams and confirm child
+COM proxies are released while Excel remains alive.
+
+## v1.0.0 validation record
+
+The integrated v1 refactor completed with:
+
+- 237 passing tests in the complete suite;
+- four passing live `Project` API tests;
+- a build-isolated wheel imported from a clean consumer environment;
+- WA-OCEAN live lint with zero errors, zero `FileCount` false positives, and
+  zero compile findings;
+- zero residual Excel and worker processes.
+
+Re-run these gates for the release commit; do not treat this historical record
+as evidence for a later checkout.

@@ -7,7 +7,7 @@ import os
 import glob
 import pytest
 from xlvbatools.vba.extractor import extract_all
-from xlvbatools.analysis.preflight import run_all_rules
+from xlvbatools.analysis.rules import run_all_rules
 from xlvbatools.vba.dependency import build_call_graph
 
 # Find all xlsm/xlsb/xls files in sample_workbooks/ directory

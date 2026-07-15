@@ -9,6 +9,10 @@ from importlib import metadata
 from pathlib import Path
 from typing import Optional
 
+from xlvbatools._version import __version__ as source_version
+from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION
+from xlvbatools.results import RESULT_SCHEMA_VERSION
+
 
 @dataclass(frozen=True)
 class VersionInfo:
@@ -20,6 +24,8 @@ class VersionInfo:
     source_url: Optional[str] = None
     commit_id: Optional[str] = None
     requested_revision: Optional[str] = None
+    result_schema_version: str = RESULT_SCHEMA_VERSION
+    worker_protocol_version: str = WORKER_PROTOCOL_VERSION
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -33,7 +39,7 @@ def get_version_info() -> VersionInfo:
         version = distribution.version
         direct_url_text = distribution.read_text("direct_url.json")
     except metadata.PackageNotFoundError:
-        version = "0.1.0"
+        version = source_version
         direct_url_text = None
 
     source_url = None

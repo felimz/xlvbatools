@@ -1,16 +1,17 @@
-"""Typed, versioned result contracts for public xlvbatools operations."""
+"""Typed, versioned result contracts for the xlvbatools public API."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any, Generic, Mapping, Optional, TypeVar
+from typing import Any, Callable, Generic, Mapping, Optional, TypeVar
 
 from xlvbatools.errors import HeadlessCleanupError, OperationFailedError
 
 
-SCHEMA_VERSION = "1.0"
+RESULT_SCHEMA_VERSION = "1.0"
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 def _plain(value: Any) -> Any:
@@ -108,7 +109,7 @@ class Diagnostics:
     excel_pid: Optional[int] = None
 
     @classmethod
-    def from_legacy(cls, value: Mapping[str, Any]) -> "Diagnostics":
+    def _from_worker(cls, value: Mapping[str, Any]) -> "Diagnostics":
         cleanup_value = value.get("cleanup") or None
         cleanup = (
             CleanupReport.from_mapping(cleanup_value)
@@ -144,18 +145,21 @@ class OperationResult(Generic[T]):
     artifacts: tuple[Artifact, ...] = ()
     diagnostics: Diagnostics = field(default_factory=Diagnostics)
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    schema_version: str = SCHEMA_VERSION
+    request_id: Optional[str] = None
+    elapsed_seconds: Optional[float] = None
+    attempt_count: int = 1
+    schema_version: str = RESULT_SCHEMA_VERSION
 
     @classmethod
-    def from_legacy(
+    def _from_worker(
         cls,
-        operation: str,
         value: Mapping[str, Any],
         *,
         data: Optional[T] = None,
         artifacts: tuple[Artifact, ...] = (),
         metadata: Optional[Mapping[str, Any]] = None,
     ) -> "OperationResult[T]":
+        operation = str(value.get("operation") or "unknown")
         success = bool(value.get("success"))
         error = None
         if not success:
@@ -177,8 +181,11 @@ class OperationResult(Generic[T]):
             error=error,
             warnings=tuple(value.get("warnings") or ()),
             artifacts=artifacts,
-            diagnostics=Diagnostics.from_legacy(value),
+            diagnostics=Diagnostics._from_worker(value),
             metadata=dict(metadata or {}),
+            request_id=value.get("request_id"),
+            elapsed_seconds=value.get("elapsed_seconds"),
+            attempt_count=int(value.get("attempt_count") or 1),
         )
 
     @classmethod
@@ -216,6 +223,14 @@ class OperationResult(Generic[T]):
                 f"Owned Excel PID {cleanup.pid!r} did not exit cleanly",
             )
         return cleanup
+
+    def map_data(
+        self, transform: Callable[[T], U],
+    ) -> "OperationResult[U]":
+        """Transform available operation data while preserving its envelope."""
+        if self.data is None:
+            return self  # type: ignore[return-value]
+        return replace(self, data=transform(self.data))
 
     def to_dict(self) -> dict[str, Any]:
         """Return the versioned JSON-compatible public representation."""

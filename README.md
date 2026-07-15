@@ -1,181 +1,127 @@
 # xlvbatools
 
-> General-purpose Python toolkit for headless Excel VBA automation, debugging, and version control.
+Reliable, isolated Excel/VBA automation for Python projects.
 
-## Features
+xlvbatools gives downstream applications one small API for workbook
+inspection, macro execution, VBA source synchronization, linting, and targeted
+modification. Every Excel-backed call runs in a separately tracked process;
+raw COM objects never cross into the caller.
 
-- **Excel COM Session Management** -- Safe context manager with automatic process cleanup and dialog protection
-- **Dialog Watchdog** -- Background thread that captures and auto-dismisses modal dialogs during headless automation
-- **VBA Source Control** -- Extract, inject, and diff VBA code between workbooks and git-tracked source files
-- **Static Analysis** -- 30-rule VBA linter catching Dim hoisting, block declarations, unused/dead code, reserved keyword variable names, invalid class/typed object members, executable code outside procedures, hardcoded secrets, absolute paths, Hungarian suffixes, fragile Select/Selection, and silent error suppression
-- **VBA Code Formatter** -- Non-destructive indentation normalizer with dry-run and directory-wide support
-- **Call Dependency Graph** -- Parses Sub/Function definitions and call sites, outputs Mermaid/DOT/JSON
-- **Workbook Inspection** -- Screenshot worksheets, dump cell values/formulas, inspect named ranges and shapes
+## Install
 
-Every COM-backed facade and CLI operation runs through the same isolated,
-timeout-controlled worker protocol. Inspection, macro execution, VBA
-extract/inject/diff, workbook lint, and workbook modification all report the
-worker PID, owned Excel PID, execution phase, and cleanup result without
-exposing COM objects to a wrapper process. Inspection opens files read-only
-with macros/events disabled and renders the original range directly without
-copying worksheet VBA. Only visible worksheet tabs are rendered by default;
-hidden and VeryHidden worksheets require `--include-hidden-sheets`.
-- **Workbook Modification** -- Programmatically set cell values, formulas, and named ranges
-- **Macro Execution** -- Run VBA macros with full dialog protection and structured result reporting
-- **Snapshot System** -- Timestamped checkpoint/rollback for workbook and VBA source state
-- **VBA Source Search** -- Full-text search across extracted .bas/.cls files (no COM needed)
-- **Configuration** -- Per-project `xlvbatools.toml` for workbook paths, snapshot limits, and lint rules
-- **Agent Integration** -- Ready-made `.agents/` templates for AI coding assistants
-
-## Quick Start
-
-```bash
-pip install xlvbatools
-
-# Or install with all features (includes Pillow for screenshots & oletools for advanced rules)
-pip install "xlvbatools[all]"
+```powershell
+python -m pip install xlvbatools
 ```
 
-### As a Python Library
+Python 3.10 or newer is supported. Excel-backed operations require Microsoft
+Excel on Windows. Source linting and source-code utilities do not require
+Excel.
 
-Project-specific wrappers should use the config-bound facade. It resolves all
-paths relative to `xlvbatools.toml` and returns the same versioned result
-envelope for every operation:
+## Python API
+
+Use a repository configuration:
 
 ```python
-from xlvbatools import XlvbaProject
+from xlvbatools import Project
 
-project = XlvbaProject.from_config()
-result = project.inspect(
-    sheets=["Input"],
+project = Project.from_config()
+
+inspection = project.inspect(
+    ["Input"],
     cell_range="B91:K99",
     include_data=True,
     include_screenshots=True,
     timeout=60,
 )
+inspection.require_success()
+inspection.require_clean_shutdown()
 
-inspection = result.require_success()
-result.require_clean_shutdown()
-print(inspection.screenshots)
+macro = project.run("OnCalculate", timeout=120, save=False)
+macro.require_success()
+macro.require_clean_shutdown()
 ```
 
-The facade supports `inspect`, `run_macro`, `lint`, `extract`, `inject`,
-`diff`, `modify`, and a bound `snapshot_manager`. Its COM-backed operations use
-the shared worker automatically. Existing function APIs remain available as
-advanced, caller-managed compatibility APIs.
-
-`OperationResult.to_dict()` produces a JSON-compatible contract with
-`schema_version`, `operation`, `phase`, `data`, `error`, `artifacts`, and
-headless diagnostics. `require_success()` and `require_clean_shutdown()` turn
-failed contracts into stable public exceptions when exception-style control
-flow is preferred.
-
-For advanced, caller-managed COM work, use the low-level session directly:
+Or construct a project directly:
 
 ```python
-from xlvbatools.core.session import ExcelSession
-
-with ExcelSession("path/to/workbook.xlsm") as session:
-    result = session.run_macro("MyMacro")
-    if not result["success"]:
-        print(result["error"])
-        for event in result["dialog_events"]:
-            print(f"  [{event['type']}] {event['text']}")
+project = Project.open(
+    "workbook/MyModel.xlsm",
+    source="workbook/vba_source",
+)
 ```
 
-For a parent-enforced timeout that can stop an infinite VBA loop, use the isolated runner:
+The public workflow methods are:
 
-```python
-from xlvbatools.macro import run_macro
+- `inspect`
+- `run`
+- `list_components`
+- `extract`
+- `inject`
+- `diff`
+- `lint_source`
+- `lint_workbook`
+- `modify`
+- `snapshots`
 
-result = run_macro("path/to/workbook.xlsm", "MyMacro", timeout=120)
+Every operation returns `OperationResult`. It contains typed data, a structured
+error, produced artifacts, request timing, dialog diagnostics, the exact worker
+and Excel PIDs, and a cleanup report. `to_dict()` is the versioned JSON form.
+
+Only names in `xlvbatools.__all__` are public. The implementation subpackages
+are private worker backends and should not be used by application wrappers.
+
+## CLI
+
+```powershell
+xlvba init
+xlvba extract
+xlvba inject
+xlvba diff
+xlvba lint
+xlvba run OnCalculate --timeout 120
+xlvba dump --sheets Input --screenshot --range B91:K99
+xlvba modify --sheet Input --cell C33 --value 42
+xlvba snapshot create --desc "before change"
+xlvba search "FileCount"
+xlvba fmt --dry-run
+xlvba graph --format mermaid
+xlvba version --json
 ```
 
-### As a CLI
+All Excel-backed CLI commands use the same `Project` and executor as the Python
+API. With `--json`, commands emit the complete `OperationResult` envelope.
 
-```bash
-xlvba init                          # Initialize project
-xlvba extract                       # Extract VBA to disk
-xlvba inject                        # Inject VBA from disk
-xlvba diff                          # Compare workbook vs. disk
-xlvba lint                          # Static analysis
-xlvba run MyMacro --timeout 120     # Execute with an enforced timeout
-xlvba snapshot create               # Create checkpoint
-xlvba snapshot restore latest       # Rollback
-xlvba dump --sheets Sheet1 --json   # Inspect worksheets
-xlvba modify --cell A1 --value 42   # Modify cells
-xlvba search "MsgBox"               # Search VBA source
-xlvba fmt                           # Format VBA code
-xlvba graph                         # Call dependency graph
-xlvba debug                         # Open Excel + VBE visibly
-xlvba version --json                # Exact package and Git provenance
-```
+Hidden and VeryHidden worksheets are excluded from inspection by default. Use
+`--include-hidden-sheets` only when hidden sheets are intentionally required.
 
-## Project Structure
+## Architecture
 
 ```text
-xlvbatools/
-├── src/xlvbatools/              # Python library
-│   ├── cli/                     # CLI entry point (xlvba command)
-│   │   ├── main.py              # 13 subcommands
-│   │   └── init_cmd.py          # Project initialization
-│   ├── core/                    # Excel COM automation
-│   │   ├── session.py           # ExcelSession context manager
-│   │   ├── worker.py            # Shared parent-side worker executor
-│   │   ├── worker_entry.py      # Single spawn-clean worker entry point
-│   │   ├── watchdog.py          # DialogWatchdog background thread
-│   │   └── process.py           # Excel process management
-│   ├── vba/                     # VBA source operations
-│   │   ├── extractor.py         # Extract VBA from workbook
-│   │   ├── injector.py          # Inject VBA into workbook
-│   │   ├── differ.py            # Diff workbook vs source
-│   │   ├── search.py            # Full-text search
-│   │   ├── formatter.py         # Code formatting
-│   │   ├── dependency.py        # Call graph analysis
-│   │   └── manifest.py          # Component manifest tracking
-│   ├── analysis/                # Static analysis
-│   │   ├── rules.py             # 30 configurable lint rules
-│   │   ├── preflight.py         # Top-level lint API
-│   │   └── issue.py             # VBAIssue dataclass
-│   ├── macro/                   # Macro execution
-│   │   └── runner.py            # run_macro() with dialog protection
-│   ├── workbook/                # Workbook inspection
-│   │   ├── dumper.py            # Screenshots, JSON/MD dumps
-│   │   ├── modifier.py          # Cell/formula/named range CRUD
-│   │   └── debugger.py          # Interactive debug launcher
-│   ├── snapshot/                # Checkpoint/rollback
-│   │   └── manager.py           # SnapshotManager
-│   ├── config/                  # Configuration
-│   │   ├── loader.py            # TOML config loader
-│   │   └── schema.py            # XlvbaConfig dataclass
-│   ├── logging.py               # Centralized rotating logs
-│   └── _compat.py               # Platform compatibility
-├── templates/                   # Agent integration templates
-│   └── agents/                  # .agents/ directory template
-│       ├── AGENTS.md            # VBA development rules
-│       ├── skills/              # xlvba-toolchain skill
-│       └── workflows/           # vba-edit, vba-debug workflows
-├── tests/                       # 118 unit & integration tests
-│   ├── test_preflight.py        # Lint rules (37 tests)
-│   ├── test_search.py           # VBA search (9 tests)
-│   ├── test_snapshot.py         # Snapshot + manifest (12 tests)
-│   ├── test_config.py           # Config loading (8 tests)
-│   ├── test_formatter.py        # Code formatting (9 tests)
-│   ├── test_dependency.py       # Call graph (5 tests)
-│   └── ...                      # Core tests (38 tests)
-├── docs/                        # Documentation
-│   └── agent-integration.md     # Agent usage guide
-├── pyproject.toml               # Package config
-└── xlvbatools.toml              # Per-project config (user creates)
+Python wrapper ─┐
+                ├─> Project ─> OperationRequest ─> IsolatedExecutor
+CLI command ────┘                                      │
+                                                       v
+                                              one owned worker
+                                                       │
+                                                       v
+                                              one owned Excel PID
+                                                       │
+                                                       v
+                                                OperationResult
 ```
+
+The parent tracks only the worker it created and the Excel PID reported by that
+worker. Timeouts and cleanup never terminate Excel by image name and never
+select an unrelated desktop instance.
+
+Static linting uses one whole-project symbol index for both extracted files and
+live workbooks, so cross-module public declarations resolve consistently.
 
 ## Configuration
 
-Create `xlvbatools.toml` in your project root:
-
 ```toml
 [xlvbatools]
-workbook = "workbook/MyProject.xlsm"
+workbook = "workbook/MyModel.xlsm"
 vba_source = "workbook/vba_source"
 snapshots_dir = "snapshots"
 log_dir = "logs"
@@ -187,64 +133,39 @@ rolling_limit = 10
 limit = 5
 
 [xlvbatools.lint]
-disabled_rules = ["PF001", "PF003"]
+disabled_rules = []
 ```
 
-## Lint Rules
+Paths are resolved relative to `xlvbatools.toml`, not the caller's current
+directory.
 
-| Rule | Severity | Description |
-|:---|:---|:---|
-| DS001 | ERROR | Dim after executable code (VBA requires all Dim at top) |
-| LC001 | WARNING | Orphaned line continuation (no space before _) |
-| SB001 | ERROR | Unbalanced Sub/Function...End blocks |
-| PF001 | WARNING | MsgBox call (hangs in headless mode) |
-| PF002 | WARNING | Implicit Variant (Dim without As clause) |
-| PF003 | WARNING | ActiveSheet/ActiveCell usage (fragile) |
-| OE001 | WARNING | Option Explicit missing |
-| BK001 | WARNING | Block-level variable declaration (hoisting risk) |
-| SD002 | STYLE | Multiple variable declarations on one line |
-| PF004 | STYLE | Avoid Integer data type (prefer Long) |
-| SD005 | STYLE | Missing parameter modifier (explicit ByVal/ByRef required) |
-| SD006 | STYLE | Missing access modifier (Sub/Function should declare Public/Private) |
-| SD010 | STYLE | Line exceeds maximum length limit (120 characters) |
-| SD014 | STYLE | Obsolete 'Call' keyword used for procedure call |
-| SC001 | WARNING | Hardcoded password or secret string |
-| SC002 | WARNING | Absolute file path literal detected |
-| CL001 | STYLE | Hungarian type suffix used (%, &, $, etc.) |
-| CL002 | STYLE | Selection or ActiveWindow dependency pattern |
-| SF001 | WARNING | Silent error suppression (On Error Resume Next with no check) |
-| DC001 | WARNING | Unused local variable |
-| DC002 | WARNING | Empty procedure declaration |
-| DC003 | WARNING | Dead procedure (0 incoming calls, graph-level analysis) |
-| SD015 | STYLE | Multiple consecutive blank lines |
-| SD016 | STYLE | Double-spaced code blocks (alternating blank lines) |
-| RK001 | WARNING | Variable/parameter name is a VBA reserved keyword |
-| IP001 | ERROR | Executable code found outside procedure block |
-| DP001 | ERROR | Duplicate public procedure declared across modules |
-| SM001 | WARNING | Invalid property/method referenced on class or typed object |
-| CT001 | ERROR | VBE compile test failed (synthetic, COM-only) |
+## Versioning
 
-## Agent Integration
+Version 1.0.0 establishes the intentional public API. See
+[Versioning and releases](docs/versioning.md) and [CHANGELOG.md](CHANGELOG.md).
 
-For AI coding assistants, install the `.agents/` template:
+## Development
 
-```bash
-xlvba init --agents
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m pytest -m unit
+.venv\Scripts\python.exe -m pytest
 ```
 
-This installs:
-- `.agents/AGENTS.md` -- VBA development rules
-- `.agents/skills/xlvba-toolchain/SKILL.md` -- CLI quick reference
-- `.agents/workflows/vba-edit.md` -- Edit-verify cycle
-- `.agents/workflows/vba-debug.md` -- Error diagnosis
+See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[release validation](docs/release-validation.md).
 
-See [docs/agent-integration.md](docs/agent-integration.md) for the complete guide.
+Documentation:
 
-## Requirements
-
-- **Python 3.10+**
-- **Windows** (COM automation requires Excel installed)
-- VBA source operations (lint, diff, search, format, graph) work on **any platform**
+- [Python API](docs/api-reference.md)
+- [Agent integration](docs/agent-integration.md)
+- [Inspection and modification](docs/dumper-and-modifier.md)
+- [Linting and formatting](docs/lint-and-format.md)
+- [Headless reliability contract](docs/headless-reliability-migration.md)
+- [Internal worker protocol](docs/worker-protocol.md)
+- [Dialog watchdog architecture](docs/watchdog-architecture.md)
+- [Versioning and releases](docs/versioning.md)
 
 ## License
 

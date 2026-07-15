@@ -1,48 +1,54 @@
-"""General-purpose toolkit for reliable, headless Excel VBA automation."""
+"""Reliable, isolated Excel/VBA automation for Python projects."""
 
-from importlib import import_module
-
-from xlvbatools.version import get_version_info
-
-
-__version__ = get_version_info().version
-
-_LAZY_IMPORTS = {
-    "Artifact": ("xlvbatools.results", "Artifact"),
-    "CleanupReport": ("xlvbatools.results", "CleanupReport"),
-    "ConfigurationError": ("xlvbatools.errors", "ConfigurationError"),
-    "Diagnostics": ("xlvbatools.results", "Diagnostics"),
-    "DialogEvent": ("xlvbatools.core.watchdog", "DialogEvent"),
-    "DialogWatchdog": ("xlvbatools.core.watchdog", "DialogWatchdog"),
-    "ErrorInfo": ("xlvbatools.results", "ErrorInfo"),
-    "ExcelSession": ("xlvbatools.core.session", "ExcelSession"),
-    "HeadlessCleanupError": ("xlvbatools.errors", "HeadlessCleanupError"),
-    "InspectionOutput": ("xlvbatools.results", "InspectionOutput"),
-    "OperationFailedError": ("xlvbatools.errors", "OperationFailedError"),
-    "OperationResult": ("xlvbatools.results", "OperationResult"),
-    "SnapshotManager": ("xlvbatools.snapshot.manager", "SnapshotManager"),
-    "TrustCenterError": ("xlvbatools.errors", "TrustCenterError"),
-    "VersionInfo": ("xlvbatools.version", "VersionInfo"),
-    "XlvbaConfig": ("xlvbatools.config.schema", "XlvbaConfig"),
-    "XlvbaError": ("xlvbatools.errors", "XlvbaError"),
-    "XlvbaProject": ("xlvbatools.project", "XlvbaProject"),
-    "inspect_workbook": ("xlvbatools.workbook.dumper", "inspect_workbook"),
-    "lint_files": ("xlvbatools.analysis.preflight", "lint_files"),
-    "lint_workbook": ("xlvbatools.analysis.preflight", "lint_workbook"),
-    "load_config": ("xlvbatools.config.loader", "load_config"),
-    "run_macro": ("xlvbatools.macro.runner", "run_macro"),
-}
+from xlvbatools._version import __version__
+from xlvbatools.analysis.issue import VBAIssue
+from xlvbatools.errors import (
+    ConfigurationError,
+    HeadlessCleanupError,
+    OperationFailedError,
+    TrustCenterError,
+    XlvbaError,
+)
+from xlvbatools.execution import (
+    Executor,
+    IsolatedExecutor,
+    Operation,
+    OperationRequest,
+)
+from xlvbatools.project import Project, ProjectSettings
+from xlvbatools.results import (
+    Artifact,
+    CleanupReport,
+    Diagnostics,
+    ErrorInfo,
+    InspectionOutput,
+    OperationResult,
+    RESULT_SCHEMA_VERSION,
+)
+from xlvbatools.version import VersionInfo, get_version_info
 
 
-def __getattr__(name):
-    """Lazy-load public APIs so importing xlvbatools never initializes COM."""
-    target = _LAZY_IMPORTS.get(name)
-    if target is None:
-        raise AttributeError(f"module 'xlvbatools' has no attribute {name!r}")
-    module_name, attribute = target
-    value = getattr(import_module(module_name), attribute)
-    globals()[name] = value
-    return value
-
-
-__all__ = sorted([*_LAZY_IMPORTS, "__version__", "get_version_info"])
+__all__ = [
+    "Artifact",
+    "CleanupReport",
+    "ConfigurationError",
+    "Diagnostics",
+    "ErrorInfo",
+    "Executor",
+    "HeadlessCleanupError",
+    "InspectionOutput",
+    "IsolatedExecutor",
+    "Operation",
+    "OperationFailedError",
+    "OperationRequest",
+    "OperationResult",
+    "Project",
+    "ProjectSettings",
+    "RESULT_SCHEMA_VERSION",
+    "TrustCenterError",
+    "VBAIssue",
+    "VersionInfo",
+    "XlvbaError",
+    "__version__",
+    "get_version_info",
+]

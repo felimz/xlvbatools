@@ -255,15 +255,15 @@ def _populate_compile_location(vbe, wb, result: dict) -> None:
 
 def _populate_static_compile_location(wb, result: dict) -> None:
     """Fallback to UV001 analysis when hidden VBE exposes no selection."""
-    from xlvbatools.analysis.rules import _parse_vba_declarations, run_all_rules
+    from xlvbatools.analysis.project_context import (
+        VBAModuleSource,
+        build_project_index,
+    )
+    from xlvbatools.analysis.rules import run_all_rules
+    from xlvbatools.vba.manifest import get_type_info
 
     modules = []
-    global_names = set()
-    public_re = re.compile(r"^(Public|Global)\s+", re.IGNORECASE)
-    proc_re = re.compile(
-        r"^(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+\w+)\s+",
-        re.IGNORECASE,
-    )
+    sources = []
     for component in wb.VBProject.VBComponents:
         try:
             module = component.CodeModule
@@ -271,21 +271,36 @@ def _populate_static_compile_location(wb, result: dict) -> None:
             code = module.Lines(1, count) if count else ""
             lines = code.splitlines(keepends=True)
             modules.append((component.Name, module, count, lines))
-            for line in lines:
-                stripped = line.strip()
-                if proc_re.match(stripped):
-                    break
-                if public_re.match(stripped):
-                    for variable, _ in _parse_vba_declarations(stripped):
-                        global_names.add(variable.lower())
+            type_info = get_type_info(component.Type)
+            sources.append(
+                VBAModuleSource.create(
+                    name=component.Name,
+                    rel_path=f"{type_info['dir']}/{component.Name}{type_info['ext']}",
+                    module_kind=type_info["name"],
+                    lines=lines,
+                )
+            )
         except Exception:
             continue
 
+    project_index = build_project_index(sources)
     for component_name, module, count, lines in modules:
         try:
             if not count:
                 continue
-            issues = run_all_rules(component_name, lines, global_names=global_names)
+            source = next(
+                (
+                    item for item in sources
+                    if item.name.casefold() == component_name.casefold()
+                ),
+                None,
+            )
+            rel_path = source.rel_path if source is not None else component_name
+            issues = run_all_rules(
+                rel_path,
+                lines,
+                project_index=project_index,
+            )
             issue = next(
                 (item for item in issues if item.rule_id == "UV001" and item.severity == "ERROR"),
                 None,

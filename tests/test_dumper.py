@@ -20,7 +20,7 @@ def test_shared_worker_inspection_result_is_returned(monkeypatch, tmp_path):
         calls.append((operation, arguments, timeout))
         return expected
 
-    monkeypatch.setattr(worker, "run_isolated_operation", fake_run)
+    monkeypatch.setattr(worker, "execute_worker_request", fake_run)
     result = dumper.inspect_workbook("book.xlsm", ["Input"], output_dir=str(tmp_path))
 
     assert result == expected
@@ -228,10 +228,12 @@ def test_combined_range_data_and_screenshot_share_one_clean_session(
     assert result["phase"] == "complete"
     assert result["cleanup"]["pid"] is not None
     assert result["cleanup"]["still_running"] is False
-    assert result["data"]["sheets"]["Sheet1"]["bounds"]["address"] == "$A$1:$B$2"
-    assert set(result["data"]["sheets"]["Sheet1"]["cells"]) == {
+    workbook_data = result["data"]["workbook_data"]
+    assert workbook_data["sheets"]["Sheet1"]["bounds"]["address"] == "$A$1:$B$2"
+    assert set(workbook_data["sheets"]["Sheet1"]["cells"]) == {
         "A1", "B1", "A2", "B2",
     }
-    screenshot = result["screenshots"]["Sheet1"]
+    assert "screenshots" not in result
+    screenshot = result["data"]["screenshots"]["Sheet1"]
     assert os.path.isfile(screenshot), result
     assert output_json.is_file()

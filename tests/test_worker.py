@@ -2,15 +2,45 @@
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
+
+
+@pytest.mark.unit
+def test_macro_worker_payload_keeps_operation_data_inside_envelope(monkeypatch):
+    from xlvbatools.core.worker_entry import _dispatch
+    from xlvbatools.macro import runner
+
+    monkeypatch.setattr(
+        runner,
+        "_run_macro_once",
+        lambda **kwargs: {
+            "success": True,
+            "phase": "complete",
+            "run_id": "run-123",
+            "return_value": 42,
+            "dialog_events": [],
+            "cleanup": {"still_running": False},
+        },
+    )
+    reporter = SimpleNamespace(
+        phase=lambda value: None,
+        excel_started=lambda pid: None,
+    )
+
+    result = _dispatch("run_macro", {}, reporter)
+
+    assert result["data"] == {"run_id": "run-123", "return_value": 42}
+    assert "run_id" not in result
+    assert "return_value" not in result
 
 
 @pytest.mark.integration
 def test_file_protocol_runs_offline_dry_run_in_separate_interpreter(tmp_path):
     from xlvbatools.core.worker import (
         WORKER_PROTOCOL_VERSION,
-        run_isolated_operation,
+        execute_worker_request,
     )
 
     source = tmp_path / "vba_source"
@@ -29,7 +59,7 @@ def test_file_protocol_runs_offline_dry_run_in_separate_interpreter(tmp_path):
         encoding="utf-8",
     )
 
-    result = run_isolated_operation(
+    result = execute_worker_request(
         "inject",
         {
             "workbook_path": str(tmp_path / "not-opened.xlsm"),
@@ -54,9 +84,9 @@ def test_file_protocol_runs_offline_dry_run_in_separate_interpreter(tmp_path):
 
 @pytest.mark.integration
 def test_worker_setup_failure_is_structured(tmp_path):
-    from xlvbatools.core.worker import run_isolated_operation
+    from xlvbatools.core.worker import execute_worker_request
 
-    result = run_isolated_operation(
+    result = execute_worker_request(
         "extract", {"workbook_path": str(tmp_path / "missing.xlsm")},
         timeout=15,
     )
@@ -87,8 +117,8 @@ def test_opt_in_transient_retry_starts_one_fresh_worker(monkeypatch):
         calls.append((operation, arguments, timeout))
         return next(results)
 
-    monkeypatch.setattr(worker, "_run_isolated_operation_once", fake_once)
-    result = worker.run_isolated_operation(
+    monkeypatch.setattr(worker, "_execute_worker_request_once", fake_once)
+    result = worker.execute_worker_request(
         "modify", {"workbook_path": "book.xlsm"}, timeout=9,
         retry_transient=True,
     )
@@ -100,7 +130,6 @@ def test_opt_in_transient_retry_starts_one_fresh_worker(monkeypatch):
 
 @pytest.mark.unit
 def test_worker_mode_injection_raises_before_partial_save(tmp_path, monkeypatch):
-    from types import SimpleNamespace
     from xlvbatools.vba import injector
 
     source = tmp_path / "vba_source"

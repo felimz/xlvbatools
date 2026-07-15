@@ -12,11 +12,13 @@ from types import SimpleNamespace
 
 @pytest.mark.unit
 class TestSessionImport:
-    """Test that ExcelSession can be imported (even on non-Windows, via lazy import)."""
+    """ExcelSession is an internal implementation detail, not public API."""
 
-    def test_import_from_package(self):
-        from xlvbatools import ExcelSession
-        assert ExcelSession is not None
+    def test_session_is_not_exported_from_package(self):
+        import xlvbatools
+
+        assert "ExcelSession" not in xlvbatools.__all__
+        assert not hasattr(xlvbatools, "ExcelSession")
 
     def test_import_from_module(self):
         from xlvbatools.core.session import ExcelSession

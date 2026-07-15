@@ -8,8 +8,8 @@ The session integrates the DialogWatchdog to automatically capture and dismiss
 any pop-up dialogs (compile errors, MsgBox calls, runtime errors, file dialogs)
 that would otherwise hang COM calls indefinitely.
 
-Usage:
-    from xlvbatools import ExcelSession
+Internal worker usage:
+    from xlvbatools.core.session import ExcelSession
 
     with ExcelSession("path/to/workbook.xlsm") as session:
         # Access Excel application and workbook

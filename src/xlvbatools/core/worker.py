@@ -17,9 +17,7 @@ import uuid
 from typing import Any, Mapping
 
 from xlvbatools.core.process import is_process_running, kill_process_by_pid
-
-
-WORKER_PROTOCOL_VERSION = "1.0"
+from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION
 
 
 def _worker_python() -> tuple[str, dict[str, str] | None]:
@@ -106,7 +104,7 @@ def _is_transient_com_failure(result: Mapping[str, Any]) -> bool:
     ))
 
 
-def run_isolated_operation(
+def execute_worker_request(
     operation: str,
     arguments: Mapping[str, Any],
     *,
@@ -122,7 +120,7 @@ def run_isolated_operation(
     attempts = 2 if retry_transient else 1
     result: dict[str, Any] | None = None
     for attempt in range(1, attempts + 1):
-        result = _run_isolated_operation_once(
+        result = _execute_worker_request_once(
             operation, arguments, timeout=timeout,
         )
         result["attempt_count"] = attempt
@@ -132,7 +130,7 @@ def run_isolated_operation(
     return result
 
 
-def _run_isolated_operation_once(
+def _execute_worker_request_once(
     operation: str,
     arguments: Mapping[str, Any],
     *,

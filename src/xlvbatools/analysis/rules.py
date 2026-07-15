@@ -37,9 +37,12 @@ Built-in rules:
 
 import re
 import logging
-from typing import List, Callable
+from typing import TYPE_CHECKING, List, Callable
 
 from xlvbatools.analysis.issue import VBAIssue
+
+if TYPE_CHECKING:
+    from xlvbatools.analysis.project_context import VBAProjectIndex
 
 logger = logging.getLogger(__name__)
 
@@ -1084,12 +1087,16 @@ def _is_entry_point(proc_name: str) -> bool:
     return proc_name.lower() in _ENTRY_POINT_NAMES
 
 
-def check_undeclared_variables(rel_path: str, lines: List[str], global_names: set[str] | None = None) -> List[VBAIssue]:
+def check_undeclared_variables(
+    rel_path: str,
+    lines: List[str],
+    project_index: "VBAProjectIndex | None" = None,
+) -> List[VBAIssue]:
     """UV001: Variables used but not declared (compile error with Option Explicit).
 
     Args:
-        global_names: Optional set of lowercase variable names known to be
-                      declared as Public in other modules (cross-module scope).
+        project_index: Project-level symbol context. When present, it supplies
+                       names visible in this module according to VBA scope.
     """
     issues = []
     has_option_explicit = any(_OPTION_EXPLICIT_RE.match(line.strip()) for line in lines)
@@ -1099,7 +1106,11 @@ def check_undeclared_variables(rel_path: str, lines: List[str], global_names: se
         return []
 
     undeclared_by_proc = _find_undeclared_variables_detailed(lines)
-    known_globals = global_names or set()
+    known_globals = (
+        project_index.visible_names_for(rel_path)
+        if project_index is not None
+        else set()
+    )
     for proc_name, var_set in undeclared_by_proc.items():
         for var_name, line_num in sorted(var_set, key=lambda x: x[1]):
             # Skip variables known to be Public in other modules
@@ -1448,15 +1459,13 @@ def run_all_rules(
     rel_path: str,
     lines: List[str],
     disabled_rules: List[str] | None = None,
-    global_names: set[str] | None = None,
-    class_registry: dict[str, set[str]] | None = None,
+    project_index: "VBAProjectIndex | None" = None,
 ) -> List[VBAIssue]:
     """Run all enabled rules against a file's lines.
 
     Args:
-        global_names: Optional set of lowercase variable names known to be
-                      declared as Public in other modules (for UV001 cross-module check).
-        class_registry: Optional dict mapping lowercase class names to sets of lowercase member names.
+        project_index: Immutable project-level symbol context used by rules
+                       that resolve names across modules.
     """
     disabled = set(disabled_rules or [])
     issues = []
@@ -1464,10 +1473,17 @@ def run_all_rules(
         if rule_id in disabled:
             continue
         # UV001 needs cross-module context
-        if rule_id == "UV001" and global_names is not None:
-            issues.extend(check_fn(rel_path, lines, global_names))
+        if rule_id == "UV001" and project_index is not None:
+            issues.extend(
+                check_fn(
+                    rel_path,
+                    lines,
+                    project_index=project_index,
+                )
+            )
         elif rule_id == "SM001":
-            issues.extend(check_fn(rel_path, lines, class_registry))
+            registry = project_index.class_registry if project_index else None
+            issues.extend(check_fn(rel_path, lines, registry))
         else:
             issues.extend(check_fn(rel_path, lines))
 
@@ -1760,4 +1776,3 @@ def _split_colon_statements(line: str) -> list[str]:
     if current:
         parts.append("".join(current))
     return parts
-

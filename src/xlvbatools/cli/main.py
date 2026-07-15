@@ -120,6 +120,36 @@ def _cfg_path(cfg, resolved_attr: str, raw_attr: str) -> str:
     return os.fspath(getattr(cfg, raw_attr))
 
 
+def _project(cfg, *, workbook=None, source=None):
+    """Create the same configured Project used by Python consumers."""
+    from dataclasses import replace
+    from xlvbatools import Project, ProjectSettings
+
+    resolved_workbook = os.path.abspath(
+        os.fspath(workbook) if workbook else _cfg_path(cfg, "workbook_path", "workbook")
+    )
+    resolved_source = os.path.abspath(
+        os.fspath(source) if source else _cfg_path(cfg, "vba_source_path", "vba_source")
+    )
+    configured = replace(
+        cfg,
+        workbook=resolved_workbook,
+        vba_source=resolved_source,
+        config_dir=None,
+    )
+    return Project(ProjectSettings._from_config(configured))
+
+
+def _print_result_json(result) -> None:
+    print(json.dumps(result.to_dict(), indent=2, default=str))
+
+
+def _fail_result(result, fallback: str) -> None:
+    message = result.error.message if result.error is not None else fallback
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
 # ── Subcommand registration ──
 # Each registers its argparse sub-parser and sets the dispatch handler.
 
@@ -326,54 +356,46 @@ def _cmd_extract(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     out = args.output or _cfg_path(cfg, "vba_source_path", "vba_source")
-    from xlvbatools.core.worker import run_isolated_operation
+    project = _project(cfg, workbook=args.workbook, source=out)
 
     if getattr(args, "list", False):
-        raw = run_isolated_operation(
-            "list_components", {"workbook_path": os.path.abspath(wb)},
-            timeout=args.timeout,
-        )
-        if not raw.get("success"):
-            print(json.dumps(raw, indent=2, default=str))
-            sys.exit(1)
-        components = raw.get("data") or []
+        result = project.list_components(timeout=args.timeout)
+        if not result.success:
+            if getattr(args, "json", False):
+                _print_result_json(result)
+                raise SystemExit(1)
+            _fail_result(result, "Component listing failed")
+        components = result.data or []
         if getattr(args, "json", False):
-            print(json.dumps(components, indent=2))
+            _print_result_json(result)
         else:
             for c in components:
                 print(f"  {c['type_name']:20s} {c['name']:30s} ({c['line_count']} lines)")
         return
 
-    raw = run_isolated_operation(
-        "extract",
-        {
-            "workbook_path": os.path.abspath(wb),
-            "output_dir": os.path.abspath(out),
-            "component": args.component,
-        },
-        timeout=args.timeout,
+    result = project.extract(
+        output=out, component=args.component, timeout=args.timeout,
     )
-    if not raw.get("success"):
+    if not result.success:
         if getattr(args, "json", False):
-            print(json.dumps(raw, indent=2, default=str))
-        else:
-            print(raw.get("primary_error") or "Extraction failed")
-        sys.exit(1)
+            _print_result_json(result)
+            raise SystemExit(1)
+        _fail_result(result, "Extraction failed")
 
-    result = raw.get("data")
+    data = result.data
     if args.component:
         if getattr(args, "json", False):
-            print(json.dumps(result, indent=2))
+            _print_result_json(result)
         else:
-            print(f"Extracted: {result['name']} -> {result['file']}")
+            print(f"Extracted: {data['name']} -> {data['file']}")
     else:
-        manifest = result or {}
+        manifest = data or {}
         count = len(manifest.get("components", []))
-        print(f"Extracted {count} components to {out}/")
         if getattr(args, "json", False):
-            print(json.dumps(manifest, indent=2))
+            _print_result_json(result)
+        else:
+            print(f"Extracted {count} components to {out}/")
 
 
 def _cmd_inject(args):
@@ -385,36 +407,32 @@ def _cmd_inject(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
-    from xlvbatools.core.worker import run_isolated_operation
+    project = _project(cfg, workbook=args.workbook, source=src)
     if args.component and args.dry_run:
         print("--dry-run cannot be combined with --component", file=sys.stderr)
         sys.exit(2)
-    raw = run_isolated_operation(
-        "inject",
-        {
-            "workbook_path": os.path.abspath(wb),
-            "source_dir": os.path.abspath(src),
-            "component": args.component,
-            "backup": not args.no_backup,
-            "dry_run": args.dry_run,
-            "backup_limit": cfg.backups.limit,
-        },
+    result = project.inject(
+        source=src,
+        component=args.component,
+        backup=not args.no_backup,
+        dry_run=args.dry_run,
         timeout=args.timeout,
     )
-    if not raw.get("success"):
+    if not result.success:
         if getattr(args, "json", False):
-            print(json.dumps(raw, indent=2, default=str))
-        else:
-            print(raw.get("primary_error") or "FAILED")
-        sys.exit(1)
+            _print_result_json(result)
+            raise SystemExit(1)
+        _fail_result(result, "Injection failed")
     if args.component:
-        print("Injected")
-    else:
-        results = raw.get("data") or []
         if getattr(args, "json", False):
-            print(json.dumps(results, indent=2))
+            _print_result_json(result)
+        else:
+            print("Injected")
+    else:
+        results = result.data or []
+        if getattr(args, "json", False):
+            _print_result_json(result)
         else:
             for r in results:
                 status = r["status"].upper()
@@ -430,34 +448,26 @@ def _cmd_diff(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
-    from xlvbatools.core.worker import run_isolated_operation
-    raw = run_isolated_operation(
-        "diff",
-        {
-            "workbook_path": os.path.abspath(wb),
-            "source_dir": os.path.abspath(src),
-            "component": args.component,
-        },
-        timeout=args.timeout,
+    project = _project(cfg, workbook=args.workbook, source=src)
+    operation_result = project.diff(
+        source=src, component=args.component, timeout=args.timeout,
     )
-    if not raw.get("success"):
+    if not operation_result.success:
         if getattr(args, "json", False):
-            print(json.dumps(raw, indent=2, default=str))
-        else:
-            print(raw.get("primary_error") or "Diff failed")
-        sys.exit(1)
+            _print_result_json(operation_result)
+            raise SystemExit(1)
+        _fail_result(operation_result, "Diff failed")
     if args.component:
-        result = raw.get("data")
+        result = operation_result.data
         if getattr(args, "json", False):
-            print(json.dumps(result, indent=2))
+            _print_result_json(operation_result)
         else:
             _print_diff_result(result, args)
     else:
-        results = raw.get("data") or []
+        results = operation_result.data or []
         if getattr(args, "json", False):
-            print(json.dumps(results, indent=2))
+            _print_result_json(operation_result)
         else:
             for result in results:
                 _print_diff_result(result, args)
@@ -485,64 +495,25 @@ def _cmd_lint(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    disabled = cfg.lint.disabled_rules
-
-    if args.source:
-        from xlvbatools.analysis.preflight import lint_files
-        try:
-            issues = lint_files(args.source, disabled_rules=disabled)
-        except (FileNotFoundError, OSError, ValueError) as error:
-            print(f"ERROR: {error}", file=sys.stderr)
-            sys.exit(2)
-    elif args.workbook:
-        from xlvbatools.analysis.issue import VBAIssue
-        from xlvbatools.core.worker import run_isolated_operation
-        raw = run_isolated_operation(
-            "lint_workbook",
-            {
-                "workbook_path": os.path.abspath(args.workbook),
-                "disabled_rules": disabled,
-                "compile_test": True,
-            },
-            timeout=args.timeout,
-        )
-        issues = [VBAIssue(**item) for item in (raw.get("data") or [])]
-        if not raw.get("success") and not issues:
-            print(json.dumps(raw, indent=2, default=str), file=sys.stderr)
-            sys.exit(1)
-    else:
-        # Try source dir first (no COM needed), then workbook
-        src = _cfg_path(cfg, "vba_source_path", "vba_source")
-        if os.path.isdir(src):
-            from xlvbatools.analysis.preflight import lint_files
-            issues = lint_files(src, disabled_rules=disabled)
+    source = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
+    project = _project(cfg, workbook=args.workbook, source=source)
+    try:
+        if args.workbook or (not args.source and not os.path.exists(source)):
+            result = project.lint_workbook(timeout=args.timeout)
         else:
-            from xlvbatools.analysis.issue import VBAIssue
-            from xlvbatools.core.worker import run_isolated_operation
-            raw = run_isolated_operation(
-                "lint_workbook",
-                {
-                    "workbook_path": _cfg_path(
-                        cfg, "workbook_path", "workbook",
-                    ),
-                    "disabled_rules": disabled,
-                    "compile_test": True,
-                },
-                timeout=args.timeout,
-            )
-            issues = [VBAIssue(**item) for item in (raw.get("data") or [])]
-            if not raw.get("success") and not issues:
-                print(json.dumps(raw, indent=2, default=str), file=sys.stderr)
-                sys.exit(1)
+            result = project.lint_source(source)
+    except (FileNotFoundError, OSError, ValueError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        sys.exit(2)
+
+    issues = result.data or ()
 
     if getattr(args, "json", False):
-        import json
-        print(json.dumps([i.to_dict() for i in issues], indent=2))
+        _print_result_json(result)
     else:
         print(print_report(issues))
 
-    errors = [i for i in issues if i.severity == "ERROR"]
-    sys.exit(1 if errors else 0)
+    sys.exit(0 if result.success else 1)
 
 
 def _cmd_run(args):
@@ -554,23 +525,21 @@ def _cmd_run(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
-    from xlvbatools.macro.runner import run_macro
-    result = run_macro(wb, args.macro, timeout=args.timeout)
+    project = _project(cfg, workbook=args.workbook)
+    result = project.run(args.macro, timeout=args.timeout)
 
     if getattr(args, "json", False):
-        import json
-        print(json.dumps(result, indent=2, default=str))
+        _print_result_json(result)
     else:
-        status = "OK" if result.get("success") else "FAILED"
-        elapsed = result.get("elapsed_seconds", 0)
+        status = "OK" if result.success else "FAILED"
+        elapsed = result.elapsed_seconds or 0
         print(f"{status} ({elapsed:.2f}s)")
-        if result.get("error"):
-            print(f"  Error: {result['error']}")
-        for ev in result.get("dialog_events", []):
+        if result.error:
+            print(f"  Error: {result.error.message}")
+        for ev in result.diagnostics.dialog_events:
             print(f"  [{ev.get('type')}] {ev.get('text', '')}")
 
-    sys.exit(0 if result.get("success") else 1)
+    sys.exit(0 if result.success else 1)
 
 
 def _cmd_snapshot(args):
@@ -634,30 +603,29 @@ def _cmd_dump(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
     sheets = args.sheets.split(",") if args.sheets else None
 
     if not sheets:
         print("Specify --sheets for workbook inspection")
         sys.exit(1)
-    from xlvbatools.workbook.dumper import inspect_workbook
+    project = _project(cfg, workbook=args.workbook)
     include_screenshots = getattr(args, "screenshot", False)
     include_data = getattr(args, "data", False) or not include_screenshots
     out_json = "dump.json" if include_data and getattr(args, "json", False) else None
     out_md = "dump.md" if include_data and not getattr(args, "json", False) else None
-    result = inspect_workbook(
-        wb, sheets, output_dir="screenshots", custom_range=args.range,
+    result = project.inspect(
+        sheets, output_dir="screenshots", cell_range=args.range,
         include_data=include_data, include_screenshots=include_screenshots,
-        output_json=out_json, output_md=out_md, timeout_seconds=args.timeout,
+        output_json=out_json, output_markdown=out_md, timeout=args.timeout,
         include_hidden_sheets=args.include_hidden_sheets,
     )
-    if not result.get("success"):
-        print(json.dumps(result, indent=2, default=str))
+    if not result.success:
+        _print_result_json(result)
         sys.exit(1)
     if getattr(args, "json", False):
-        print(json.dumps(result, indent=2, default=str))
+        _print_result_json(result)
     else:
-        for name, path in result.get("screenshots", {}).items():
+        for name, path in result.data.screenshots.items():
             print(f"  {name}: {path}")
         if include_data:
             print(f"Dumped to: {out_md}")
@@ -672,8 +640,6 @@ def _cmd_modify(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
-    wb = args.workbook or _cfg_path(cfg, "workbook_path", "workbook")
-
     # Parse value with type detection
     value = args.value
     if value is not None:
@@ -684,27 +650,21 @@ def _cmd_modify(args):
         except ValueError:
             pass
 
-    from xlvbatools.core.worker import run_isolated_operation
-    raw = run_isolated_operation(
-        "modify",
-        {
-            "workbook_path": os.path.abspath(wb),
-            "sheet": args.sheet or "Sheet1",
-            "cell": args.cell,
-            "value": value,
-            "formula": args.formula,
-            "name": args.name,
-            "refers_to": args.refers_to,
-            "delete_name": args.delete_name,
-        },
+    project = _project(cfg, workbook=args.workbook)
+    result = project.modify(
+        sheet=args.sheet or "Sheet1",
+        cell=args.cell,
+        value=value,
+        formula=args.formula,
+        name=args.name,
+        refers_to=args.refers_to,
+        delete_name=args.delete_name,
         timeout=args.timeout,
-        retry_transient=True,
     )
-    success = bool(raw.get("success"))
-    print("OK" if success else "FAILED")
-    if not success and raw.get("primary_error"):
-        print(f"  Error: {raw['primary_error']}")
-    sys.exit(0 if success else 1)
+    print("OK" if result.success else "FAILED")
+    if result.error:
+        print(f"  Error: {result.error.message}")
+    sys.exit(0 if result.success else 1)
 
 
 def _cmd_debug(args):
@@ -842,52 +802,28 @@ def _cmd_version(args):
 
 def _cmd_agents(args):
     """Print AI agent integration instructions and best practices."""
-    help_text = """================================================================================
-                    xlvbatools AI Agent Integration Guide
-================================================================================
+    help_text = """xlvbatools v1 agent integration
 
-This toolkit supports the July 2026 open-standard for agent customizations
-(agentskills.io and Google Antigravity specifications). By placing instructions
-in a central `.agents/` directory, you allow coding assistants to discover rules,
-capabilities, and workflows without polluting your workspace or bloating context.
+Application automation uses xlvbatools.Project or the xlvba CLI. Raw COM
+sessions and worker files are private implementation details.
 
---------------------------------------------------------------------------------
-1. Standard Directory Layout (.agents/)
---------------------------------------------------------------------------------
-When initialized, the following structure will be installed in the project root:
+Install guidance into a new project:
+    xlvba init --workbook workbook/MyProject.xlsm --agents
 
-    .agents/
-    ├── AGENTS.md           # Mission Control & main developer rules
-    ├── rules/              # Task-specific conditional guidelines
-    │   ├── vba-rules.md    # VBA coding standards & encoding constraints
-    │   └── python-rules.md # Python packaging & test guidelines
-    ├── skills/             # Portable capability packs (agentskills.io)
-    │   └── xlvba-toolchain/
-    │       └── SKILL.md    # xlvba CLI reference & python API usage
-    └── workflows/          # Repeatable step-by-step pipeline procedures
-        ├── vba-edit.md     # The modify-lint-inject-verify pipeline
-        └── vba-debug.md    # Dialog watchdogs & COM error debugging
+Template installation is non-destructive: an existing .agents/ directory is
+left unchanged. Keep customized guidance under source control.
 
---------------------------------------------------------------------------------
-2. How to Bootstrap/Install
---------------------------------------------------------------------------------
-To install or refresh these agent templates in your current workspace, run:
+Read in this order:
+    .agents/AGENTS.md
+    .agents/skills/xlvba-toolchain/SKILL.md
+    .agents/rules/python-rules.md or vba-rules.md
+    .agents/workflows/vba-edit.md or vba-debug.md
 
-    xlvba init --agents
-
-If xlvbatools.toml already exists, you can run:
-
-    xlvba init --agents --force
-
---------------------------------------------------------------------------------
-3. Information for AI Agents (Antigravity, Cursor, Copilot, etc.)
---------------------------------------------------------------------------------
-If you are an AI assistant:
-- READ .agents/AGENTS.md first to understand the workspace overview and rules.
-- REFER to skills/xlvba-toolchain/SKILL.md to understand the Python API and CLI.
-- USE .agents/workflows/vba-edit.md as your standard pipeline for modifying VBA files.
-- USE .agents/workflows/vba-debug.md when encountering Excel COM hangs, modal dialogs, or VBE programmatic errors.
-================================================================================
+Safety requirements:
+  - never terminate Excel globally;
+  - require operation success and clean owned-process shutdown;
+  - render hidden worksheets only when explicitly requested;
+  - use the repository .venv and pin exact released versions or revisions.
 """
     print(help_text)
 

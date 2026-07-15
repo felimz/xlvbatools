@@ -7,13 +7,13 @@ Every snapshot is identified by its ISO-8601 compact timestamp (YYYYMMDDTHHMMSS)
 Supports dual-layer snapshots: git commits for VBA source + binary .xlsm copies.
 
 Usage:
-    from xlvbatools.snapshot import SnapshotManager
+    from xlvbatools import Project
 
-    mgr = SnapshotManager("workbook.xlsm", "vba_source/", "snapshots/")
-    sid = mgr.create(description="before refactor")
-    mgr.list()
-    mgr.restore("latest")
-    mgr.prune(keep=10)
+    manager = Project.from_config().snapshots()
+    sid = manager.create(description="before refactor")
+    manager.list()
+    manager.restore("latest")
+    manager.prune(keep=10)
 """
 
 import datetime

@@ -1,51 +1,50 @@
 ---
-description: Pipeline for modifying, linting, injecting, and verifying VBA code changes in Excel.
+description: Safely modify, lint, inject, diff, and verify VBA through xlvbatools v1.
 ---
 
 # xlvbatools VBA Edit Workflow
 
-Use this workflow whenever modifying VBA code in an Excel workbook.
+1. Create a checkpoint:
 
-## Steps
-
-1. **Checkpoint** current state:
-   ```bash
-   xlvba snapshot create --desc "before: <description of change>"
+   ```powershell
+   xlvba snapshot create --desc "before: <change>"
    ```
 
-2. **Extract** VBA from workbook:
-   ```bash
+2. Extract the current workbook project:
+
+   ```powershell
    xlvba extract
    ```
 
-3. **Edit** the VBA source files:
-   - Standard modules: `vba_source/modules/*.bas`
-   - Class modules: `vba_source/classes/*.cls`
-   - Sheet code: `vba_source/sheets/*.cls`
+3. Edit files under `vba_source/`:
 
-4. **Lint** the changes:
-   ```bash
-   xlvba lint
-   ```
-   Fix any ERROR-severity issues before proceeding.
+   - standard modules: `modules/*.bas`;
+   - class modules: `classes/*.cls`;
+   - document modules: `sheets/*.cls`;
+   - forms: `forms/*.frm` and associated binary assets.
 
-5. **Inject** changes back into the workbook:
-   ```bash
-   xlvba inject
+4. Lint source and resolve every ERROR:
+
+   ```powershell
+   xlvba lint --source vba_source --json
    ```
 
-6. **Verify** by running the target macro:
-   ```bash
-   xlvba run <MacroName> --json
+5. Inject and confirm round-trip equality:
+
+   ```powershell
+   xlvba inject --json
+   xlvba diff --summary
    ```
 
-7. **Commit or Rollback**:
-   - If PASS: `git add vba_source/ && git commit -m "description"`
-   - If FAIL: `xlvba snapshot restore latest`
+6. Run the relevant macro and inspect both the outcome and cleanup:
 
-## Notes
+   ```powershell
+   xlvba run <MacroName> --timeout 120 --json
+   ```
 
-- Sheet code-behinds (Document modules) cannot be removed/re-imported.
-  They are updated by clearing all lines and inserting new content.
-- The `--no-backup` flag skips creating a backup before injection.
-  Only use this for rapid iteration when you have a snapshot.
+7. Commit the workbook and matching source together if verification passes.
+   Otherwise restore the checkpoint with `xlvba snapshot restore latest`.
+
+Document modules are updated in place because the VBE cannot remove and
+re-import them. Use `--no-backup` only when a verified snapshot already
+exists. Never use global Excel termination to recover a failed run.

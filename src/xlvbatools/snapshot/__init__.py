@@ -1,4 +1,3 @@
-# xlvbatools.snapshot -- Checkpoint and rollback system
-from xlvbatools.snapshot.manager import SnapshotManager
+"""Internal snapshot backend; use ``Project.snapshots``."""
 
-__all__ = ["SnapshotManager"]
+__all__: list[str] = []

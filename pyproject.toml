@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xlvbatools"
-version = "0.1.0"
+dynamic = ["version"]
 description = "General-purpose Python toolkit for headless Excel VBA automation, debugging, and version control"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -14,7 +14,7 @@ authors = [
 readme = "README.md"
 keywords = ["excel", "vba", "automation", "com", "headless"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
@@ -58,8 +58,11 @@ Homepage = "https://github.com/felimz/xlvbatools"
 where = ["src"]
 include = ["xlvbatools*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "xlvbatools._version.__version__"}
+
 [tool.setuptools.package-data]
-xlvbatools = ["templates/**/*.md"]
+xlvbatools = ["py.typed", "templates/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

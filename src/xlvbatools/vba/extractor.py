@@ -9,7 +9,9 @@ Document modules (sheet code-behinds, ThisWorkbook) are read line-by-line
 from the CodeModule since VBE Export is not supported for them.
 
 Usage:
-    from xlvbatools.vba import extract_all, extract_component, list_components
+    from xlvbatools import Project
+
+    result = Project.from_config().extract()
 
     manifest = extract_all("workbook.xlsm", "vba_source/")
     result = extract_component("workbook.xlsm", "modMain", "vba_source/")

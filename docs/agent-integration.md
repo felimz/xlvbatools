@@ -1,189 +1,137 @@
-# xlvbatools Agent Integration Guide
+# Agent integration
 
-This document describes how AI coding agents (Antigravity, Cursor, Copilot, etc.)
-can use `xlvbatools` to programmatically develop, debug, and maintain VBA code
-in Excel workbooks.
+xlvbatools v1 gives coding agents the same supported surface as any other
+application: the `Project` Python API and the `xlvba` CLI. Agents must not
+manage COM sessions or private worker files directly.
 
----
+## Bootstrap
 
-## Quick Start for Agents
+Initialize a new repository and install the packaged agent guidance:
 
-### 1. Initialize a Project
-
-```bash
-xlvba init --workbook my_project.xlsm
+```powershell
+xlvba init --workbook workbook/MyProject.xlsm --agents
+xlvba version --json
 ```
+Template installation is non-destructive. If `.agents/` already exists,
+xlvbatools leaves it unchanged; update customized guidance through source
+control rather than silently overwriting it.
 
-This creates `xlvbatools.toml` and the `vba_source/` directory structure.
+## Standard edit-verify cycle
 
-### 2. The Edit-Verify Cycle
-
-```bash
-# 1. Create a safety checkpoint
-xlvba snapshot create --desc "before changes"
-
-# 2. Extract VBA from workbook to editable files
+```powershell
+xlvba snapshot create --desc "before change"
 xlvba extract
-
-# 3. Edit the .bas/.cls files (agents edit these directly)
-# ... modify vba_source/modules/modMain.bas ...
-
-# 4. Run static analysis
-xlvba lint
-
-# 5. Inject changes back into workbook
-xlvba inject
-
-# 6. Run a macro to verify
-xlvba run OnCalculate --json
-
-# 7. If something breaks, rollback
-xlvba snapshot restore latest
+# Edit files under vba_source/
+xlvba lint --source vba_source --json
+xlvba inject --json
+xlvba diff --summary
+xlvba run OnCalculate --timeout 120 --json
 ```
 
-### 3. Search and Understand Code
+A passing macro is not the only acceptance condition. In JSON output, verify
+both the operation outcome and the owned-process cleanup:
 
-```bash
-# Find all MsgBox calls
-xlvba search MsgBox
+- `success` is true;
+- `error` is null;
+- `diagnostics.cleanup.still_running` is false;
+- `diagnostics.cleanup.worker_terminated` is false;
+- no unexpected `diagnostics.dialog_events` were captured.
 
-# Find patterns with regex
-xlvba search "Dim\s+\w+$" --regex
+Restore the checkpoint if validation fails.
 
-# Generate a call dependency graph
-xlvba graph --format mermaid
-xlvba graph --format json --output graph.json
-```
-
-### 4. Inspect Workbook State
-
-```bash
-# Dump sheet values to JSON
-xlvba dump --sheets "Sheet1,Results" --json
-
-# Modify a cell value
-xlvba modify --sheet Sheet1 --cell C30 --value 42
-
-# Set a formula
-xlvba modify --sheet Sheet1 --cell D5 --formula "=C5*2"
-
-# Manage named ranges
-xlvba modify --name MyRange --refers-to "=Sheet1!$A$1:$B$10"
-```
-
----
-
-## Agent-Specific Patterns
-
-### Error Recovery
-
-When `xlvba run` reports a dialog event, agents should:
-
-1. **compile_error**: Read the error module/line, fix the VBA source, re-inject
-2. **runtime_error**: Check `Err.Number` and fix the logic
-3. **file_dialog / msgbox**: Add a `UserControl` guard in the VBA code:
-   ```vba
-   If Not Application.UserControl Then
-       ' Skip interactive dialogs in headless mode
-       Exit Sub
-   End If
-   ```
-4. **untrusted_programmatic_access**: If a `RuntimeError` is raised indicating programmatic access to VBE is disabled, the agent should instruct the user to check "Trust access to the VBA project object model" in Excel's Trust Center Settings.
-
-### Safe Macro Execution (Python API)
+## Python wrapper pattern
 
 ```python
-from xlvbatools.macro import run_macro
+from xlvbatools import Project
 
-result = run_macro("workbook.xlsm", "MyMacro", timeout=60)
-if not result["success"]:
-    print(f"{result['phase']} failed: {result['primary_error']}")
-    for event in result["dialog_events"]:
-        print(f"  [{event['type']}] {event['text']}")
+project = Project.open(
+    "workbook/MyProject.xlsm",
+    source="workbook/vba_source",
+)
+
+lint_result = project.lint_source()
+issues = lint_result.require_success()
+
+run_result = project.run("OnCalculate", timeout=120, save=False)
+run_result.require_success()
+run_result.require_clean_shutdown()
 ```
 
-Use the high-level runner when a real deadline is required. Direct `ExcelSession.run_macro()` remains useful for multiple operations within one session, but its blocking COM call cannot enforce a timeout.
+For unit tests, inject an `Executor` test double into `Project`. Do not mock
+or expose COM objects in downstream wrappers.
 
-### Programmatic Lint
+## Workbook inspection
+
+```powershell
+xlvba dump --sheets "Input,Results" --data --json
+xlvba dump --sheets Input --screenshot --range B91:K99 --json
+```
+
+Only visible worksheets are rendered by default. Add
+`--include-hidden-sheets` only when Hidden or VeryHidden content is explicitly
+required.
 
 ```python
-from xlvbatools.analysis.preflight import lint_files, print_report
-
-issues = lint_files("vba_source/", disabled_rules=["PF001"])
-print(print_report(issues))
+inspection = project.inspect(
+    ["Input"],
+    cell_range="B91:K99",
+    include_data=True,
+    include_screenshots=True,
+)
+output = inspection.require_success()
+inspection.require_clean_shutdown()
+print(output.workbook_data)
+print(output.screenshots)
 ```
 
-### Snapshot Management
+## Error handling
 
-```python
-from xlvbatools.snapshot.manager import SnapshotManager
-
-mgr = SnapshotManager("workbook.xlsm", "vba_source/", "snapshots/")
-sid = mgr.create(description="pre-refactor", milestone=True)
-# ... make changes ...
-mgr.restore(sid)  # rollback if needed
-```
-
----
-
-## Configuration
-
-Create `xlvbatools.toml` in your project root:
-
-```toml
-[xlvbatools]
-workbook = "workbook/MyProject.xlsm"
-vba_source = "workbook/vba_source"
-snapshots_dir = "snapshots"
-log_dir = "logs"
-
-[xlvbatools.snapshots]
-rolling_limit = 10
-
-[xlvbatools.backups]
-limit = 5
-
-[xlvbatools.lint]
-disabled_rules = ["PF001", "PF003"]
-protected_sheets = ["Sheet1"]
-```
-
----
-
-## Dialog Protection Architecture
-
-All Excel COM operations go through `ExcelSession`, which runs a `DialogWatchdog`
-background thread that automatically captures and dismisses pop-up dialogs:
-
-1. **VBA Error Handlers** (`On Error GoTo ErrHandler`) -- errors become COM exceptions
-2. **VBA UserControl Guards** -- interactive code is skipped in headless mode
-3. **Python DialogWatchdog** -- catches compile errors and anything that bypasses layers 1-2
-4. **Targeted Session Sandboxing** -- starts the watchdog only after PID discovery and force-terminates only the spawned PID during cleanup, ensuring unrelated user workbooks remain untouched.
-
----
-
-## Encoding Rules
-
-- VBE standard/class modules are ANSI only (`windows-1252` on Western systems)
-- Avoid Unicode characters in VBA code (they become `?` on import)
-- `xlvbatools` handles UTF-8 <-> ANSI conversion automatically during extract/inject
-
----
-
-## CLI Reference
-
-| Command | Purpose |
+| Evidence | Agent action |
 |:---|:---|
-| `xlvba init` | Initialize project with xlvbatools.toml |
-| `xlvba extract` | Extract VBA from workbook |
-| `xlvba inject` | Inject VBA into workbook |
-| `xlvba diff` | Compare workbook vs source |
-| `xlvba lint` | Static analysis (30+ rules) |
-| `xlvba run <macro>` | Execute macro with dialog protection |
-| `xlvba snapshot` | Checkpoint/rollback system |
-| `xlvba dump` | Export sheet data and screenshots |
-| `xlvba modify` | Edit cells, formulas, named ranges |
-| `xlvba debug` | Open Excel + VBE visibly |
-| `xlvba search` | Search VBA source files |
-| `xlvba fmt` | Format VBA code |
-| `xlvba graph` | Generate call dependency graph |
+| `compile_error` | Fix the reported module, line, and column; inject and rerun |
+| `runtime_error` | Use the captured VBA error number and description |
+| `msgbox` or `file_dialog` | Guard interactive VBA with `Application.UserControl` |
+| `named_range_setup` | Correct required inputs before invoking the macro again |
+| `timeout` | Inspect cleanup; never terminate unrelated Excel processes |
+| Trust Center failure | Ask the user to enable programmatic VBA project access |
+
+Use `xlvba debug` only when visible interactive debugging is deliberately
+requested. Ordinary automation remains isolated and headless.
+
+## Analysis behavior
+
+Source lint and live-workbook lint use the same whole-project symbol index.
+Public declarations in standard modules therefore resolve across modules.
+Live lint can additionally request Excel's compile test:
+
+```powershell
+xlvba lint --workbook workbook/MyProject.xlsm --json --timeout 240
+```
+
+Treat Excel compilation as the semantic authority. Do not suppress a reported
+cross-module symbol merely to make modes agree.
+
+## Safety rules
+
+- Never run `taskkill /im EXCEL.EXE`.
+- Never select an existing desktop Excel instance for headless work.
+- Never parse or construct the private worker request/result files.
+- Never render hidden worksheets without explicit authorization.
+- Never commit workbook and extracted VBA states that fail `xlvba diff`.
+- Pin a released package version or an exact full Git revision downstream.
+
+## Installed agent layout
+
+```text
+.agents/
+├── AGENTS.md
+├── rules/
+│   ├── python-rules.md
+│   └── vba-rules.md
+├── skills/
+│   └── xlvba-toolchain/
+│       └── SKILL.md
+└── workflows/
+    ├── vba-debug.md
+    └── vba-edit.md
+```

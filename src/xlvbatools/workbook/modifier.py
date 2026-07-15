@@ -4,7 +4,9 @@ Workbook Modifier
 Programmatically modifies cell values, formulas, and named ranges.
 
 Usage:
-    from xlvbatools.workbook import modify_cell
+    from xlvbatools import Project
+
+    result = Project.open("book.xlsm").modify(cell="A1", value=42)
 
     modify_cell("workbook.xlsm", sheet="Sheet1", cell="A1", value=42)
     modify_cell("workbook.xlsm", sheet="Sheet1", cell="B2", formula="=A1*2")

@@ -1,15 +1,40 @@
-# Workbook Inspection & Modification Guide
+# Workbook inspection and modification
 
-`xlvbatools` provides powerful inspection (workbook dumper) and modification (cell modifier) utilities to read, visual-test, and update spreadsheet contents programmatically.
+Use `Project.inspect` or `xlvba dump` to read workbook state and render
+worksheets. Use `Project.modify` or `xlvba modify` for targeted changes.
+Both operations run in an isolated, owned Excel process.
 
----
+## Inspection
 
-## Workbook Inspection (Dumper)
+```python
+from xlvbatools import Project
 
-The workbook dumper extracts cell data, interactive shapes, and named ranges to structured files.
+project = Project.open("workbook/MyModel.xlsm")
 
-### 1. Cell-Level JSON Model
-Instead of simple raw 2D lists, cells are returned using a detailed address-mapped model:
+result = project.inspect(
+    ["Input", "Results"],
+    cell_range="A1:K100",
+    include_data=True,
+    include_screenshots=True,
+    output_dir="artifacts/screenshots",
+    output_json="artifacts/workbook.json",
+    include_hidden_sheets=False,
+    timeout=90,
+)
+inspection = result.require_success()
+result.require_clean_shutdown()
+```
+
+The equivalent CLI commands are:
+
+```powershell
+xlvba dump --sheets "Input,Results" --data --json
+xlvba dump --sheets Input --screenshot --range A1:K100 --json
+```
+
+### Structured cells
+
+Workbook data stores populated cells by address:
 
 ```json
 {
@@ -25,48 +50,60 @@ Instead of simple raw 2D lists, cells are returned using a detailed address-mapp
 }
 ```
 
-* **`text` (Formatted Text):** Captures the cell's locale-formatted display text (e.g. currency, formatted dates) using Excel's `.Text` property instead of just raw values.
-* **`formula`:** Holds the cell's formula string (if applicable).
-* **`is_error` / `error_type`:** Detects and flags cell error values (e.g., `#DIV/0!`, `#VALUE!`, `#REF!`).
+The model preserves Excel's formatted text, formulas, error types, shapes,
+named ranges, and the inspected range bounds.
 
-### 2. Interactive Shapes & Named Ranges
-* **Interactive Shapes:** Documents elements with click handlers or macro links (e.g., Form Control buttons, ActiveX elements, linked macros under `OnAction`).
-* **Named Ranges:** Extracts named range definitions alongside their evaluated values and scope (Workbook vs. Sheet-level).
+### Screenshot rendering
 
-### 3. Pillow-Composited Screenshots
-The screenshot generator exports PNG images of target worksheets.
+- The workbook is opened read-only with macros, events, and link updates
+  disabled.
+- Only visible worksheets are rendered by default.
+- Hidden and VeryHidden sheets require `include_hidden_sheets=True` or
+  `--include-hidden-sheets`.
+- Excel renders the requested range; only the resulting bitmap is moved through
+  a blank temporary chart workbook. Worksheet VBA is not copied or compiled.
+- Data and screenshots requested together share one worker and one owned Excel
+  lifecycle.
+- Column letters, row numbers, gridlines, cropped bounds, merged cells, and
+  non-default row/column dimensions are composited from the inspected range.
+- Clipboard-sensitive copy/paste operations use bounded retries.
 
-Rendering occurs in an isolated owned Excel process. The source workbook is opened read-only with macros, events, and link updates disabled. Excel renders the original range directly; only its bitmap is transferred to a blank temporary chart workbook, so worksheet VBA is never copied or compiled. Data and screenshot requests share the same session.
+Screenshot files appear in both
+`InspectionOutput.screenshots` and `OperationResult.artifacts`.
 
-Only visible worksheet tabs are rendered by default. Pass `include_hidden_sheets=True` in Python or `--include-hidden-sheets` on the CLI to explicitly include Hidden and VeryHidden worksheets.
-* **Headers:** Inserts column letters (A, B, C...) and row numbers (1, 2, 3...) on the top and left margins using Pillow.
-* **Gridlines:** Forces Excel gridlines to be visible and overlays grid dividers on the screenshot.
-* **Retry Loop:** Automatically retries range copying and chart pasting up to 5 times (with backoff) to eliminate transient COM clipboard locks.
-
-### 4. Session Safety
-* **Graceful Targeted Closure**: The dumper utilizes `ExcelSession` to open the workbook. This uses ROT and window handle (Hwnd) tracking to close only the target workbook and its instance, ensuring other open Excel processes and user workbooks are left untouched.
-
----
-
-## Workbook Modification
-
-The modifier allows you to update Excel cells, write formulas, and manage named ranges:
+## Modification
 
 ```python
-from xlvbatools.workbook.modifier import modify_cell
+# Write a value.
+project.modify(
+    sheet="Input", cell="C3", value=12.5,
+).require_success()
 
-# Set a cell value
-modify_cell("workbook.xlsm", sheet="Sheet1", cell="C3", value=12.5)
+# Write a formula.
+project.modify(
+    sheet="Input", cell="C4", formula="=C3*2",
+).require_success()
 
-# Set a cell formula (excel.Calculate() is triggered automatically on success)
-modify_cell("workbook.xlsm", sheet="Sheet1", cell="C4", formula="=C3*2")
-
-# Create a named range
-modify_cell("workbook.xlsm", name="TaxRate", refers_to="=Sheet1!$C$3")
-
-# Delete a named range
-modify_cell("workbook.xlsm", name="TaxRate", delete_name=True)
+# Create and remove a named range.
+project.modify(
+    name="TaxRate", refers_to="=Input!$C$3",
+).require_success()
+project.modify(
+    name="TaxRate", delete_name=True,
+).require_success()
 ```
 
-### Session Safety
-* **Graceful Targeted Closure**: The cell modifier runs within `ExcelSession` context, which uses ROT and Hwnd tracking to close only the target workbook being updated. Unrelated open user workbooks and their Excel processes remain running and completely unaffected.
+For each Excel-backed result, also call `require_clean_shutdown()` when clean
+teardown is part of acceptance.
+
+`modify` may use one fresh-worker retry only for a recognized transient RPC
+disconnect after the first owned Excel process is confirmed stopped. Macro
+execution and VBA injection are never automatically retried because their
+effects may be non-idempotent.
+
+## Process safety
+
+Inspection and modification never attach to an unrelated desktop Excel
+instance and never terminate Excel by image name. The parent tracks its exact
+worker; the worker reports its exact Excel PID. Cleanup can affect only those
+owned processes.

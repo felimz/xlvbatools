@@ -5,7 +5,7 @@ Opens Excel and VBE visibly for interactive debugging. Disables the
 dialog watchdog so the user can see native VBA dialogs.
 
 Usage:
-    from xlvbatools.workbook import launch_debug_session
+    from xlvbatools.workbook.debugger import launch_debug_session
 
     launch_debug_session("workbook.xlsm")
 """

@@ -5,7 +5,9 @@ Compares VBA code between a live workbook and the on-disk vba_source/ files.
 Produces unified diffs with change counting.
 
 Usage:
-    from xlvbatools.vba import diff_all, diff_component
+    from xlvbatools import Project
+
+    result = Project.from_config().diff()
 
     diffs = diff_all("workbook.xlsm", "vba_source/")
     result = diff_component("workbook.xlsm", "vba_source/", "modMain")

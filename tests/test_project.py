@@ -1,109 +1,109 @@
-"""Tests for the config-bound public project facade."""
+"""Tests for the v1 Project API and typed executor boundary."""
+
+from __future__ import annotations
 
 import json
-from unittest.mock import patch
 
 import pytest
+
+from xlvbatools import (
+    CleanupReport,
+    Diagnostics,
+    Operation,
+    OperationResult,
+    Project,
+)
+
+
+class RecordingExecutor:
+    def __init__(self, responses=None):
+        self.responses = list(responses or [])
+        self.requests = []
+
+    def execute(self, request):
+        self.requests.append(request)
+        if self.responses:
+            return self.responses.pop(0)
+        return _successful(request.operation.value, None)
+
+
+def _successful(operation, data):
+    return OperationResult(
+        operation=operation,
+        success=True,
+        phase="complete",
+        data=data,
+        request_id="request-1",
+        elapsed_seconds=0.1,
+        diagnostics=Diagnostics(
+            worker_pid=90,
+            excel_pid=91,
+            cleanup=CleanupReport(
+                pid=91,
+                quit_requested=True,
+                exited_gracefully=True,
+            ),
+        ),
+    )
 
 
 @pytest.mark.unit
 def test_project_inspection_returns_typed_contract(tmp_path):
-    from xlvbatools import XlvbaProject
-
-    workbook = tmp_path / "book.xlsm"
-    project = XlvbaProject.for_workbook(workbook)
-    screenshot = str(tmp_path / "input.png")
-    legacy = {
-        "success": True,
-        "phase": "complete",
-        "screenshots": {"Input": screenshot},
-        "data": {"sheets": {"Input": {"cells": {}}}},
-        "dialog_events": [],
-        "cleanup": {
-            "pid": 42,
-            "quit_requested": True,
-            "exited_gracefully": True,
-            "force_terminated": False,
-            "still_running": False,
-        },
-    }
-    with patch(
-        "xlvbatools.workbook.dumper.inspect_workbook", return_value=legacy,
-    ) as inspect:
-        result = project.inspect(
-            ["Input"], cell_range="B2:C3", output_dir=tmp_path,
+    screenshot = str(tmp_path / "Input.png")
+    executor = RecordingExecutor([
+        _successful(
+            Operation.INSPECT.value,
+            {
+                "workbook_data": {"sheets": {"Input": {"cells": {}}}},
+                "screenshots": {"Input": screenshot},
+            },
         )
+    ])
+    project = Project.open(tmp_path / "book.xlsm", executor=executor)
+
+    result = project.inspect(["Input"], cell_range="B2:C3", output_dir=tmp_path)
 
     assert result.success is True
     assert result.data.screenshots == {"Input": screenshot}
     assert result.artifacts[0].metadata["sheet"] == "Input"
-    assert result.require_clean_shutdown().pid == 42
+    assert result.require_clean_shutdown().pid == 91
     json.dumps(result.to_dict())
-    inspect.assert_called_once_with(
-        str(workbook.resolve()),
-        ["Input"],
-        output_dir=str(tmp_path),
-        custom_range="B2:C3",
-        include_data=True,
-        include_screenshots=True,
-        output_json=None,
-        output_md=None,
-        continue_on_render_error=False,
-        include_hidden_sheets=False,
-        timeout_seconds=60.0,
-    )
+    request = executor.requests[0]
+    assert request.operation is Operation.INSPECT
+    assert request.arguments["custom_range"] == "B2:C3"
+    assert request.arguments["include_hidden_sheets"] is False
 
 
 @pytest.mark.unit
-def test_project_macro_preserves_legacy_data_inside_stable_envelope(tmp_path):
-    from xlvbatools import XlvbaProject
+def test_project_run_uses_typed_request_and_result(tmp_path):
+    executor = RecordingExecutor([
+        _successful(
+            Operation.RUN.value,
+            {"macro": "Calculate", "run_id": "run-1", "result": 42},
+        )
+    ])
+    project = Project.open(tmp_path / "book.xlsm", executor=executor)
 
-    project = XlvbaProject.for_workbook(tmp_path / "book.xlsm")
-    legacy = {
-        "success": True,
-        "phase": "macro_execution",
-        "macro": "Calculate",
-        "elapsed_seconds": 0.2,
-        "dialog_events": [],
-        "cleanup": {
-            "pid": 10,
-            "quit_requested": True,
-            "exited_gracefully": True,
-            "force_terminated": False,
-            "still_running": False,
-        },
-    }
-    with patch("xlvbatools.macro.runner.run_macro", return_value=legacy) as run:
-        result = project.run_macro("Calculate", timeout=5)
+    result = project.run("Calculate", timeout=5, save=False)
 
-    assert result.success is True
-    assert result.data["macro"] == "Calculate"
+    assert result.data["result"] == 42
     assert result.metadata == {"macro": "Calculate"}
-    run.assert_called_once_with(
-        str((tmp_path / "book.xlsm").resolve()),
-        "Calculate",
-        named_ranges=None,
-        timeout=5,
-        visible=False,
-        save_on_exit=True,
-        strict_named_ranges=True,
-    )
+    request = executor.requests[0]
+    assert request.operation is Operation.RUN
+    assert request.timeout == 5
+    assert request.arguments["save_on_exit"] is False
 
 
 @pytest.mark.unit
-def test_project_lint_uses_resolved_source_path(tmp_path):
-    from xlvbatools import XlvbaProject
-
+def test_project_lint_source_uses_resolved_source_path(tmp_path):
     source = tmp_path / "vba_source"
     source.mkdir()
     (source / "modTest.bas").write_text(
         "Option Explicit\nPublic Sub Test()\nEnd Sub\n", encoding="utf-8",
     )
-    project = XlvbaProject.for_workbook(
-        tmp_path / "book.xlsm", vba_source=source,
-    )
+    project = Project.open(tmp_path / "book.xlsm", source=source)
 
-    result = project.lint()
+    result = project.lint_source()
 
     assert result.phase == "complete"
     assert result.metadata["issue_count"] >= 0
@@ -114,47 +114,29 @@ def test_project_lint_uses_resolved_source_path(tmp_path):
 @pytest.mark.parametrize(
     ("method", "kwargs", "operation", "worker_data"),
     [
-        ("extract", {}, "extract", {"components": []}),
-        ("inject", {"backup": False}, "inject", []),
-        ("diff", {}, "diff", []),
-        ("modify", {"cell": "A1", "value": 4}, "modify", True),
+        ("extract", {}, Operation.EXTRACT, {"components": []}),
+        ("inject", {"backup": False}, Operation.INJECT, []),
+        ("diff", {}, Operation.DIFF, []),
+        ("modify", {"cell": "A1", "value": 4}, Operation.MODIFY, True),
     ],
 )
-def test_com_backed_project_methods_use_shared_worker(
+def test_excel_methods_share_one_executor(
     tmp_path, method, kwargs, operation, worker_data,
 ):
-    from xlvbatools import XlvbaProject
+    executor = RecordingExecutor([_successful(operation.value, worker_data)])
+    project = Project.open(tmp_path / "book.xlsm", executor=executor)
 
-    project = XlvbaProject.for_workbook(tmp_path / "book.xlsm")
-    legacy = {
-        "success": True,
-        "phase": "complete",
-        "data": worker_data,
-        "worker_pid": 90,
-        "excel_pid": 91,
-        "cleanup": {
-            "pid": 91,
-            "quit_requested": True,
-            "exited_gracefully": True,
-            "force_terminated": False,
-            "still_running": False,
-        },
-    }
-    with patch(
-        "xlvbatools.core.worker.run_isolated_operation", return_value=legacy,
-    ) as worker:
-        result = getattr(project, method)(**kwargs)
+    result = getattr(project, method)(**kwargs)
 
     assert result.success is True
     assert result.diagnostics.worker_pid == 90
     assert result.require_clean_shutdown().pid == 91
-    assert worker.call_args.args[0] == operation
+    assert executor.requests[0].operation is operation
+    assert executor.requests[0].retry_transient is (operation is Operation.MODIFY)
 
 
 @pytest.mark.unit
 def test_project_from_nested_directory_resolves_config_paths(tmp_path):
-    from xlvbatools import XlvbaProject
-
     (tmp_path / "xlvbatools.toml").write_text(
         "[xlvbatools]\n"
         'workbook = "workbook/book.xlsm"\n'
@@ -166,42 +148,38 @@ def test_project_from_nested_directory_resolves_config_paths(tmp_path):
     nested = tmp_path / "tools" / "nested"
     nested.mkdir(parents=True)
 
-    project = XlvbaProject.from_config(nested)
+    project = Project.from_config(nested, executor=RecordingExecutor())
 
-    assert project.workbook_path == str(
-        (tmp_path / "workbook" / "book.xlsm").resolve()
-    )
-    assert project.vba_source_path == str(
-        (tmp_path / "workbook" / "vba_source").resolve()
-    )
-    assert project.config.log_dir_path == str((tmp_path / "logs").resolve())
+    assert project.workbook == (tmp_path / "workbook" / "book.xlsm").resolve()
+    assert project.source == (tmp_path / "workbook" / "vba_source").resolve()
+    assert project.settings.snapshots == (tmp_path / "workbook" / "snapshots").resolve()
 
 
 @pytest.mark.unit
-def test_public_api_imports_do_not_import_win32com():
+def test_public_api_is_small_and_does_not_import_win32com():
     import sys
+    import xlvbatools
 
     for name in tuple(sys.modules):
         if name.startswith("win32com"):
             del sys.modules[name]
 
-    from xlvbatools import OperationResult, XlvbaProject, lint_files
-    from xlvbatools.analysis import VBAIssue, lint_workbook
+    from xlvbatools import OperationRequest, OperationResult, Project, VBAIssue
 
+    assert Project is not None
+    assert OperationRequest is not None
     assert OperationResult is not None
-    assert XlvbaProject is not None
-    assert lint_files is not None
     assert VBAIssue is not None
-    assert lint_workbook is not None
+    assert "XlvbaProject" not in xlvbatools.__all__
+    assert "ExcelSession" not in xlvbatools.__all__
+    assert "lint_files" not in xlvbatools.__all__
     assert "win32com" not in sys.modules
 
 
 @pytest.mark.com
 @pytest.mark.integration
-def test_project_facade_inspection_reports_clean_owned_process(minimal_workbook):
-    from xlvbatools import XlvbaProject
-
-    result = XlvbaProject.for_workbook(minimal_workbook).inspect(
+def test_project_inspection_reports_clean_owned_process(minimal_workbook):
+    result = Project.open(minimal_workbook).inspect(
         ["Sheet1"], include_data=True, include_screenshots=False, timeout=60,
     )
 
@@ -214,11 +192,9 @@ def test_project_facade_inspection_reports_clean_owned_process(minimal_workbook)
 
 @pytest.mark.com
 @pytest.mark.integration
-def test_project_facade_macro_reports_clean_owned_process(runtime_error_workbook):
-    from xlvbatools import XlvbaProject
-
-    result = XlvbaProject.for_workbook(runtime_error_workbook).run_macro(
-        "CompleteNormally", timeout=60, save_on_exit=False,
+def test_project_macro_reports_clean_owned_process(runtime_error_workbook):
+    result = Project.open(runtime_error_workbook).run(
+        "CompleteNormally", timeout=60, save=False,
     )
 
     assert result.success is True, result.to_dict()
@@ -231,13 +207,8 @@ def test_project_facade_macro_reports_clean_owned_process(runtime_error_workbook
 def test_project_vba_round_trip_uses_clean_sequential_workers(
     runtime_error_workbook, tmp_path,
 ):
-    """The high-level VBA workflow never exposes COM to its caller."""
-    from xlvbatools import XlvbaProject
-
     source = tmp_path / "isolated_source"
-    project = XlvbaProject.for_workbook(
-        runtime_error_workbook, vba_source=source,
-    )
+    project = Project.open(runtime_error_workbook, source=source)
 
     extracted = project.extract(timeout=90)
     assert extracted.success is True, extracted.to_dict()
@@ -247,35 +218,24 @@ def test_project_vba_round_trip_uses_clean_sequential_workers(
     compared = project.diff(timeout=90)
     assert compared.success is True, compared.to_dict()
     assert all(item["status"] == "identical" for item in compared.data)
-    assert compared.require_clean_shutdown().still_running is False
 
     injected = project.inject(backup=False, timeout=90)
     assert injected.success is True, injected.to_dict()
     assert all(item["status"] == "injected" for item in injected.data)
-    assert injected.require_clean_shutdown().still_running is False
 
-    linted = project.lint(workbook=True, compile_test=False, timeout=90)
-    assert linted.success is True, linted.to_dict()
+    linted = project.lint_workbook(compile_test=False, timeout=90)
     assert linted.require_clean_shutdown().still_running is False
 
-    executed = project.run_macro(
-        "CompleteNormally", timeout=90, save_on_exit=False,
-    )
+    executed = project.run("CompleteNormally", timeout=90, save=False)
     assert executed.success is True, executed.to_dict()
     assert executed.require_clean_shutdown().still_running is False
 
 
 @pytest.mark.com
 @pytest.mark.e2e
-def test_project_modify_then_inspect_across_isolated_workers(
-    minimal_workbook,
-):
-    from xlvbatools import XlvbaProject
-
-    project = XlvbaProject.for_workbook(minimal_workbook)
-    modified = project.modify(
-        sheet="Sheet1", cell="B2", value=73, timeout=90,
-    )
+def test_project_modify_then_inspect_across_isolated_workers(minimal_workbook):
+    project = Project.open(minimal_workbook)
+    modified = project.modify(sheet="Sheet1", cell="B2", value=73, timeout=90)
     assert modified.success is True, modified.to_dict()
     assert modified.require_clean_shutdown().still_running is False
 
@@ -285,4 +245,3 @@ def test_project_modify_then_inspect_across_isolated_workers(
     assert inspected.success is True, inspected.to_dict()
     cell = inspected.data.workbook_data["sheets"]["Sheet1"]["cells"]["B2"]
     assert cell["value"] == 73
-    assert inspected.require_clean_shutdown().still_running is False

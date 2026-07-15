@@ -10,7 +10,9 @@ Document modules (sheet code-behinds) are injected by clearing and
 replacing the CodeModule content line by line.
 
 Usage:
-    from xlvbatools.vba import inject_all, inject_component
+    from xlvbatools import Project
+
+    result = Project.from_config().inject()
 
     results = inject_all("workbook.xlsm", "vba_source/")
     success = inject_component("workbook.xlsm", "vba_source/", "modMain")

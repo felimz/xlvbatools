@@ -1,5 +1,3 @@
-# xlvbatools.macro -- Macro execution engine
+"""Internal macro backend; use ``Project.run``."""
 
-from xlvbatools.macro.runner import run_macro
-
-__all__ = ["run_macro"]
+__all__: list[str] = []

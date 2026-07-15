@@ -92,7 +92,7 @@ def run_macro(
     strict_named_ranges: bool = True,
 ) -> dict:
     """Run a complete isolated Excel session with a real parent-enforced timeout."""
-    from xlvbatools.core.worker import run_isolated_operation
+    from xlvbatools.core.worker import execute_worker_request
 
     run_id = str(uuid.uuid4())
     arguments = {
@@ -105,4 +105,4 @@ def run_macro(
         "strict_named_ranges": strict_named_ranges,
         "run_id": run_id,
     }
-    return run_isolated_operation("run_macro", arguments, timeout=timeout)
+    return execute_worker_request("run_macro", arguments, timeout=timeout)

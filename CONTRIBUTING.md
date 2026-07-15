@@ -1,6 +1,6 @@
 # Contributing to xlvbatools
 
-Thank you for your interest in contributing! This guide helps you set up a local development environment and run tests.
+This guide covers development and release validation for the v1 architecture.
 
 ---
 
@@ -24,7 +24,7 @@ python -m venv .venv
 Install development dependencies:
 
 ```bash
-pip install -e .[dev]
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
 ---
@@ -35,23 +35,48 @@ Tests are managed using `pytest`. The test suite is divided into `unit` (offline
 
 Run all tests:
 ```bash
-pytest
+.venv\Scripts\python.exe -m pytest
 ```
 
 Run only offline/unit tests:
 ```bash
-pytest -m unit
+.venv\Scripts\python.exe -m pytest -m unit
 ```
 
 Run tests with coverage:
 ```bash
-pytest --cov=xlvbatools
+.venv\Scripts\python.exe -m pytest --cov=xlvbatools
 ```
 
 ---
 
 ## Coding Guidelines
 
-* **Type Safety:** The project uses PEP 561 types. All new modules must have explicit annotations and be compliant with static type checkers.
-* **Compatibility:** Always check platform status before using `win32com.client` or native win32 calls by referencing `xlvbatools._compat.IS_WINDOWS`.
-* **COM Safety:** Never perform a raw `SendMessageW` from the watchdog thread; use `SendMessageTimeoutW` to prevent deadlocks when VBE or Excel hangs.
+* **Public API:** Add public behavior through `Project`, typed requests/results,
+  and `xlvbatools.__all__`. Do not expose worker backends or COM objects.
+* **Type Safety:** The project uses PEP 561 types. New public behavior requires
+  explicit annotations and typed result data.
+* **Platform Safety:** Check platform status before using `win32com.client` or
+  native Win32 APIs.
+* **COM Safety:** Never scan or terminate Excel globally. Cleanup may target
+  only the PIDs owned and reported by the current operation.
+* **UI Safety:** Watchdog calls use bounded `SendMessageTimeoutW`, never an
+  unbounded cross-process `SendMessageW`.
+
+## Releases
+
+Follow [docs/versioning.md](docs/versioning.md) and
+[docs/release-validation.md](docs/release-validation.md). Release wheels must
+be built with PEP 517 isolation and installed into a fresh consumer virtual
+environment before tagging.
+
+## Documentation and agent templates
+
+When public behavior changes, update `README.md`, the relevant file under
+`docs/`, `CHANGELOG.md`, and the active `.agents/` skill in the same change.
+The source templates under `templates/agents/` and the packaged copies under
+`src/xlvbatools/templates/agents/` must remain byte-for-byte identical.
+
+Validate documented CLI examples against `xlvba <command> --help`. Safety
+guidance must never recommend global Excel termination or direct use of
+implementation subpackages.

@@ -11,7 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from xlvbatools.core.worker import WORKER_PROTOCOL_VERSION
+from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION
 
 
 def _json_default(value: Any) -> Any:
@@ -229,18 +229,37 @@ def _dispatch(
         from xlvbatools.workbook.dumper import _inspect_workbook_in_process
 
         reporter.phase("session_start")
-        return _inspect_workbook_in_process(
+        result = _inspect_workbook_in_process(
             **arguments, on_excel_started=reporter.excel_started,
         )
+        workbook_data = result.get("data")
+        screenshots = dict(result.pop("screenshots", {}) or {})
+        result["data"] = {
+            "workbook_data": workbook_data,
+            "screenshots": screenshots,
+        }
+        return result
 
     if operation == "run_macro":
         from xlvbatools.macro.runner import _run_macro_once
 
-        return _run_macro_once(
+        result = _run_macro_once(
             **arguments,
             on_excel_started=reporter.excel_started,
             on_phase=reporter.phase,
         )
+        envelope_keys = {
+            "success", "phase", "primary_error", "error_type", "traceback",
+            "dialog_events", "cleanup", "excel_pid", "elapsed_seconds",
+        }
+        operation_data = {
+            key: value for key, value in result.items()
+            if key not in envelope_keys
+        }
+        for key in operation_data:
+            result.pop(key, None)
+        result["data"] = operation_data
+        return result
 
     if operation == "inject" and arguments.get("dry_run"):
         from xlvbatools.vba.injector import inject_all

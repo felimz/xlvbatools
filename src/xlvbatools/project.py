@@ -1,71 +1,148 @@
-"""Config-bound high-level facade intended for project-specific wrappers."""
+"""Primary public API for project-scoped Excel/VBA automation."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping
+import uuid
 
+from xlvbatools.analysis.issue import VBAIssue
 from xlvbatools.config.loader import load_config
 from xlvbatools.config.schema import XlvbaConfig
 from xlvbatools.errors import ConfigurationError
-from xlvbatools.results import (
-    Artifact,
-    ErrorInfo,
-    InspectionOutput,
-    OperationResult,
-)
+from xlvbatools.execution import Executor, IsolatedExecutor, Operation, OperationRequest
+from xlvbatools.results import Artifact, ErrorInfo, InspectionOutput, OperationResult
 
 
-class XlvbaProject:
-    """A resolved project configuration with stable operation entry points.
+@dataclass(frozen=True)
+class ProjectSettings:
+    """Immutable paths and policies required by the public project API."""
 
-    Existing function APIs remain supported. This facade gives consumer
-    projects one import and one versioned result contract while the execution
-    internals continue to evolve behind it.
+    workbook: Path
+    source: Path
+    snapshots: Path
+    disabled_lint_rules: tuple[str, ...] = ()
+    backup_limit: int = 5
+    snapshot_limit: int = 10
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workbook", self.workbook.resolve())
+        object.__setattr__(self, "source", self.source.resolve())
+        object.__setattr__(self, "snapshots", self.snapshots.resolve())
+        if self.workbook.suffix.casefold() not in {".xlsm", ".xlsb", ".xls"}:
+            raise ConfigurationError(
+                f"Workbook must be .xlsm, .xlsb, or .xls: {self.workbook}"
+            )
+        if self.backup_limit < 0:
+            raise ConfigurationError("backup_limit must be non-negative")
+        if self.snapshot_limit < 1:
+            raise ConfigurationError("snapshot_limit must be at least one")
+
+    @classmethod
+    def _from_config(cls, config: XlvbaConfig) -> "ProjectSettings":
+        errors = config.validate()
+        if errors:
+            raise ConfigurationError("; ".join(errors))
+        return cls(
+            workbook=Path(config.workbook_path),
+            source=Path(config.vba_source_path),
+            snapshots=Path(config.snapshots_path),
+            disabled_lint_rules=tuple(config.lint.disabled_rules),
+            backup_limit=config.backups.limit,
+            snapshot_limit=config.snapshots.rolling_limit,
+        )
+
+
+class Project:
+    """A configured workbook and its VBA source tree.
+
+    ``Project`` is the sole high-level entry point for Python consumers and
+    project-specific wrappers.  Every Excel-backed method crosses the same
+    typed executor boundary; COM objects and worker transport dictionaries are
+    never exposed to callers.
     """
 
-    def __init__(self, config: XlvbaConfig, *, validate: bool = True):
-        if validate:
-            errors = config.validate()
-            if errors:
-                raise ConfigurationError("; ".join(errors))
-        self.config = config
+    def __init__(
+        self,
+        settings: ProjectSettings,
+        *,
+        executor: Executor | None = None,
+    ) -> None:
+        self.settings = settings
+        self.executor: Executor = executor or IsolatedExecutor()
 
     @classmethod
     def from_config(
-        cls, start_dir: str | os.PathLike[str] | None = None,
-    ) -> "XlvbaProject":
-        """Load the nearest ``xlvbatools.toml`` and resolve paths from it."""
-        return cls(load_config(os.fspath(start_dir) if start_dir is not None else None))
+        cls,
+        start_dir: str | os.PathLike[str] | None = None,
+        *,
+        executor: Executor | None = None,
+    ) -> "Project":
+        """Load the nearest ``xlvbatools.toml`` configuration."""
+        config = load_config(os.fspath(start_dir) if start_dir is not None else None)
+        return cls(ProjectSettings._from_config(config), executor=executor)
 
     @classmethod
-    def for_workbook(
+    def open(
         cls,
-        workbook_path: str | os.PathLike[str],
+        workbook: str | os.PathLike[str],
         *,
-        vba_source: str | os.PathLike[str] | None = None,
-    ) -> "XlvbaProject":
-        """Create a project directly from explicit paths, without a TOML file."""
-        workbook = Path(workbook_path).resolve()
-        source = Path(vba_source).resolve() if vba_source else workbook.parent / "vba_source"
-        return cls(XlvbaConfig(workbook=str(workbook), vba_source=str(source)))
+        source: str | os.PathLike[str] | None = None,
+        executor: Executor | None = None,
+    ) -> "Project":
+        """Create a project from explicit paths without a TOML file."""
+        workbook_path = Path(workbook).resolve()
+        source_path = Path(source).resolve() if source else workbook_path.parent / "vba_source"
+        return cls(
+            ProjectSettings(
+                workbook=workbook_path,
+                source=source_path,
+                snapshots=workbook_path.parent / "snapshots",
+            ),
+            executor=executor,
+        )
 
     @property
-    def workbook_path(self) -> str:
-        return self.config.workbook_path
+    def workbook(self) -> Path:
+        return self.settings.workbook
 
     @property
-    def vba_source_path(self) -> str:
-        return self.config.vba_source_path
+    def source(self) -> Path:
+        return self.settings.source
+
+    def execute(
+        self,
+        operation: Operation,
+        arguments: Mapping[str, Any],
+        *,
+        timeout: float,
+        retry_transient: bool = False,
+    ) -> OperationResult[Any]:
+        """Execute an advanced worker operation through the typed boundary."""
+        return self.executor.execute(
+            OperationRequest(
+                operation=operation,
+                arguments=arguments,
+                timeout=timeout,
+                retry_transient=retry_transient,
+            )
+        )
+
+    def list_components(self, *, timeout: float = 60.0) -> OperationResult[Any]:
+        return self.execute(
+            Operation.LIST_COMPONENTS,
+            {"workbook_path": str(self.workbook)},
+            timeout=timeout,
+        )
 
     def inspect(
         self,
         sheets: Iterable[str],
         *,
-        workbook_path: str | os.PathLike[str] | None = None,
         output_dir: str | os.PathLike[str] = "screenshots",
-        cell_range: Optional[str] = None,
+        cell_range: str | None = None,
         include_data: bool = True,
         include_screenshots: bool = True,
         output_json: str | os.PathLike[str] | None = None,
@@ -74,283 +151,234 @@ class XlvbaProject:
         include_hidden_sheets: bool = False,
         timeout: float = 60.0,
     ) -> OperationResult[InspectionOutput]:
-        """Inspect workbook data and screenshots in the isolated worker."""
-        requested_sheets = [str(sheet) for sheet in sheets]
-        try:
-            from xlvbatools.workbook.dumper import inspect_workbook
+        requested_sheets = tuple(str(sheet) for sheet in sheets)
+        if not requested_sheets:
+            raise ValueError("at least one sheet is required")
+        result = self.execute(
+            Operation.INSPECT,
+            {
+                "workbook_path": str(self.workbook),
+                "sheets": list(requested_sheets),
+                "output_dir": os.path.abspath(os.fspath(output_dir)),
+                "custom_range": cell_range,
+                "include_data": include_data,
+                "include_screenshots": include_screenshots,
+                "output_json": str(Path(output_json).resolve()) if output_json else None,
+                "output_md": str(Path(output_markdown).resolve()) if output_markdown else None,
+                "continue_on_render_error": continue_on_render_error,
+                "include_hidden_sheets": include_hidden_sheets,
+            },
+            timeout=timeout,
+        )
+        if result.data is None:
+            return result  # type: ignore[return-value]
+        payload = dict(result.data)
+        screenshots = dict(payload.get("screenshots") or {})
+        artifacts = tuple(
+            Artifact(
+                kind="screenshot",
+                path=path,
+                media_type="image/png",
+                label=sheet,
+                metadata={"sheet": sheet},
+            )
+            for sheet, path in screenshots.items()
+            if isinstance(path, str)
+            and path not in {"Not found", "Empty", "Hidden (skipped)"}
+            and not path.startswith("Error:")
+        )
+        return replace(
+            result,
+            data=InspectionOutput(
+                workbook_data=payload.get("workbook_data"),
+                screenshots=screenshots,
+            ),
+            artifacts=artifacts,
+            metadata={"sheets": requested_sheets, "cell_range": cell_range},
+        )
 
-            raw = inspect_workbook(
-                os.fspath(workbook_path) if workbook_path else self.workbook_path,
-                requested_sheets,
-                output_dir=os.fspath(output_dir),
-                custom_range=cell_range,
-                include_data=include_data,
-                include_screenshots=include_screenshots,
-                output_json=os.fspath(output_json) if output_json else None,
-                output_md=os.fspath(output_markdown) if output_markdown else None,
-                continue_on_render_error=continue_on_render_error,
-                include_hidden_sheets=include_hidden_sheets,
-                timeout_seconds=timeout,
-            )
-            screenshots = dict(raw.get("screenshots") or {})
-            artifacts = tuple(
-                Artifact(
-                    kind="screenshot",
-                    path=path,
-                    media_type="image/png",
-                    label=sheet,
-                    metadata={"sheet": sheet},
-                )
-                for sheet, path in screenshots.items()
-                if isinstance(path, str)
-                and path not in ("Not found", "Empty", "Hidden (skipped)")
-                and not path.startswith("Error:")
-            )
-            output = InspectionOutput(
-                workbook_data=raw.get("data"), screenshots=screenshots,
-            )
-            return OperationResult.from_legacy(
-                "inspect",
-                raw,
-                data=output,
-                artifacts=artifacts,
-                metadata={"sheets": requested_sheets, "cell_range": cell_range},
-            )
-        except Exception as error:
-            return OperationResult.failed("inspect", error)
-
-    def run_macro(
+    def run(
         self,
-        macro_name: str,
+        macro: str,
         *,
-        workbook_path: str | os.PathLike[str] | None = None,
-        named_ranges: Optional[dict] = None,
+        named_ranges: Mapping[str, Any] | None = None,
         timeout: float = 120.0,
         visible: bool = False,
-        save_on_exit: bool = True,
+        save: bool = True,
         strict_named_ranges: bool = True,
     ) -> OperationResult[dict[str, Any]]:
-        """Run a macro through the parent-enforced isolated worker."""
-        try:
-            from xlvbatools.macro.runner import run_macro
+        if not macro.strip():
+            raise ValueError("macro must be non-empty")
+        result = self.execute(
+            Operation.RUN,
+            {
+                "workbook_path": str(self.workbook),
+                "macro_name": macro,
+                "named_ranges": dict(named_ranges) if named_ranges else None,
+                "timeout": timeout,
+                "visible": visible,
+                "save_on_exit": save,
+                "strict_named_ranges": strict_named_ranges,
+                "run_id": str(uuid.uuid4()),
+            },
+            timeout=timeout,
+        )
+        return replace(result, metadata={"macro": macro})
 
-            raw = run_macro(
-                os.fspath(workbook_path) if workbook_path else self.workbook_path,
-                macro_name,
-                named_ranges=named_ranges,
-                timeout=timeout,
-                visible=visible,
-                save_on_exit=save_on_exit,
-                strict_named_ranges=strict_named_ranges,
-            )
-            return OperationResult.from_legacy(
-                "run_macro", raw, data=dict(raw), metadata={"macro": macro_name},
-            )
-        except Exception as error:
-            return OperationResult.failed("run_macro", error)
-
-    def lint(
+    def lint_source(
         self,
         source: str | os.PathLike[str] | None = None,
+    ) -> OperationResult[tuple[VBAIssue, ...]]:
+        from xlvbatools.analysis.preflight import lint_files
+
+        issues = tuple(
+            lint_files(
+                os.fspath(source) if source is not None else str(self.source),
+                disabled_rules=list(self.settings.disabled_lint_rules),
+            )
+        )
+        errors = tuple(issue for issue in issues if issue.severity == "ERROR")
+        return OperationResult(
+            operation="lint_source",
+            success=not errors,
+            phase="complete",
+            data=issues,
+            error=(
+                ErrorInfo(
+                    message=f"Static analysis found {len(errors)} error(s)",
+                    code="lint_failed",
+                )
+                if errors else None
+            ),
+            metadata={"error_count": len(errors), "issue_count": len(issues)},
+        )
+
+    def lint_workbook(
+        self,
         *,
-        workbook: bool = False,
         compile_test: bool = True,
         timeout: float = 120.0,
-    ) -> OperationResult[tuple[Any, ...]]:
-        """Lint project source offline, or lint/compile the workbook via COM."""
-        try:
-            if workbook:
-                from xlvbatools.core.worker import run_isolated_operation
-
-                raw = run_isolated_operation(
-                    "lint_workbook",
-                    {
-                        "workbook_path": self.workbook_path,
-                        "disabled_rules": self.config.lint.disabled_rules,
-                        "compile_test": compile_test,
-                    },
-                    timeout=timeout,
-                )
-                issues = tuple(raw.get("data") or ())
-                errors = [
-                    issue for issue in issues
-                    if issue.get("severity") == "ERROR"
-                ]
-                return OperationResult.from_legacy(
-                    "lint",
-                    raw,
-                    data=issues,
-                    metadata={
-                        "error_count": len(errors),
-                        "issue_count": len(issues),
-                        "workbook": True,
-                    },
-                )
-            else:
-                from xlvbatools.analysis.preflight import lint_files
-
-                issues = lint_files(
-                    os.fspath(source) if source else self.vba_source_path,
-                    disabled_rules=self.config.lint.disabled_rules,
-                )
-            errors = [issue for issue in issues if issue.severity == "ERROR"]
-            return OperationResult(
-                operation="lint",
-                success=not errors,
-                phase="complete",
-                data=tuple(issues),
-                error=(
-                    ErrorInfo(
-                        message=f"Static analysis found {len(errors)} error(s)",
-                        code="lint_failed",
-                    )
-                    if errors else None
-                ),
-                metadata={"error_count": len(errors), "issue_count": len(issues)},
-            )
-        except Exception as error:
-            return OperationResult.failed("lint", error)
+    ) -> OperationResult[tuple[VBAIssue, ...]]:
+        result = self.execute(
+            Operation.LINT_WORKBOOK,
+            {
+                "workbook_path": str(self.workbook),
+                "disabled_rules": list(self.settings.disabled_lint_rules),
+                "compile_test": compile_test,
+            },
+            timeout=timeout,
+        )
+        issues = tuple(
+            item if isinstance(item, VBAIssue) else VBAIssue(**item)
+            for item in (result.data or ())
+        )
+        errors = tuple(issue for issue in issues if issue.severity == "ERROR")
+        return replace(
+            result,
+            data=issues,
+            metadata={
+                "error_count": len(errors),
+                "issue_count": len(issues),
+                "compile_test": compile_test,
+            },
+        )
 
     def extract(
         self,
         *,
-        output_dir: str | os.PathLike[str] | None = None,
-        component: Optional[str] = None,
+        output: str | os.PathLike[str] | None = None,
+        component: str | None = None,
         timeout: float = 120.0,
     ) -> OperationResult[Any]:
-        """Extract VBA through the shared isolated Excel worker."""
-        target = os.fspath(output_dir) if output_dir else self.vba_source_path
-        try:
-            from xlvbatools.core.worker import run_isolated_operation
-
-            raw = run_isolated_operation(
-                "extract",
-                {
-                    "workbook_path": self.workbook_path,
-                    "output_dir": os.path.abspath(target),
-                    "component": component,
-                },
-                timeout=timeout,
-            )
-            return OperationResult.from_legacy(
-                "extract", raw, data=raw.get("data"),
-                metadata={"component": component, "output_dir": target},
-            )
-        except Exception as error:
-            return OperationResult.failed("extract", error)
+        target = Path(output).resolve() if output else self.source
+        return self.execute(
+            Operation.EXTRACT,
+            {
+                "workbook_path": str(self.workbook),
+                "output_dir": str(target),
+                "component": component,
+            },
+            timeout=timeout,
+        )
 
     def inject(
         self,
         *,
-        source_dir: str | os.PathLike[str] | None = None,
-        component: Optional[str] = None,
+        source: str | os.PathLike[str] | None = None,
+        component: str | None = None,
         backup: bool = True,
         dry_run: bool = False,
         timeout: float = 120.0,
     ) -> OperationResult[Any]:
-        """Inject VBA through the shared isolated Excel worker."""
-        source = os.fspath(source_dir) if source_dir else self.vba_source_path
-        try:
-            if component and dry_run:
-                raise ValueError("dry_run is supported only for project injection")
-            from xlvbatools.core.worker import run_isolated_operation
-
-            raw = run_isolated_operation(
-                "inject",
-                {
-                    "workbook_path": self.workbook_path,
-                    "source_dir": os.path.abspath(source),
-                    "component": component,
-                    "backup": backup,
-                    "dry_run": dry_run,
-                    "backup_limit": self.config.backups.limit,
-                },
-                timeout=timeout,
-            )
-            data: Any = raw.get("data")
-            if component:
-                data = {"component": component, "injected": bool(data)}
-            return OperationResult.from_legacy(
-                "inject", raw, data=data,
-                metadata={"component": component, "dry_run": dry_run},
-            )
-        except Exception as error:
-            return OperationResult.failed("inject", error)
+        if component and dry_run:
+            raise ValueError("dry_run cannot be combined with component injection")
+        source_path = Path(source).resolve() if source else self.source
+        return self.execute(
+            Operation.INJECT,
+            {
+                "workbook_path": str(self.workbook),
+                "source_dir": str(source_path),
+                "component": component,
+                "backup": backup,
+                "dry_run": dry_run,
+                "backup_limit": self.settings.backup_limit,
+            },
+            timeout=timeout,
+        )
 
     def diff(
         self,
         *,
-        source_dir: str | os.PathLike[str] | None = None,
-        component: Optional[str] = None,
+        source: str | os.PathLike[str] | None = None,
+        component: str | None = None,
         timeout: float = 120.0,
     ) -> OperationResult[Any]:
-        """Compare live VBA through the shared isolated Excel worker."""
-        source = os.fspath(source_dir) if source_dir else self.vba_source_path
-        try:
-            from xlvbatools.core.worker import run_isolated_operation
-
-            raw = run_isolated_operation(
-                "diff",
-                {
-                    "workbook_path": self.workbook_path,
-                    "source_dir": os.path.abspath(source),
-                    "component": component,
-                },
-                timeout=timeout,
-            )
-            return OperationResult.from_legacy(
-                "diff", raw, data=raw.get("data"),
-                metadata={"component": component, "source_dir": source},
-            )
-        except Exception as error:
-            return OperationResult.failed("diff", error)
+        source_path = Path(source).resolve() if source else self.source
+        return self.execute(
+            Operation.DIFF,
+            {
+                "workbook_path": str(self.workbook),
+                "source_dir": str(source_path),
+                "component": component,
+            },
+            timeout=timeout,
+        )
 
     def modify(
         self,
         *,
         sheet: str = "Sheet1",
-        cell: Optional[str] = None,
+        cell: str | None = None,
         value: Any = None,
-        formula: Optional[str] = None,
-        name: Optional[str] = None,
-        refers_to: Optional[str] = None,
+        formula: str | None = None,
+        name: str | None = None,
+        refers_to: str | None = None,
         delete_name: bool = False,
         timeout: float = 120.0,
-    ) -> OperationResult[dict[str, Any]]:
-        """Modify a cell or named range through the isolated Excel worker."""
-        try:
-            from xlvbatools.core.worker import run_isolated_operation
+    ) -> OperationResult[Any]:
+        return self.execute(
+            Operation.MODIFY,
+            {
+                "workbook_path": str(self.workbook),
+                "sheet": sheet,
+                "cell": cell,
+                "value": value,
+                "formula": formula,
+                "name": name,
+                "refers_to": refers_to,
+                "delete_name": delete_name,
+            },
+            timeout=timeout,
+            retry_transient=True,
+        )
 
-            raw = run_isolated_operation(
-                "modify",
-                {
-                    "workbook_path": self.workbook_path,
-                    "sheet": sheet,
-                    "cell": cell,
-                    "value": value,
-                    "formula": formula,
-                    "name": name,
-                    "refers_to": refers_to,
-                    "delete_name": delete_name,
-                },
-                timeout=timeout,
-                retry_transient=True,
-            )
-            return OperationResult.from_legacy(
-                "modify",
-                raw,
-                data={"sheet": sheet, "cell": cell, "name": name},
-            )
-        except Exception as error:
-            return OperationResult.failed("modify", error)
-
-    def snapshot_manager(self):
-        """Return a SnapshotManager bound to the resolved project paths."""
+    def snapshots(self):
+        """Return the snapshot service bound to this project."""
         from xlvbatools.snapshot.manager import SnapshotManager
 
         return SnapshotManager(
-            self.workbook_path,
-            self.vba_source_path,
-            self.config.snapshots_path,
-            rolling_limit=self.config.snapshots.rolling_limit,
+            str(self.workbook),
+            str(self.source),
+            str(self.settings.snapshots),
+            rolling_limit=self.settings.snapshot_limit,
         )
