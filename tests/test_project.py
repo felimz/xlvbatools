@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 
 import pytest
 
 from xlvbatools import (
+    AttemptDiagnostic,
     CleanupReport,
     Diagnostics,
     Operation,
@@ -92,6 +94,43 @@ def test_project_run_uses_typed_request_and_result(tmp_path):
     assert request.operation is Operation.RUN
     assert request.timeout == 5
     assert request.arguments["save_on_exit"] is False
+
+
+@pytest.mark.unit
+def test_project_run_preserves_executor_attempt_diagnostics(tmp_path):
+    response = _successful(
+        Operation.RUN.value,
+        {"macro": "Calculate", "run_id": "run-1", "result": 42},
+    )
+    response = replace(
+        response,
+        attempt_count=2,
+        diagnostics=Diagnostics(
+            cleanup=response.diagnostics.cleanup,
+            worker_pid=90,
+            excel_pid=91,
+            attempts=(
+                AttemptDiagnostic(
+                    attempt=1,
+                    phase="worker_start",
+                    error_code="worker_start_failed",
+                    retryable=True,
+                    retry_reason="worker_creation_failed",
+                ),
+                AttemptDiagnostic(attempt=2, phase="complete"),
+            ),
+        ),
+    )
+    project = Project.open(
+        tmp_path / "book.xlsm",
+        executor=RecordingExecutor([response]),
+    )
+
+    result = project.run("Calculate")
+
+    assert result.attempt_count == 2
+    assert result.diagnostics.attempts[0].retry_reason == "worker_creation_failed"
+    assert result.to_dict()["diagnostics"]["attempts"][1]["phase"] == "complete"
 
 
 @pytest.mark.unit
@@ -225,7 +264,7 @@ def test_project_inspection_reports_clean_owned_process(minimal_workbook):
     )
 
     assert result.success is True, result.to_dict()
-    assert result.schema_version == "1.0"
+    assert result.schema_version == "1.1"
     assert result.data.workbook_data["sheets"]["Sheet1"]
     assert result.diagnostics.cleanup.is_clean, result.to_dict()
     assert result.require_clean_shutdown().still_running is False

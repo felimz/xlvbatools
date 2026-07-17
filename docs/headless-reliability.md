@@ -5,7 +5,7 @@ through `Project`; implementation subpackages are not an alternate public API.
 
 ## Isolation and ownership
 
-- Every Excel-backed operation starts one directly tracked worker.
+- Every Excel-backed attempt starts one directly tracked worker.
 - The worker starts and reports one owned Excel PID.
 - No operation attaches to an existing desktop Excel instance.
 - No cleanup path terminates Excel by image name.
@@ -31,11 +31,22 @@ through `Project`; implementation subpackages are not an alternate public API.
 
 ## Deadlines and retries
 
-The parent enforces deadlines around the complete worker lifecycle. Python
-threads are not used to interrupt blocking COM calls. Only modification may
-request one fresh-worker retry for a recognized transient RPC disconnect after
-the first owned Excel process is confirmed stopped. Macro execution and
-injection are never retried automatically.
+The parent enforces one deadline around the complete operation, including any
+retry. Python threads are not used to interrupt blocking COM calls. The
+executor permits at most two total attempts.
+
+One automatic retry is safe only before Excel ownership: child-process
+creation failed before a PID existed, or the worker exited during
+`worker_start`, was reaped without force, and reported no Excel PID, dialog,
+timeout, or ambiguous cleanup. Every worker durably publishes `session_start`
+before Excel session construction; that phase is the no-replay boundary.
+Session startup, workbook, VBA, macro, protocol, dialog, timeout, and cleanup
+failures are not startup-retried.
+
+Only idempotent modification may use the same remaining attempt for a
+recognized transient RPC disconnect after its owned Excel process is confirmed
+stopped. Startup and modification retry policies cannot stack beyond two total
+attempts. Callers do not enable or reproduce these policies themselves.
 
 ## Workbook behavior
 
@@ -59,4 +70,5 @@ assert cleanup.still_running is False
 
 Operation success and clean shutdown are independent conditions. The result
 preserves phase, error, request timing, dialog events, worker PID, Excel PID,
-and cleanup fields so wrappers never need private process inspection.
+cleanup fields, and per-attempt retry evidence so wrappers never need private
+process inspection.

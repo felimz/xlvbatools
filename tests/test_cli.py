@@ -7,7 +7,7 @@ import json
 import pytest
 from unittest.mock import patch
 from xlvbatools.cli.main import main
-from xlvbatools.results import OperationResult
+from xlvbatools.results import AttemptDiagnostic, Diagnostics, OperationResult
 
 
 def _result(operation, data=None, *, success=True):
@@ -323,6 +323,44 @@ def test_cli_run_forwards_timeout(tmp_path):
         timeout=7.5,
         visible=False,
         save=True,
+    )
+    patch.stopall()
+
+
+@pytest.mark.unit
+def test_cli_run_emits_executor_attempt_diagnostics(tmp_path, capsys):
+    project = patch("xlvbatools.cli.commands._project").start().return_value
+    project.run.return_value = OperationResult(
+        operation="run_macro",
+        success=True,
+        phase="complete",
+        data={"macro": "MyMacro"},
+        attempt_count=2,
+        diagnostics=Diagnostics(attempts=(
+            AttemptDiagnostic(
+                attempt=1,
+                phase="worker_start",
+                error_code="worker_start_failed",
+                retryable=True,
+                retry_reason="worker_creation_failed",
+            ),
+            AttemptDiagnostic(attempt=2, phase="complete"),
+        )),
+    )
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "MyMacro"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exc_info.value.code == 0
+    assert payload["attempt_count"] == 2
+    assert payload["diagnostics"]["attempts"][0]["retry_reason"] == (
+        "worker_creation_failed"
     )
     patch.stopall()
 

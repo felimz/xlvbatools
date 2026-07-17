@@ -71,7 +71,10 @@ models such as `MacroOutput`, `ExtractionOutput`, `InjectionOutput`,
 `ComponentDiff`, and `ModificationOutput`; no worker dictionaries escape into
 application wrappers. Results also contain structured errors, artifacts,
 timing, dialog diagnostics, exact worker and Excel PIDs, and cleanup reports.
-`to_dict()` is the versioned JSON form.
+Automatic retry evidence is typed under `diagnostics.attempts`; the executor
+allows at most two total attempts under one timeout and never startup-retries
+after the durable `session_start` boundary. `to_dict()` is the versioned JSON
+form.
 
 `project.snapshots()` returns a typed `SnapshotService`. It creates immutable
 `SnapshotRecord` values and persists metadata with atomic writes and
@@ -136,7 +139,7 @@ Python wrapper ─┐
                 ├─> Project ─> OperationRequest ─> IsolatedExecutor
 CLI command ────┘                                      │
                                                        v
-                                              one owned worker
+                                         one owned worker per attempt
                                                        │
                                                        v
                                               one owned Excel PID
@@ -147,7 +150,8 @@ CLI command ────┘                                      │
 
 The parent tracks only the worker it created and the Excel PID reported by that
 worker. Timeouts and cleanup never terminate Excel by image name and never
-select an unrelated desktop instance.
+select an unrelated desktop instance. A single automatic replay is possible
+only for a proven pre-Excel worker-start failure; callers must not add another.
 
 Static linting uses one whole-project symbol index for both extracted files and
 live workbooks, so cross-module public declarations resolve consistently.

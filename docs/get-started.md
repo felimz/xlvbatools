@@ -254,6 +254,13 @@ the owned Excel lifecycle. Source-only operations do not have Excel cleanup to
 verify. `project.snapshots()` is the exception: it returns a `SnapshotService`
 whose methods manage local checkpoints.
 
+The executor automatically handles one narrowly safe worker-start retry under
+the original timeout. Do not wrap `Project` calls in a second startup retry.
+For tracing, inspect `result.attempt_count` and
+`result.diagnostics.attempts`; a two-attempt result explains why the first
+attempt was replayed. Excel/VBA, macro, dialog, timeout, protocol, and
+post-ownership failures are not automatically replayed.
+
 Other useful root-level imports include:
 
 ```python

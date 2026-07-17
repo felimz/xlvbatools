@@ -20,6 +20,10 @@ from xlvbatools.core.process import is_process_running, kill_process_by_pid
 from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION
 
 
+class WorkerCreationError(RuntimeError):
+    """The child interpreter could not be created; no worker PID exists."""
+
+
 def _worker_python() -> tuple[str, dict[str, str] | None]:
     """Return a directly trackable interpreter preserving the active venv.
 
@@ -89,19 +93,27 @@ def _terminate_owned_processes(
     }
 
 
-def _is_transient_com_failure(result: Mapping[str, Any]) -> bool:
-    cleanup = result.get("cleanup") or {}
-    if isinstance(cleanup, Mapping) and cleanup.get("still_running"):
-        return False
-    message = " ".join(
-        str(result.get(key) or "")
-        for key in ("primary_error", "worker_output")
-    ).lower()
-    return any(marker in message for marker in (
-        "0x800706ba", "-2147023174", "rpc server is unavailable",
-        "0x80010001", "-2147418111", "call was rejected by callee",
-        "0x80010108", "-2147417848", "object invoked has disconnected",
-    ))
+def _worker_exit_report(
+    process: subprocess.Popen,
+    *,
+    force_terminated: bool = False,
+) -> dict[str, Any]:
+    """Return explicit evidence that the child interpreter was reaped."""
+    reaped = False
+    try:
+        process.wait(timeout=0)
+        reaped = True
+    except subprocess.TimeoutExpired:
+        pass
+    still_running = process.poll() is None
+    return {
+        "pid": process.pid,
+        "exit_code": process.returncode,
+        "exited": not still_running,
+        "reaped": reaped,
+        "force_terminated": force_terminated,
+        "still_running": still_running,
+    }
 
 
 def execute_worker_request(
@@ -109,27 +121,13 @@ def execute_worker_request(
     arguments: Mapping[str, Any],
     *,
     timeout: float = 60.0,
-    retry_transient: bool = False,
 ) -> dict[str, Any]:
-    """Execute one Excel operation in a killable, spawn-clean interpreter."""
+    """Execute exactly one attempt in a killable, spawn-clean interpreter."""
     if timeout <= 0:
         raise ValueError("timeout must be greater than zero")
     if not operation or not isinstance(operation, str):
         raise ValueError("operation must be a non-empty string")
-    if retry_transient and operation != "modify":
-        raise ValueError("transient retries are supported only for modification")
-
-    attempts = 2 if retry_transient else 1
-    result: dict[str, Any] | None = None
-    for attempt in range(1, attempts + 1):
-        result = _execute_worker_request_once(
-            operation, arguments, timeout=timeout,
-        )
-        result["attempt_count"] = attempt
-        if result.get("success") or not _is_transient_com_failure(result):
-            return result
-    assert result is not None
-    return result
+    return _execute_worker_request_once(operation, arguments, timeout=timeout)
 
 
 def _execute_worker_request_once(
@@ -157,20 +155,23 @@ def _execute_worker_request_once(
 
         with open(log_path, "w", encoding="utf-8") as worker_log:
             worker_python, worker_environment = _worker_python()
-            process = subprocess.Popen(
-                [
-                    worker_python,
-                    "-m",
-                    "xlvbatools.core.worker_entry",
-                    request_path,
-                    result_path,
-                    progress_path,
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=worker_log,
-                stderr=subprocess.STDOUT,
-                env=worker_environment,
-            )
+            try:
+                process = subprocess.Popen(
+                    [
+                        worker_python,
+                        "-m",
+                        "xlvbatools.core.worker_entry",
+                        request_path,
+                        result_path,
+                        progress_path,
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=worker_log,
+                    stderr=subprocess.STDOUT,
+                    env=worker_environment,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise WorkerCreationError(str(error)) from error
 
             progress: dict[str, Any] = {
                 "worker_pid": process.pid,
@@ -189,6 +190,10 @@ def _execute_worker_request_once(
                     progress.update(latest)
                 excel_pid = progress.get("excel_pid")
                 cleanup = _terminate_owned_processes(process, excel_pid)
+                worker_exit = _worker_exit_report(
+                    process,
+                    force_terminated=bool(cleanup.get("worker_terminated")),
+                )
                 return {
                     "protocol_version": WORKER_PROTOCOL_VERSION,
                     "request_id": request_id,
@@ -206,7 +211,12 @@ def _execute_worker_request_once(
                     ),
                     "dialog_events": [],
                     "cleanup": cleanup,
+                    "worker_exit": worker_exit,
                 }
+
+            # Make process ownership explicit before examining the worker's
+            # result. This is distinct from Excel's CleanupReport.
+            process.wait()
 
         result = _read_json(result_path)
         if result is None:
@@ -219,23 +229,35 @@ def _execute_worker_request_once(
             cleanup = _terminate_owned_processes(
                 process, progress.get("excel_pid"), grace_period=0.5,
             )
-            return {
+            phase = progress.get("phase", "worker_exit")
+            primary_error = (
+                f"Worker exited without a result (exit code {process.returncode})"
+            )
+            response = {
                 "protocol_version": WORKER_PROTOCOL_VERSION,
                 "request_id": request_id,
                 "operation": operation,
                 "success": False,
-                "phase": progress.get("phase", "worker_exit"),
+                "phase": phase,
                 "elapsed_seconds": time.monotonic() - started,
                 "worker_pid": process.pid,
                 "executor_pid": process.pid,
                 "excel_pid": progress.get("excel_pid"),
-                "primary_error": (
-                    f"Worker exited without a result (exit code {process.returncode})"
-                ),
+                "primary_error": primary_error,
                 "worker_output": output,
                 "dialog_events": [],
                 "cleanup": cleanup,
+                "worker_exit": _worker_exit_report(
+                    process,
+                    force_terminated=bool(cleanup.get("worker_terminated")),
+                ),
             }
+            if phase == "worker_start" and progress.get("excel_pid") is None:
+                response["error"] = {
+                    "code": "worker_start_failed",
+                    "message": primary_error,
+                }
+            return response
 
         result.setdefault("protocol_version", WORKER_PROTOCOL_VERSION)
         result.setdefault("request_id", request_id)
@@ -243,6 +265,7 @@ def _execute_worker_request_once(
         result.setdefault("worker_pid", process.pid)
         result["executor_pid"] = process.pid
         result.setdefault("elapsed_seconds", time.monotonic() - started)
+        result["worker_exit"] = _worker_exit_report(process)
         if not result.get("success") and "worker_output" not in result:
             try:
                 with open(log_path, encoding="utf-8", errors="replace") as handle:

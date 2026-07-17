@@ -67,6 +67,10 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
    `--visible` when the isolated owned Excel window is intentionally required.
    Python callers use the corresponding `Project.run()` arguments.
 
+   Worker-start retry is executor-owned and automatic only before Excel
+   ownership. Keep `attempt_count` and `diagnostics.attempts` in logs when a
+   second attempt occurs; do not wrap the call in another startup retry.
+
 6. Continue with `vba-edit.md` for changes, `vba-debug.md` for failures, and
    `.agents/skills/xlvba-toolchain/SKILL.md` for the complete operating
    contract.

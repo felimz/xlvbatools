@@ -29,6 +29,9 @@ and implementation subpackages are private.
 - Use `Project` or the `xlvba` CLI for Excel-backed operations.
 - Check both `OperationResult.require_success()` and, for Excel operations,
   `OperationResult.require_clean_shutdown()`.
+- Let `IsolatedExecutor` own worker-start retry. It permits at most two total
+  attempts under one timeout and records the decision in
+  `diagnostics.attempts`; do not add a downstream automatic startup retry.
 - Never enumerate or terminate Excel globally. Cleanup may target only the
   worker and Excel PID owned by the current operation.
 - Keep hidden worksheets excluded from screenshots unless the task explicitly

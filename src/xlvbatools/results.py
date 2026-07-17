@@ -9,7 +9,7 @@ from typing import Any, Callable, Generic, Mapping, Optional, TypeVar, cast
 from xlvbatools.errors import HeadlessCleanupError, OperationFailedError
 
 
-RESULT_SCHEMA_VERSION = "1.0"
+RESULT_SCHEMA_VERSION = "1.1"
 T = TypeVar("T")
 U = TypeVar("U")
 
@@ -99,6 +99,85 @@ class CleanupReport:
 
 
 @dataclass(frozen=True)
+class WorkerExitReport:
+    """Lifecycle evidence for the isolated worker process itself."""
+
+    pid: Optional[int] = None
+    exit_code: Optional[int] = None
+    exited: bool = False
+    reaped: bool = False
+    force_terminated: bool = False
+    still_running: bool = False
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "WorkerExitReport":
+        return cls(
+            pid=value.get("pid"),
+            exit_code=value.get("exit_code"),
+            exited=bool(value.get("exited", False)),
+            reaped=bool(value.get("reaped", False)),
+            force_terminated=bool(value.get("force_terminated", False)),
+            still_running=bool(value.get("still_running", False)),
+        )
+
+    @property
+    def is_clean(self) -> bool:
+        """Whether the worker exited and was reaped without being killed."""
+        return bool(
+            self.pid is not None
+            and self.exited
+            and self.reaped
+            and not self.force_terminated
+            and not self.still_running
+        )
+
+
+@dataclass(frozen=True)
+class AttemptDiagnostic:
+    """Evidence retained for one executor attempt and its retry decision."""
+
+    attempt: int
+    phase: str
+    request_id: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    error_details: Mapping[str, Any] = field(default_factory=dict)
+    worker: Optional[WorkerExitReport] = None
+    excel_pid: Optional[int] = None
+    cleanup: Optional[CleanupReport] = None
+    dialog_count: int = 0
+    elapsed_seconds: Optional[float] = None
+    retryable: bool = False
+    retry_reason: Optional[str] = None
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "AttemptDiagnostic":
+        worker_value = value.get("worker")
+        cleanup_value = value.get("cleanup")
+        return cls(
+            attempt=int(value.get("attempt") or 1),
+            phase=str(value.get("phase") or "unknown"),
+            request_id=value.get("request_id"),
+            error_code=value.get("error_code"),
+            error_message=value.get("error_message"),
+            error_details=dict(value.get("error_details") or {}),
+            worker=(
+                WorkerExitReport.from_mapping(worker_value)
+                if isinstance(worker_value, Mapping) else None
+            ),
+            excel_pid=value.get("excel_pid"),
+            cleanup=(
+                CleanupReport.from_mapping(cleanup_value)
+                if isinstance(cleanup_value, Mapping) else None
+            ),
+            dialog_count=int(value.get("dialog_count") or 0),
+            elapsed_seconds=value.get("elapsed_seconds"),
+            retryable=bool(value.get("retryable", False)),
+            retry_reason=value.get("retry_reason"),
+        )
+
+
+@dataclass(frozen=True)
 class Diagnostics:
     """Cross-operation diagnostics retained for logging and automation."""
 
@@ -107,6 +186,8 @@ class Diagnostics:
     com_error: Optional[Mapping[str, Any]] = None
     worker_pid: Optional[int] = None
     excel_pid: Optional[int] = None
+    worker_exit: Optional[WorkerExitReport] = None
+    attempts: tuple[AttemptDiagnostic, ...] = ()
 
     @classmethod
     def _from_worker(cls, value: Mapping[str, Any]) -> "Diagnostics":
@@ -115,12 +196,24 @@ class Diagnostics:
             CleanupReport.from_mapping(cleanup_value)
             if isinstance(cleanup_value, Mapping) else None
         )
+        worker_exit_value = value.get("worker_exit") or None
+        worker_exit = (
+            WorkerExitReport.from_mapping(worker_exit_value)
+            if isinstance(worker_exit_value, Mapping) else None
+        )
+        raw_attempts = value.get("attempts") or ()
         return cls(
             dialog_events=tuple(value.get("dialog_events") or ()),
             cleanup=cleanup,
             com_error=value.get("com_error"),
             worker_pid=value.get("worker_pid"),
             excel_pid=value.get("excel_pid") or (cleanup.pid if cleanup else None),
+            worker_exit=worker_exit,
+            attempts=tuple(
+                AttemptDiagnostic.from_mapping(item)
+                for item in raw_attempts
+                if isinstance(item, Mapping)
+            ),
         )
 
 

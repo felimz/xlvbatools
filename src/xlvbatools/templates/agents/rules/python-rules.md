@@ -9,6 +9,8 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
 ## Public API
 
 - Build application wrappers around `Project` and `OperationResult`.
+- Do not add automatic worker-start retry around `Project`; the executor owns
+  the two-attempt ceiling and exposes its evidence in `diagnostics.attempts`.
 - Import supported names from `xlvbatools`; do not import application-facing
   behavior from `core`, `vba`, `macro`, `workbook`, `analysis`, or `snapshot`.
 - Never pass COM proxies or worker transport dictionaries into application

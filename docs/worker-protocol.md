@@ -11,15 +11,19 @@ entry point.
 1. The parent validates an immutable `OperationRequest`.
 2. It creates a private temporary directory and atomically writes request and
    progress JSON.
-3. It starts one directly tracked interpreter with output redirected to a
-   regular file.
-4. The worker publishes its PID, phase, and exact owned Excel PID.
+3. It starts one directly tracked interpreter attempt with output redirected
+   to a regular file.
+4. The worker publishes `worker_start`, then durably publishes `session_start`
+   before any code may construct an Excel session. It publishes the exact
+   owned Excel PID only after Excel starts.
 5. The worker performs exactly one operation and atomically writes one result.
 6. The parent validates protocol version, request ID, operation identity, and
    result completeness.
 7. `IsolatedExecutor` immediately converts transport data into a typed
    `OperationResult`.
-8. Timeout cleanup targets only the reported Excel PID and exact worker.
+8. The parent reaps the exact worker and records `worker_exit` independently
+   from the Excel `cleanup` report.
+9. Timeout cleanup targets only the reported Excel PID and exact worker.
 
 No COM object is serialized and no existing Excel instance is selected.
 
@@ -67,7 +71,7 @@ at the transport top level. Common transport fields include:
 - `success`, `phase`, and failure evidence;
 - worker and Excel PIDs;
 - elapsed time and attempt count;
-- dialog events and cleanup;
+- dialog events, Excel cleanup, and separate worker-exit/reaping evidence;
 - normalized operation `data`.
 
 For inspection, `data` contains `workbook_data` and `screenshots`. For a
@@ -79,7 +83,16 @@ from `OperationResult.to_dict()` and is governed independently by
 
 ## Retry policy
 
-Only modification opts into a single fresh-worker retry, and only for a
-recognized transient RPC disconnect after the first owned Excel process is
-confirmed stopped. Macro execution and injection are not retried because their
-effects may be non-idempotent.
+`IsolatedExecutor` owns all retry decisions and permits at most two total
+attempts under one original timeout budget. The automatic startup retry is
+allowed only when either child-process creation failed before a worker PID
+existed, or a worker failed during `worker_start` and was proven exited and
+reaped with no Excel PID, dialog, timeout, forced termination, or ambiguous
+cleanup. `session_start` is the no-replay boundary: that phase and every later
+phase are never startup-retried.
+
+Modification may use that same one remaining attempt for a recognized
+transient RPC disconnect after the first owned Excel process is confirmed
+stopped. Startup and transient policies cannot stack into more than two
+attempts. Macro/VBA failures, protocol failures, timeouts, dialogs, and
+post-ownership failures are never replayed automatically.

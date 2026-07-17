@@ -8,6 +8,8 @@ All notable changes are documented here. This project follows
 
 ### Added
 
+- Typed `AttemptDiagnostic` and `WorkerExitReport` evidence for every isolated
+  executor attempt, including the retry reason and explicit worker reaping.
 - Repeatable typed `xlvba run --named-range NAME=VALUE` inputs, explicit
   `--save`/`--no-save` behavior, and opt-in isolated Excel visibility through
   `--visible`.
@@ -26,6 +28,16 @@ All notable changes are documented here. This project follows
 
 ### Changed
 
+- `IsolatedExecutor` now owns a single shared two-attempt ceiling and one
+  overall timeout budget. It automatically retries only a proven failure to
+  create a worker or a cleanly reaped worker exit before `session_start`;
+  post-ownership, timeout, dialog, protocol, VBA, and ambiguous-cleanup
+  failures are never replayed.
+- Worker progress now publishes `session_start` durably before any session
+  construction, and worker-process exit evidence is separate from Excel
+  cleanup evidence.
+- The additive result schema is `1.1`; package and private worker-protocol
+  versions remain independently versioned.
 - Agent templates are self-contained for downstream repositories and now
   distinguish package installation, `.agents/` installation, and project
   configuration. Documentation now indexes every guide and names every public

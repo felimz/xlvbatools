@@ -107,6 +107,8 @@ Every operation returns an `OperationResult`. Check:
 - `diagnostics.cleanup` for the owned Excel lifecycle;
 - `artifacts` for screenshots and other durable outputs;
 - `request_id`, `elapsed_seconds`, and `attempt_count` for tracing.
+- `diagnostics.attempts` when `attempt_count` is `2`; retain the phase,
+  worker-exit evidence, and retry reason instead of adding another retry.
 
 Operation data is modeled, not a private dictionary: use attributes on
 `MacroOutput`, `ExtractionOutput`, `InjectionOutput`, `ComponentDiff`,
@@ -114,7 +116,9 @@ Operation data is modeled, not a private dictionary: use attributes on
 
 CLI output is one versioned JSON envelope by default. Use `--text` or `--table`
 only when presentation output is explicitly requested. Do not parse private
-worker files.
+worker files. `IsolatedExecutor` automatically replays only a proven failure
+before Excel ownership and never after `session_start`; wrappers must not
+duplicate that policy.
 
 ## Troubleshooting
 

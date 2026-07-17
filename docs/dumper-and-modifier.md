@@ -96,10 +96,11 @@ project.modify(
 For each Excel-backed result, also call `require_clean_shutdown()` when clean
 teardown is part of acceptance.
 
-`modify` may use one fresh-worker retry only for a recognized transient RPC
-disconnect after the first owned Excel process is confirmed stopped. Macro
-execution and VBA injection are never automatically retried because their
-effects may be non-idempotent.
+`modify` may use the executor's one remaining attempt for a recognized
+transient RPC disconnect after the first owned Excel process is confirmed
+stopped. This shares the global two-attempt ceiling with safe pre-ownership
+startup recovery. Macro execution and VBA injection failures are never
+automatically replayed because their effects may be non-idempotent.
 
 ## Process safety
 

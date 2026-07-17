@@ -23,7 +23,7 @@ The following names are the complete supported import surface:
 | Project | `Project`, `ProjectSettings` |
 | Execution | `Operation`, `OperationRequest`, `Executor`, `IsolatedExecutor` |
 | Result envelope | `OperationResult`, `RESULT_SCHEMA_VERSION` |
-| Result evidence | `ErrorInfo`, `Diagnostics`, `CleanupReport`, `Artifact` |
+| Result evidence | `ErrorInfo`, `Diagnostics`, `CleanupReport`, `WorkerExitReport`, `AttemptDiagnostic`, `Artifact` |
 | Inspection data | `InspectionOutput` |
 | VBA component data | `VBAComponent`, `ExtractionOutput`, `InjectionChange`, `InjectionOutput` |
 | VBA action data | `ComponentDiff`, `MacroOutput`, `ModificationOutput` |
@@ -175,8 +175,9 @@ raise `SnapshotNotFoundError` during restore or diff.
 - optional typed `data` and `ErrorInfo`;
 - `warnings`, `artifacts`, and `metadata`;
 - `request_id`, `elapsed_seconds`, and `attempt_count`;
-- `Diagnostics` with dialog events, worker PID, Excel PID, COM evidence, and
-  an optional `CleanupReport`.
+- `Diagnostics` with dialog events, worker PID, Excel PID, COM evidence, an
+  optional `CleanupReport`, an optional `WorkerExitReport`, and typed
+  `AttemptDiagnostic` entries.
 
 ```python
 if not result.success:
@@ -191,6 +192,18 @@ payload = result.to_dict()
 `HeadlessCleanupError`. In Python, `CleanupReport.is_clean` is the derived
 cleanliness check. Serialized JSON exposes the underlying cleanup fields, not
 that derived property.
+
+`WorkerExitReport` is deliberately separate from `CleanupReport`: the former
+proves whether the isolated Python worker exited and was reaped, while the
+latter describes only the owned Excel lifecycle. `WorkerExitReport.is_clean`
+means the worker exited and was reaped without forced termination.
+
+`Diagnostics.attempts` contains one `AttemptDiagnostic` per executor attempt.
+Each entry records its number, phase, request ID, error code/message/details
+(including captured worker output), worker evidence, Excel PID, Excel cleanup,
+dialog count, elapsed time, and any executor-owned retry decision.
+`retryable=True` and `retry_reason` mean the executor actually proceeded to
+one final attempt; callers should log this evidence, not add another retry.
 
 ## Custom executors
 

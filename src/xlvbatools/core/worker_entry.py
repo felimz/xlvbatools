@@ -72,6 +72,9 @@ def _session_result(
     arguments: dict[str, Any],
     reporter: ProgressReporter,
 ) -> dict[str, Any]:
+    # This durable progress event is the retry safety boundary. Publish it
+    # before importing or constructing anything that could activate COM.
+    reporter.phase("session_start")
     from xlvbatools.core.session import ExcelSession
 
     workbook_path = arguments["workbook_path"]
@@ -226,9 +229,9 @@ def _dispatch(
     reporter: ProgressReporter,
 ) -> dict[str, Any]:
     if operation == "inspect":
+        reporter.phase("session_start")
         from xlvbatools.workbook.dumper import _inspect_workbook_in_process
 
-        reporter.phase("session_start")
         result = _inspect_workbook_in_process(
             **arguments, on_excel_started=reporter.excel_started,
         )
@@ -241,6 +244,7 @@ def _dispatch(
         return result
 
     if operation == "run_macro":
+        reporter.phase("session_start")
         from xlvbatools.macro.runner import _run_macro_once
 
         result = _run_macro_once(

@@ -143,3 +143,66 @@ def test_repeated_formula_formatting_and_macro_sessions(runtime_error_workbook):
         "RPC server is unavailable", "CoInitialize has not been called",
     ):
         assert signature not in combined, combined
+
+
+@pytest.mark.com
+@pytest.mark.integration
+@pytest.mark.e2e
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_fifty_project_runs_retain_progress_and_cleanup(runtime_error_workbook):
+    """Stress the public executor repeatedly in one long-lived interpreter."""
+    code = textwrap.dedent(
+        """
+        import json
+        import sys
+
+        from xlvbatools import Project
+        from xlvbatools.core.process import is_process_running
+
+        project = Project.open(sys.argv[1])
+        for iteration in range(50):
+            result = project.run("CompleteNormally", timeout=60, save=False)
+            result.require_success()
+            cleanup = result.require_clean_shutdown()
+            assert not is_process_running(cleanup.pid), result.to_dict()
+            payload = result.to_dict()
+            print("PROJECT_RUN_PROGRESS=" + json.dumps({
+                "iteration": iteration + 1,
+                "success": result.success,
+                "phase": result.phase,
+                "attempt_count": result.attempt_count,
+                "request_id": result.request_id,
+                "worker_pid": result.diagnostics.worker_pid,
+                "excel_pid": result.diagnostics.excel_pid,
+                "elapsed_seconds": result.elapsed_seconds,
+                "attempts": payload["diagnostics"]["attempts"],
+                "cleanup": payload["diagnostics"]["cleanup"],
+            }), flush=True)
+        print("PROJECT_RUN_STRESS_COMPLETE=50", flush=True)
+        """
+    )
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "faulthandler",
+                "-c",
+                code,
+                runtime_error_workbook,
+            ],
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            timeout=600,
+        )
+        output.seek(0)
+        combined = output.read()
+
+    assert completed.returncode == 0, combined
+    assert "PROJECT_RUN_STRESS_COMPLETE=50" in combined, combined
+    assert combined.count("PROJECT_RUN_PROGRESS=") == 50, combined
+    for signature in (
+        "Windows fatal exception", "0x800706ba", "0x80010108",
+        "RPC server is unavailable", "CoInitialize has not been called",
+    ):
+        assert signature not in combined, combined

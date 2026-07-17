@@ -21,6 +21,11 @@ The default envelope is the serialized `OperationResult` contract and includes
 diagnostics, artifacts, metadata, and timing fields. Failed commands still emit
 the envelope and return a nonzero process exit code.
 
+`attempt_count` and `diagnostics.attempts` describe executor-owned retry
+decisions. A value of `2` is the maximum. Agents should retain those fields for
+diagnosis and must not layer another automatic worker-start retry around the
+command.
+
 ## Optional presentation formats
 
 Presentation output must be requested explicitly:

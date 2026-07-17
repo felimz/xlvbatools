@@ -77,6 +77,14 @@ def test_file_protocol_runs_offline_dry_run_in_separate_interpreter(tmp_path):
     assert result["request_id"]
     assert result["worker_pid"] != os.getpid()
     assert result["worker_pid"] == result["executor_pid"]
+    assert result["worker_exit"] == {
+        "pid": result["worker_pid"],
+        "exit_code": 0,
+        "exited": True,
+        "reaped": True,
+        "force_terminated": False,
+        "still_running": False,
+    }
     assert result["excel_pid"] is None
     assert result["cleanup"] == {}
     assert result["data"][0]["status"] == "dry-run"
@@ -100,40 +108,66 @@ def test_worker_setup_failure_is_structured(tmp_path):
 
 
 @pytest.mark.unit
-def test_opt_in_transient_retry_starts_one_fresh_worker(monkeypatch):
+def test_worker_transport_executes_exactly_one_attempt(monkeypatch):
     from xlvbatools.core import worker
 
-    results = iter([
-        {
-            "success": False,
-            "primary_error": "(-2147023174, 'The RPC server is unavailable.')",
-            "cleanup": {"still_running": False},
-        },
-        {"success": True, "data": True, "cleanup": {"still_running": False}},
-    ])
     calls = []
 
     def fake_once(operation, arguments, *, timeout):
         calls.append((operation, arguments, timeout))
-        return next(results)
+        return {
+            "success": False,
+            "primary_error": "(-2147023174, 'The RPC server is unavailable.')",
+            "cleanup": {"still_running": False},
+        }
 
     monkeypatch.setattr(worker, "_execute_worker_request_once", fake_once)
     result = worker.execute_worker_request(
         "modify", {"workbook_path": "book.xlsm"}, timeout=9,
-        retry_transient=True,
     )
 
-    assert result["success"] is True
-    assert result["attempt_count"] == 2
-    assert len(calls) == 2
+    assert result["success"] is False
+    assert len(calls) == 1
 
 
 @pytest.mark.unit
-def test_worker_rejects_retry_for_non_idempotent_operation():
-    from xlvbatools.core.worker import execute_worker_request
+def test_worker_wraps_only_process_creation_failure(monkeypatch):
+    from xlvbatools.core import worker
 
-    with pytest.raises(ValueError, match="only for modification"):
-        execute_worker_request("run_macro", {}, retry_transient=True)
+    def fail_creation(*args, **kwargs):
+        raise OSError("CreateProcess failed")
+
+    monkeypatch.setattr(worker.subprocess, "Popen", fail_creation)
+
+    with pytest.raises(worker.WorkerCreationError, match="CreateProcess failed"):
+        worker.execute_worker_request("extract", {}, timeout=1)
+
+
+@pytest.mark.unit
+def test_session_start_is_published_before_excel_session_construction(monkeypatch):
+    from xlvbatools.core import session, worker_entry
+
+    phases = []
+
+    class SentinelError(RuntimeError):
+        pass
+
+    class FakeExcelSession:
+        def __init__(self, *args, **kwargs):
+            assert phases == ["session_start"]
+            raise SentinelError("stop before COM")
+
+    monkeypatch.setattr(session, "ExcelSession", FakeExcelSession)
+    reporter = SimpleNamespace(phase=phases.append, excel_started=lambda pid: None)
+
+    with pytest.raises(SentinelError, match="stop before COM"):
+        worker_entry._session_result(
+            "list_components",
+            {"workbook_path": "book.xlsm"},
+            reporter,
+        )
+
+    assert phases == ["session_start"]
 
 
 @pytest.mark.unit

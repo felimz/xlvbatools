@@ -29,12 +29,14 @@ from xlvbatools.outputs import (
 from xlvbatools.project import Project, ProjectSettings
 from xlvbatools.results import (
     Artifact,
+    AttemptDiagnostic,
     CleanupReport,
     Diagnostics,
     ErrorInfo,
     InspectionOutput,
     OperationResult,
     RESULT_SCHEMA_VERSION,
+    WorkerExitReport,
 )
 from xlvbatools.snapshots import SnapshotGitInfo, SnapshotRecord, SnapshotService
 from xlvbatools.version import VersionInfo, get_version_info
@@ -42,6 +44,7 @@ from xlvbatools.version import VersionInfo, get_version_info
 
 __all__ = [
     "Artifact",
+    "AttemptDiagnostic",
     "CleanupReport",
     "ComponentDiff",
     "ConfigurationError",
@@ -72,6 +75,7 @@ __all__ = [
     "VBAComponent",
     "VBAIssue",
     "VersionInfo",
+    "WorkerExitReport",
     "XlvbaError",
     "__version__",
     "get_version_info",

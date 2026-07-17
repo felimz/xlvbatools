@@ -94,6 +94,13 @@ both the operation outcome and the owned-process cleanup:
 - `diagnostics.cleanup.worker_terminated` is false;
 - no unexpected `diagnostics.dialog_events` were captured.
 
+The executor may make one automatic retry only for a proven pre-Excel worker
+startup failure. If `attempt_count` is `2`, retain
+`diagnostics.attempts[*]` in logs; it records the phase, worker exit evidence,
+and retry reason. Do not add a downstream startup retry around `Project` or
+the CLI. Failures at `session_start` or later, including VBA/macro failures,
+are intentionally returned without replay.
+
 Restore the checkpoint if validation fails.
 
 ## Python wrapper pattern
