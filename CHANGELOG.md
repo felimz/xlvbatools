@@ -8,6 +8,9 @@ All notable changes are documented here. This project follows
 
 ### Added
 
+- Repeatable typed `xlvba run --named-range NAME=VALUE` inputs, explicit
+  `--save`/`--no-save` behavior, and opt-in isolated Excel visibility through
+  `--visible`.
 - A copy-ready PowerShell and Python getting-started guide, plus a packaged
   agent onboarding workflow covering installation, configuration, common
   flags, public imports, result handling, and cleanup checks.

@@ -122,6 +122,9 @@ def test_get_started_covers_supported_invocation_contract():
         "--timeout",
         "--dry-run",
         "--include-hidden-sheets",
+        "--named-range",
+        "--no-save",
+        "--visible",
         "--text",
         "--table",
         "ConvertFrom-Json",
@@ -139,7 +142,10 @@ def test_get_started_covers_supported_invocation_contract():
     )
     assert "from xlvbatools import Project" in workflow
     assert "--dry-run --timeout" in workflow
+    assert "--named-range" in workflow
+    assert "--no-save" in workflow
     assert "Default stdout is one JSON result envelope" in workflow
+    assert "Not currently exposed by `xlvba run`" not in guide
 
 
 @pytest.mark.unit

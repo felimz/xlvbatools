@@ -104,7 +104,9 @@ or `--table` for aligned rows only when a person is consuming stdout.
 & $xlvba inject --source "workbook/vba_source" --timeout 120
 & $xlvba diff --source "workbook/vba_source" --summary --timeout 120
 & $xlvba lint --workbook "workbook/Model.xlsm" --timeout 240
-& $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" --timeout 120
+& $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" `
+  --named-range "InputValue=42" --named-range 'Mode="Design"' `
+  --no-save --timeout 120
 
 # Inspection requires an explicit sheet selection.
 & $xlvba dump --sheets "Input,Results" --data --range "A1:K100" --timeout 90
@@ -133,11 +135,40 @@ snapshot or equivalent rollback already exists.
 | `--sheets`, `--range` | constraining inspection to the required worksheet area |
 | `--data`, `--screenshot` | choosing inspection artifacts deliberately |
 | `--include-hidden-sheets` | explicitly including Hidden or VeryHidden sheets |
+| `--named-range NAME=VALUE` | supplying one macro input; repeat for additional names |
+| `--save`, `--no-save` | choosing whether macro workbook changes are persisted |
+| `--visible` | deliberately showing the isolated owned Excel instance |
 | `--text`, `--table` | requesting presentation output instead of default JSON |
 | `--verbose` | collecting additional diagnostic logging for a failed operation |
 
 Do not add `--no-backup` as a routine convenience flag. It disables a safety
 default.
+
+### Macro inputs, saving, and visibility
+
+Repeat `--named-range NAME=VALUE` for each macro input. Values that are valid
+JSON become native types; other values remain strings. Names are
+case-insensitive and duplicates are rejected.
+
+```powershell
+& $xlvba run "OnCalculate" `
+  --named-range "Count=42" `
+  --named-range "Ratio=0.707" `
+  --named-range "Enabled=true" `
+  --named-range 'Mode="Design"' `
+  --named-range "Label=North Sea" `
+  --no-save `
+  --timeout 120
+```
+
+Here `Count` is an integer, `Ratio` is a number, `Enabled` is a Boolean, and
+the quoted JSON value for `Mode` plus the non-JSON value for `Label` are
+strings. `null` becomes Python `None`, and `Name=` supplies an empty string.
+
+`--save` is the default and preserves the existing CLI behavior. Use
+`--no-save` when the run is validation-only. `--visible` is opt-in; it makes
+the isolated Excel window visible without selecting or reusing a desktop Excel
+instance.
 
 ## Parse CLI results in PowerShell
 
@@ -244,13 +275,12 @@ import surface and method signatures.
 |:---|:---|:---|
 | Script or agent orchestration | Prefer the default JSON CLI | Use when already inside Python |
 | Typed operation data | Parse the JSON envelope | Use `OperationResult` and typed outputs |
-| Named-range macro inputs | Not currently exposed by `xlvba run` | Use `Project.run(named_ranges=...)` |
-| Control macro save or visibility | Not currently exposed by `xlvba run` | Use `Project.run(save=..., visible=...)` |
+| Named-range macro inputs | Repeat `--named-range NAME=VALUE` | Use `Project.run(named_ranges=...)` |
+| Control macro save or visibility | Use `--save`, `--no-save`, or `--visible` | Use `Project.run(save=..., visible=...)` |
 | Offline wrapper tests | Invoke CLI integration tests sparingly | Inject an `Executor` test double |
 
-The missing macro-input, save, and visibility switches are the main remaining
-CLI parity gap. Until they are added, Python is the supported route for those
-controls rather than relying on private command or worker APIs.
+Choose the entry point that best fits the caller; these macro controls now map
+directly to the same supported `Project.run()` arguments.
 
 ## Safe edit and verify cycle
 
@@ -261,7 +291,7 @@ controls rather than relying on private command or worker APIs.
 & $xlvba inject --dry-run --timeout 120
 & $xlvba inject --timeout 120
 & $xlvba diff --summary --timeout 120
-& $xlvba run "OnCalculate" --timeout 120
+& $xlvba run "OnCalculate" --no-save --timeout 120
 ```
 
 Never terminate Excel by image name. xlvbatools cleans up only the worker and

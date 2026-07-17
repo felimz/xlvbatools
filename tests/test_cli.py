@@ -135,6 +135,14 @@ def test_machine_readable_help_catalog_supports_command_detail(capsys):
     assert options["workbook"]["flags"] == ["--workbook", "-w"]
     assert options["timeout"]["default"] == 120.0
 
+    main(["help", "run"])
+    run_detail = json.loads(capsys.readouterr().out)["data"]["command"]
+    run_options = {item["name"]: item for item in run_detail["options"]}
+    assert run_options["named_range"]["flags"] == ["--named-range"]
+    assert run_options["save"]["flags"] == ["--save", "--no-save"]
+    assert run_options["save"]["default"] is True
+    assert run_options["visible"]["default"] is False
+
     main(["help", "agents"])
     agents = json.loads(capsys.readouterr().out)["data"]["command"]
     install = next(item for item in agents["subcommands"] if item["name"] == "install")
@@ -309,8 +317,123 @@ def test_cli_run_forwards_timeout(tmp_path):
             main(["run", "MyMacro", "--timeout", "7.5"])
 
     assert exc_info.value.code == 0
-    project.run.assert_called_once_with("MyMacro", timeout=7.5)
+    project.run.assert_called_once_with(
+        "MyMacro",
+        named_ranges=None,
+        timeout=7.5,
+        visible=False,
+        save=True,
+    )
     patch.stopall()
+
+
+@pytest.mark.unit
+def test_cli_run_forwards_typed_named_ranges_save_and_visibility(tmp_path):
+    project = patch("xlvbatools.cli.commands._project").start().return_value
+    project.run.return_value = _result("run_macro", {"macro": "MyMacro"})
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+
+        with pytest.raises(SystemExit) as exc_info:
+            main([
+                "run", "MyMacro",
+                "--named-range", "Count=42",
+                "--named-range", "Ratio=0.707",
+                "--named-range", "Enabled=true",
+                "--named-range", 'Mode="Design"',
+                "--named-range", "Label=North Sea",
+                "--named-range", "Clear=null",
+                "--named-range", "Empty=",
+                "--no-save", "--visible", "--timeout", "8",
+            ])
+
+    assert exc_info.value.code == 0
+    project.run.assert_called_once_with(
+        "MyMacro",
+        named_ranges={
+            "Count": 42,
+            "Ratio": 0.707,
+            "Enabled": True,
+            "Mode": "Design",
+            "Label": "North Sea",
+            "Clear": None,
+            "Empty": "",
+        },
+        timeout=8.0,
+        visible=True,
+        save=False,
+    )
+    patch.stopall()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "options",
+    (
+        ["--named-range", "MissingEquals"],
+        ["--named-range", "=42"],
+        ["--named-range", "Input=1", "--named-range", "input=2"],
+    ),
+)
+def test_cli_run_rejects_invalid_named_range_inputs(options, tmp_path, capsys):
+    project = patch("xlvbatools.cli.commands._project").start().return_value
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "MyMacro", *options])
+
+    assert exc_info.value.code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "invalid_arguments"
+    project.run.assert_not_called()
+    patch.stopall()
+
+
+@pytest.mark.com
+@pytest.mark.integration
+def test_cli_run_named_range_and_no_save_reach_live_worker(
+    runtime_error_workbook, tmp_path, capsys,
+):
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    from xlvbatools.config.schema import XlvbaConfig
+
+    config = XlvbaConfig(
+        workbook=runtime_error_workbook,
+        vba_source=str(tmp_path / "vba_source"),
+        log_dir=str(tmp_path / "logs"),
+        log_name="cli_live_run",
+    )
+    with patch("xlvbatools.config.loader.load_config", return_value=config), \
+         patch("xlvbatools.logging.setup_logging"):
+        with pytest.raises(SystemExit) as exc_info:
+            main([
+                "run", "VerifyNamedRange",
+                "--named-range", "TestInput=42",
+                "--no-save",
+                "--timeout", "90",
+            ])
+
+    assert exc_info.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True, payload
+    assert payload["data"]["macro"] == "VerifyNamedRange"
+    assert payload["diagnostics"]["cleanup"]["still_running"] is False
+
+    with zipfile.ZipFile(runtime_error_workbook) as workbook_zip:
+        sheet_xml = ET.fromstring(workbook_zip.read("xl/worksheets/sheet1.xml"))
+    namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    saved_value = sheet_xml.find(".//x:c[@r='C1']/x:v", namespace)
+    assert saved_value is not None
+    assert saved_value.text == "0"
 
 
 @pytest.mark.unit

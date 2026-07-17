@@ -120,6 +120,12 @@ def runtime_error_workbook(tmp_path):
             'Public Sub CompleteNormally()\r\n'
             '    ThisWorkbook.Worksheets(1).Range("A1").Value = 42\r\n'
             'End Sub\r\n'
+            'Public Sub VerifyNamedRange()\r\n'
+            '    If ThisWorkbook.Names("TestInput").RefersToRange.Value <> 42 Then\r\n'
+            '        Err.Raise vbObjectError + 101, "VerifyNamedRange", _\r\n'
+            '            "TestInput was not set to 42."\r\n'
+            '    End If\r\n'
+            'End Sub\r\n'
             'Public Sub ShowMessage()\r\n'
             '    MsgBox "Watchdog test message", vbInformation\r\n'
             'End Sub\r\n'
@@ -137,6 +143,8 @@ def runtime_error_workbook(tmp_path):
             'End Sub\r\n'
         )
         sheet = wb.Worksheets(1)
+        sheet.Range("C1").Value = 0
+        wb.Names.Add(Name="TestInput", RefersTo=f"={sheet.Name}!$C$1")
         formula_cell = sheet.Range("B1")
         formula_cell.Formula = "=21*2"
         formula_cell.NumberFormat = "0.00"

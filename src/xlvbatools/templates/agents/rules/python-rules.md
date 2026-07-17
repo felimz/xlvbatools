@@ -29,9 +29,10 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
 - Preview supported writes with `--dry-run`. Do not use `--no-backup` unless a
   verified snapshot or equivalent rollback already exists.
 - In Python, import public types from `xlvbatools` and translate CLI flags to
-  the corresponding `Project` keyword arguments. Use `Project.run()` when
-  named-range inputs, save behavior, or visibility must be controlled because
-  those controls are not currently exposed by `xlvba run`.
+  the corresponding `Project` keyword arguments. For macros, repeat
+  `--named-range NAME=VALUE`, choose `--save` or `--no-save`, and add
+  `--visible` only when the isolated owned Excel window is required. The same
+  controls are available through `Project.run()`.
 
 ## Packaging and versions
 

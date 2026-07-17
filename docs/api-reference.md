@@ -136,6 +136,13 @@ JSON-compatible worker values are retained in its immutable `details` mapping.
 The deadline covers worker startup, workbook open, input setup, macro execution,
 save, and cleanup. Macro execution is never automatically retried.
 
+The equivalent CLI controls are repeatable `--named-range NAME=VALUE`,
+`--save`/`--no-save`, and opt-in `--visible`:
+
+```powershell
+xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
+```
+
 ### Source and workbook lint
 
 ```python

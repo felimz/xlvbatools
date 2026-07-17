@@ -40,7 +40,7 @@ description: Safely modify, lint, inject, diff, and verify VBA through xlvbatool
 6. Run the relevant macro and inspect both the outcome and cleanup:
 
    ```powershell
-   xlvba run <MacroName> --timeout 120
+   xlvba run <MacroName> --no-save --timeout 120
    ```
 
 7. Commit the workbook and matching source together if verification passes.

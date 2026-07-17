@@ -181,6 +181,26 @@ def _register_run(subparsers: Any) -> None:
     parser = _command_parser(subparsers, "run")
     _worker_options(parser)
     parser.add_argument("macro", help="Public VBA macro name, optionally module-qualified")
+    parser.add_argument(
+        "--named-range",
+        action="append",
+        metavar="NAME=VALUE",
+        help=(
+            "Set one named-range input; repeat as needed. Valid JSON values "
+            "are typed, otherwise VALUE is text"
+        ),
+    )
+    parser.add_argument(
+        "--save",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Save workbook changes after the macro (default: save)",
+    )
+    parser.add_argument(
+        "--visible",
+        action="store_true",
+        help="Show the isolated owned Excel instance while the macro runs",
+    )
     _presentation_options(parser)
     parser.set_defaults(func=commands._cmd_run)
 

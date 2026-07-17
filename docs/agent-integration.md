@@ -82,7 +82,7 @@ xlvba lint --source vba_source
 xlvba inject --dry-run --timeout 120
 xlvba inject --timeout 120
 xlvba diff --summary --timeout 120
-xlvba run OnCalculate --timeout 120
+xlvba run OnCalculate --no-save --timeout 120
 ```
 
 A passing macro is not the only acceptance condition. In JSON output, verify
@@ -113,6 +113,17 @@ run_result = project.run("OnCalculate", timeout=120, save=False)
 run_result.require_success()
 run_result.require_clean_shutdown()
 ```
+
+PowerShell callers can provide the same common macro controls without a Python
+wrapper:
+
+```powershell
+xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
+```
+
+Repeat `--named-range NAME=VALUE` as needed. Valid JSON values are typed;
+other values remain strings. Add `--visible` only when the isolated owned Excel
+window is intentionally required.
 
 For unit tests, inject an `Executor` test double into `Project`. Do not mock
 or expose COM objects in downstream wrappers.

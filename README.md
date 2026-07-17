@@ -89,7 +89,7 @@ xlvba inject --dry-run --timeout 120
 xlvba inject --timeout 120
 xlvba diff --summary --timeout 120
 xlvba lint --source vba_source
-xlvba run OnCalculate --timeout 120
+xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
 xlvba dump --sheets Input --screenshot --range B91:K99 --timeout 90
 xlvba modify --sheet Input --cell C33 --value 42 --timeout 120
 xlvba snapshot create --desc "before change"

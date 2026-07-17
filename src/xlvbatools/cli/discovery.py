@@ -49,7 +49,11 @@ COMMAND_SPECS = (
     ),
     CommandSpec(
         "run", "Execute a VBA macro in an isolated worker", "xlvba run MACRO [options]",
-        ("xlvba run OnCalculate", "xlvba run Module1.Refresh --timeout 240"), True,
+        (
+            "xlvba run OnCalculate --no-save --timeout 120",
+            "xlvba run Module1.Refresh --named-range InputValue=42 --timeout 240",
+        ),
+        True,
     ),
     CommandSpec(
         "snapshot", "Create and manage workbook checkpoints",

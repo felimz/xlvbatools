@@ -43,6 +43,40 @@ def _project(cfg, *, workbook=None, source=None):
     return Project(ProjectSettings._from_config(configured))
 
 
+def _parse_named_range_inputs(assignments):
+    """Decode repeatable NAME=VALUE CLI inputs without losing plain strings."""
+    if not assignments:
+        return None
+
+    values = {}
+    seen = set()
+    for assignment in assignments:
+        name, separator, raw_value = assignment.partition("=")
+        name = name.strip()
+        if not separator or not name:
+            raise ValueError(
+                f"Invalid --named-range {assignment!r}; expected NAME=VALUE"
+            )
+
+        normalized = name.casefold()
+        if normalized in seen:
+            raise ValueError(
+                f"Duplicate --named-range {name!r}; names are case-insensitive"
+            )
+
+        text = raw_value.strip()
+        if not text:
+            value = ""
+        else:
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                value = text
+        values[name] = value
+        seen.add(normalized)
+    return values
+
+
 # ── Command handlers ──
 
 def _cmd_init(args):
@@ -301,8 +335,22 @@ def _cmd_run(args):
                   log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
                   log_name=cfg.log_name)
 
+    try:
+        named_ranges = _parse_named_range_inputs(args.named_range)
+    except ValueError as error:
+        result = _local_result(
+            "run_macro", success=False, error=error, code="invalid_arguments",
+        )
+        _fail_result(args, result, "Invalid macro inputs", exit_code=2)
+
     project = _project(cfg, workbook=args.workbook)
-    result = project.run(args.macro, timeout=args.timeout)
+    result = project.run(
+        args.macro,
+        named_ranges=named_ranges,
+        timeout=args.timeout,
+        visible=args.visible,
+        save=args.save,
+    )
 
     if _is_machine(args):
         _print_result_json(result)

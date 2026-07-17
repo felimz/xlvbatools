@@ -52,7 +52,7 @@ while `--text` and `--table` are explicit presentation choices.
 | `xlvba inject` | Inject configured VBA source into the workbook |
 | `xlvba diff` | Compare live workbook VBA with extracted source |
 | `xlvba lint` | Analyze source, or a live workbook with `--workbook` |
-| `xlvba run <macro>` | Run one macro in an isolated worker |
+| `xlvba run <macro>` | Run one macro with optional inputs and lifecycle flags |
 | `xlvba snapshot` | Create, list, inspect, restore, diff, or prune checkpoints |
 | `xlvba dump` | Inspect sheet data and optionally render screenshots |
 | `xlvba modify` | Change cells, formulas, or named ranges |
@@ -129,6 +129,8 @@ worker files.
 | Need a visible-sheet screenshot | `xlvba dump --sheets Sheet1 --screenshot` |
 | Need hidden sheets intentionally | Add `--include-hidden-sheets` |
 | Need to set a value | `xlvba modify --sheet Sheet1 --cell A1 --value 42` |
+| Need macro inputs without saving | Repeat `--named-range NAME=VALUE` and add `--no-save` |
+| Need visible macro execution | Add `--visible`; the Excel instance remains isolated and owned |
 | Macro timed out or Excel failed | Inspect cleanup diagnostics; never kill Excel globally |
 | Need rollback | `xlvba snapshot restore latest` |
 

@@ -41,7 +41,8 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
    & $xlvba lint --source "workbook/vba_source"
    & $xlvba inject --source "workbook/vba_source" --dry-run --timeout 120
    & $xlvba dump --sheets "Input" --screenshot --range "A1:K100" --timeout 90
-   & $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" --timeout 120
+   & $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" `
+     --named-range "InputValue=42" --no-save --timeout 120
    ```
 
    Default stdout is one JSON result envelope. Use `--text` or `--table` only
@@ -61,9 +62,10 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
    print(macro.run_id)
    ```
 
-   Use `Project.open(workbook, source=...)` for explicit paths. Use
-   `Project.run()` rather than private APIs when named-range inputs, save
-   behavior, or visibility controls are required.
+   Use `Project.open(workbook, source=...)` for explicit paths. CLI callers can
+   repeat `--named-range NAME=VALUE`, choose `--save` or `--no-save`, and add
+   `--visible` when the isolated owned Excel window is intentionally required.
+   Python callers use the corresponding `Project.run()` arguments.
 
 6. Continue with `vba-edit.md` for changes, `vba-debug.md` for failures, and
    `.agents/skills/xlvba-toolchain/SKILL.md` for the complete operating
