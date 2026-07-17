@@ -23,6 +23,15 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
   `require_clean_shutdown()` when an Excel lifecycle must end gracefully.
 - Treat CLI stdout as one JSON result envelope by default. Request `--text` or
   `--table` only for explicit presentation needs.
+- Put command flags after the command they configure. Set `--workbook` or
+  `--source` explicitly when overriding configuration, and set a bounded
+  `--timeout` on Excel-backed operations.
+- Preview supported writes with `--dry-run`. Do not use `--no-backup` unless a
+  verified snapshot or equivalent rollback already exists.
+- In Python, import public types from `xlvbatools` and translate CLI flags to
+  the corresponding `Project` keyword arguments. Use `Project.run()` when
+  named-range inputs, save behavior, or visibility must be controlled because
+  those controls are not currently exposed by `xlvba run`.
 
 ## Packaging and versions
 

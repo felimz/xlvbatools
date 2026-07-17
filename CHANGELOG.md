@@ -8,6 +8,9 @@ All notable changes are documented here. This project follows
 
 ### Added
 
+- A copy-ready PowerShell and Python getting-started guide, plus a packaged
+  agent onboarding workflow covering installation, configuration, common
+  flags, public imports, result handling, and cleanup checks.
 - Versioned machine-readable command discovery through `xlvba help [command]`,
   including parser-derived flags, defaults, choices, and nested subcommands,
   plus complete conventional help with examples for every public command.

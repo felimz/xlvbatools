@@ -17,6 +17,9 @@ Python 3.10 or newer is supported. Excel-backed operations require Microsoft
 Excel on Windows. Source linting and source-code utilities do not require
 Excel.
 
+For a complete copy-ready setup in PowerShell and Python, including common
+flags and result handling, start with [Get started](docs/get-started.md).
+
 ## Python API
 
 Use a repository configuration:
@@ -80,14 +83,15 @@ are private worker backends and should not be used by application wrappers.
 ## CLI
 
 ```powershell
-xlvba init
-xlvba extract
-xlvba inject
-xlvba diff
-xlvba lint
+xlvba init --workbook workbook/Model.xlsm --agents
+xlvba extract --timeout 120
+xlvba inject --dry-run --timeout 120
+xlvba inject --timeout 120
+xlvba diff --summary --timeout 120
+xlvba lint --source vba_source
 xlvba run OnCalculate --timeout 120
-xlvba dump --sheets Input --screenshot --range B91:K99
-xlvba modify --sheet Input --cell C33 --value 42
+xlvba dump --sheets Input --screenshot --range B91:K99 --timeout 90
+xlvba modify --sheet Input --cell C33 --value 42 --timeout 120
 xlvba snapshot create --desc "before change"
 xlvba search "FileCount"
 xlvba fmt --dry-run
@@ -197,6 +201,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and
 
 Documentation:
 
+- [Get started](docs/get-started.md)
 - [Python API](docs/api-reference.md)
 - [Agent integration](docs/agent-integration.md)
 - [Inspection and modification](docs/dumper-and-modifier.md)

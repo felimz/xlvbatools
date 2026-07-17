@@ -249,6 +249,7 @@ def test_cli_init(tmp_path, monkeypatch, capsys):
     assert os.path.exists(".agents")
     assert os.path.exists(".agents/AGENTS.md")
     assert os.path.exists(".agents/skills/xlvba-toolchain/SKILL.md")
+    assert os.path.exists(".agents/workflows/get-started.md")
     assert os.path.exists(".agents/workflows/vba-debug.md")
     assert os.path.exists(".agents/workflows/vba-edit.md")
     assert os.path.exists(".agents/rules/vba-rules.md")

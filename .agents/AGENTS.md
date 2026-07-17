@@ -8,8 +8,10 @@ The Python package, project configuration, and agent guidance are separate:
 2. Run `xlvba agents install` to copy this `.agents/` guidance into an existing
    project, or `xlvba init --agents` to create configuration and guidance
    together.
-3. Read this file, then the task-specific skill, rule, and workflow.
-4. Customize workbook paths and acceptance commands for the repository and
+3. Follow `workflows/get-started.md` to verify the local CLI, configuration,
+   common flags, and Python import boundary.
+4. Read the task-specific skill, rule, and workflow.
+5. Customize workbook paths and acceptance commands for the repository and
    commit those customizations.
 
 Installing `.agents/` files does not install the Python package or create an
@@ -38,6 +40,9 @@ and implementation subpackages are private.
   schema, and worker-protocol versions are independent contracts.
 - Parse the default JSON envelope. Use `--text` or `--table` only when a human
   presentation is explicitly requested.
+- Put flags after the command they configure, use an explicit `--timeout` for
+  Excel-backed operations, and use `--dry-run` before injection or formatting
+  writes when the command supports it.
 
 Task-specific Python, VBA, skill, and workflow guidance lives under
 `.agents/` (plural). In a consumer repository, install these packaged files

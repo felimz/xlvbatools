@@ -13,7 +13,7 @@ description: Safely modify, lint, inject, diff, and verify VBA through xlvbatool
 2. Extract the current workbook project:
 
    ```powershell
-   xlvba extract
+   xlvba extract --timeout 120
    ```
 
 3. Edit files under `vba_source/`:
@@ -32,8 +32,9 @@ description: Safely modify, lint, inject, diff, and verify VBA through xlvbatool
 5. Inject and confirm round-trip equality:
 
    ```powershell
-   xlvba inject
-   xlvba diff --summary
+   xlvba inject --dry-run --timeout 120
+   xlvba inject --timeout 120
+   xlvba diff --summary --timeout 120
    ```
 
 6. Run the relevant macro and inspect both the outcome and cleanup:

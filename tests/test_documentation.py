@@ -111,6 +111,38 @@ def test_documentation_describes_machine_first_cli_output():
 
 
 @pytest.mark.unit
+def test_get_started_covers_supported_invocation_contract():
+    guide = (ROOT / "docs/get-started.md").read_text(encoding="utf-8")
+
+    required_snippets = (
+        r".\.venv\Scripts\xlvba.exe",
+        "xlvba help",
+        "--workbook",
+        "--source",
+        "--timeout",
+        "--dry-run",
+        "--include-hidden-sheets",
+        "--text",
+        "--table",
+        "ConvertFrom-Json",
+        "from xlvbatools import Project",
+        "Project.from_config()",
+        "Project.open(",
+        "require_success()",
+        "require_clean_shutdown()",
+    )
+    missing = [snippet for snippet in required_snippets if snippet not in guide]
+    assert not missing, missing
+
+    workflow = (ROOT / ".agents/workflows/get-started.md").read_text(
+        encoding="utf-8"
+    )
+    assert "from xlvbatools import Project" in workflow
+    assert "--dry-run --timeout" in workflow
+    assert "Default stdout is one JSON result envelope" in workflow
+
+
+@pytest.mark.unit
 def test_agent_installation_and_discovery_are_documented():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     guide = (ROOT / "docs/agent-integration.md").read_text(encoding="utf-8")

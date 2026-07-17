@@ -16,6 +16,9 @@ revision, pin its exact full Git commit instead.
 Installing the Python package does not modify the repository's `.agents/` tree
 or create `xlvbatools.toml`; those are explicit steps below.
 
+For a copy-ready installation, configuration, PowerShell flag, and Python
+import walkthrough, begin with [Get started](get-started.md).
+
 ## Discover the CLI
 
 Use conventional help when reading in a terminal and the versioned JSON
@@ -61,21 +64,24 @@ The JSON result lists `installed`, `skipped`, and `overwritten` paths.
 After installation:
 
 1. Read `.agents/AGENTS.md` for the repository-wide contract.
-2. Read `.agents/skills/xlvba-toolchain/SKILL.md` before Excel/VBA work.
-3. Select the relevant Python or VBA rule file.
-4. Follow `vba-edit.md` for changes or `vba-debug.md` for diagnosis.
-5. Customize paths or project-specific acceptance commands and commit those
+2. Follow `.agents/workflows/get-started.md` to verify the local installation
+   and configuration.
+3. Read `.agents/skills/xlvba-toolchain/SKILL.md` before Excel/VBA work.
+4. Select the relevant Python or VBA rule file.
+5. Follow `vba-edit.md` for changes or `vba-debug.md` for diagnosis.
+6. Customize paths or project-specific acceptance commands and commit those
    changes with the repository.
 
 ## Standard edit-verify cycle
 
 ```powershell
 xlvba snapshot create --desc "before change"
-xlvba extract
+xlvba extract --timeout 120
 # Edit files under vba_source/
 xlvba lint --source vba_source
-xlvba inject
-xlvba diff --summary
+xlvba inject --dry-run --timeout 120
+xlvba inject --timeout 120
+xlvba diff --summary --timeout 120
 xlvba run OnCalculate --timeout 120
 ```
 
@@ -183,6 +189,7 @@ cross-module symbol merely to make modes agree.
 │   └── xlvba-toolchain/
 │       └── SKILL.md
 └── workflows/
+    ├── get-started.md
     ├── vba-debug.md
     └── vba-edit.md
 ```

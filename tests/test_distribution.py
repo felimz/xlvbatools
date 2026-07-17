@@ -108,3 +108,4 @@ def test_built_wheel_exposes_public_wrapper_api(tmp_path):
     install_payload = json.loads(agent_install.stdout)
     assert install_payload["operation"] == "agents_install"
     assert (outside / ".agents/AGENTS.md").is_file()
+    assert (outside / ".agents/workflows/get-started.md").is_file()

@@ -15,18 +15,32 @@ Before using the commands, install a pinned xlvbatools version in the project
 `.venv` and create or verify `xlvbatools.toml`. Installing this `.agents/`
 template alone does not install the package or configure a workbook.
 
+## Start here
+
+For a new consumer repository, follow `.agents/workflows/get-started.md` before
+the task-specific workflow. It verifies the project-local executable, installs
+or checks `xlvbatools.toml`, demonstrates common flags, and shows the supported
+root-level Python imports.
+
+Use `xlvba help COMMAND` for machine-readable flag discovery or
+`xlvba COMMAND --help` for terminal help. Put flags after the command they
+configure. Give Excel-backed operations an explicit `--timeout`; use
+`--dry-run` before supported mutations. Default JSON is for tools and agents,
+while `--text` and `--table` are explicit presentation choices.
+
 ## Edit-verify cycle
 
 ```text
 1. Snapshot:  xlvba snapshot create --desc "before-change"
-2. Extract:   xlvba extract
+2. Extract:   xlvba extract --timeout 120
 3. Edit:      change files under vba_source/
-4. Lint:      xlvba lint
-5. Inject:    xlvba inject
-6. Diff:      xlvba diff
-7. Run:       xlvba run <MacroName>
-8. Pass:      commit workbook/source changes together
-9. Fail:      xlvba snapshot restore latest
+4. Lint:      xlvba lint --source vba_source
+5. Preview:   xlvba inject --dry-run --timeout 120
+6. Inject:    xlvba inject --timeout 120
+7. Diff:      xlvba diff --summary --timeout 120
+8. Run:       xlvba run <MacroName> --timeout 120
+9. Pass:      commit workbook/source changes together
+10. Fail:     xlvba snapshot restore latest
 ```
 
 ## CLI quick reference
