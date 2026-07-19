@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-18
+
 ### Added
 
 - Typed, versioned one-session workflows through `Project.workflow()` and
@@ -61,6 +63,8 @@ All notable changes are documented here. This project follows
   modules.
 - Worker failure details retain structured error, timeout, traceback, and log
   evidence in the public result envelope.
+- Distribution metadata uses an SPDX license expression and ships the MIT
+  license text in source and wheel artifacts.
 
 ### Removed
 

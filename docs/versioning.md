@@ -44,13 +44,14 @@ Production/Stable`. Pre-release work must use a PEP 440 suffix such as
 1. Update `_version.py` and add the dated changelog entry.
 2. Run unit, integration, sequential-COM, and real-workbook acceptance tests
    using the repository `.venv`.
-3. Build the wheel with normal PEP 517 build isolation.
-4. Install the wheel into a fresh virtual environment outside the source tree
-   and verify the public API, package version, result schema, protocol, CLI
-   discovery catalog, and packaged `.agents/` installation.
+3. Build the source distribution and wheel with normal PEP 517 build isolation.
+4. Install the exact wheel into a fresh virtual environment outside the source
+   tree and verify the public API, package version, result schema, protocol,
+   CLI discovery catalog, and packaged `.agents/` installation.
 5. Commit the release, create an annotated `vMAJOR.MINOR.PATCH` Git tag, and
    push the commit and tag.
-6. Publish the exact wheel built from that tagged commit and record its hash.
+6. Publish the exact source distribution and wheel built from that tagged
+   commit and record their hashes.
 
 The release commit, tag, wheel metadata, `xlvba version`, and changelog
 must all report the same package version. Do not derive the package version
