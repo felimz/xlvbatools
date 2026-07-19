@@ -212,6 +212,7 @@ def _execute_worker_request_once(
                     "dialog_events": [],
                     "cleanup": cleanup,
                     "worker_exit": worker_exit,
+                    "progress": dict(progress),
                 }
 
             # Make process ownership explicit before examining the worker's
@@ -251,6 +252,7 @@ def _execute_worker_request_once(
                     process,
                     force_terminated=bool(cleanup.get("worker_terminated")),
                 ),
+                "progress": dict(progress),
             }
             if phase == "worker_start" and progress.get("excel_pid") is None:
                 response["error"] = {

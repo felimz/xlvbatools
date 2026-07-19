@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     _register_diff(subparsers)
     _register_lint(subparsers)
     _register_run(subparsers)
+    _register_workflow(subparsers)
     _register_snapshot(subparsers)
     _register_dump(subparsers)
     _register_modify(subparsers)
@@ -203,6 +204,29 @@ def _register_run(subparsers: Any) -> None:
     )
     _presentation_options(parser)
     parser.set_defaults(func=commands._cmd_run)
+
+
+def _register_workflow(subparsers: Any) -> None:
+    parser = _command_parser(subparsers, "workflow")
+    _worker_options(parser, timeout=240.0)
+    parser.add_argument(
+        "--file",
+        required=True,
+        help="Workflow JSON path, or '-' to read the request from stdin",
+    )
+    parser.add_argument(
+        "--save",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Save only after every workflow step succeeds (default: no-save)",
+    )
+    parser.add_argument(
+        "--visible",
+        action="store_true",
+        help="Show the one isolated owned Excel instance during the workflow",
+    )
+    _presentation_options(parser)
+    parser.set_defaults(func=commands._cmd_workflow)
 
 
 def _register_snapshot(subparsers: Any) -> None:

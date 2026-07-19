@@ -125,6 +125,11 @@ def test_get_started_covers_supported_invocation_contract():
         "--named-range",
         "--no-save",
         "--visible",
+        "workflow --file",
+        "Project.workflow(",
+        "MacroStep",
+        "ModifyStep",
+        "InspectStep",
         "--text",
         "--table",
         "ConvertFrom-Json",
@@ -146,6 +151,12 @@ def test_get_started_covers_supported_invocation_contract():
     assert "--no-save" in workflow
     assert "Default stdout is one JSON result envelope" in workflow
     assert "Not currently exposed by `xlvba run`" not in guide
+    assert "excel-workflow.md" in workflow
+
+    workflow_guide = (ROOT / "docs/workflows.md").read_text(encoding="utf-8")
+    assert '"workflow_schema_version": "1.0"' in workflow_guide
+    assert "one overall timeout" in workflow_guide
+    assert "does not provide database rollback" in workflow_guide
 
 
 @pytest.mark.unit

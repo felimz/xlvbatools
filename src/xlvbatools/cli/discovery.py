@@ -56,6 +56,15 @@ COMMAND_SPECS = (
         True,
     ),
     CommandSpec(
+        "workflow", "Run ordered steps in one isolated Excel session",
+        "xlvba workflow --file WORKFLOW.json [options]",
+        (
+            "xlvba workflow --file workflow.json --no-save --timeout 240",
+            "Get-Content workflow.json | xlvba workflow --file - --timeout 240",
+        ),
+        True,
+    ),
+    CommandSpec(
         "snapshot", "Create and manage workbook checkpoints",
         "xlvba snapshot [options] {create,list,info,restore,diff,prune}",
         ("xlvba snapshot create --desc \"before change\"", "xlvba snapshot list --table"),
@@ -115,6 +124,8 @@ def discovery_payload(command: str | None = None) -> dict[str, Any]:
             raise ValueError(f"Unknown command {command!r}; choose one of: {choices}") from error
         command_data = asdict(spec)
         command_data.update(parser_metadata[command])
+        if command == "workflow":
+            command_data["input_schema"] = _workflow_input_schema()
         return {
             "discovery_schema_version": DISCOVERY_SCHEMA_VERSION,
             "command": command_data,
@@ -124,6 +135,8 @@ def discovery_payload(command: str | None = None) -> dict[str, Any]:
     for spec in COMMAND_SPECS:
         command_data = asdict(spec)
         command_data.update(parser_metadata[spec.name])
+        if spec.name == "workflow":
+            command_data["input_schema"] = _workflow_input_schema()
         commands.append(command_data)
     return {
         "discovery_schema_version": DISCOVERY_SCHEMA_VERSION,
@@ -146,6 +159,65 @@ def _output_contract() -> dict[str, Any]:
         "schema": "OperationResult",
         "presentation_flags": ["--text", "--table", "--output-format text|table"],
         "interactive_exception": "debug",
+    }
+
+
+def _workflow_input_schema() -> dict[str, Any]:
+    from xlvbatools.workflow import WORKFLOW_SCHEMA_VERSION
+
+    return {
+        "workflow_schema_version": WORKFLOW_SCHEMA_VERSION,
+        "required_top_level_fields": ["workflow_schema_version", "steps"],
+        "limits": {
+            "minimum_steps": 1,
+            "maximum_steps": 100,
+            "step_ids": "unique case-insensitive identifiers",
+        },
+        "execution": {
+            "session_scope": "one worker and one Excel process per workflow",
+            "failure_policy": "fail_fast",
+            "timeout_policy": "one overall parent-enforced timeout",
+            "save_policy": "off by default; one save after all steps succeed",
+            "replay_policy": "never replay at or after session_start",
+        },
+        "step_kinds": {
+            "macro": {
+                "required": ["id", "kind", "macro"],
+                "optional": ["named_ranges", "strict_named_ranges"],
+            },
+            "modify": {
+                "required": ["id", "kind", "sheet", "values"],
+                "optional": ["calculate"],
+            },
+            "inspect": {
+                "required": ["id", "kind", "sheets"],
+                "optional": [
+                    "output_dir", "cell_range", "include_data",
+                    "include_screenshots", "output_json", "output_markdown",
+                    "continue_on_render_error", "include_hidden_sheets",
+                ],
+            },
+        },
+        "example": {
+            "workflow_schema_version": WORKFLOW_SCHEMA_VERSION,
+            "steps": [
+                {"id": "retrieve", "kind": "macro", "macro": "OnRetrieve"},
+                {
+                    "id": "inputs",
+                    "kind": "modify",
+                    "sheet": "Input",
+                    "values": {"C102:C104": [[0.1], [0.0], [-0.1]]},
+                    "calculate": False,
+                },
+                {
+                    "id": "results",
+                    "kind": "inspect",
+                    "sheets": ["Input"],
+                    "include_data": True,
+                    "include_screenshots": False,
+                },
+            ],
+        },
     }
 
 

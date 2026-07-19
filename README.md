@@ -3,9 +3,10 @@
 Reliable, isolated Excel/VBA automation for Python projects.
 
 xlvbatools gives downstream applications one small API for workbook
-inspection, macro execution, VBA source synchronization, linting, and targeted
-modification. Every Excel-backed call runs in a separately tracked process;
-raw COM objects never cross into the caller.
+inspection, macro execution, one-session workflows, VBA source
+synchronization, linting, and targeted modification. Every Excel-backed call
+runs in a separately tracked process; raw COM objects never cross into the
+caller.
 
 ## Install
 
@@ -57,6 +58,7 @@ The public workflow methods are:
 
 - `inspect`
 - `run`
+- `workflow`
 - `list_components`
 - `extract`
 - `inject`
@@ -93,6 +95,7 @@ xlvba inject --timeout 120
 xlvba diff --summary --timeout 120
 xlvba lint --source vba_source
 xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
+xlvba workflow --file workflow.json --no-save --timeout 240
 xlvba dump --sheets Input --screenshot --range B91:K99 --timeout 90
 xlvba modify --sheet Input --cell C33 --value 42 --timeout 120
 xlvba snapshot create --desc "before change"
@@ -153,6 +156,12 @@ worker. Timeouts and cleanup never terminate Excel by image name and never
 select an unrelated desktop instance. A single automatic replay is possible
 only for a proven pre-Excel worker-start failure; callers must not add another.
 
+Related macro, range-write, and inspection steps can use `Project.workflow()`
+to share one workbook open and one owned Excel PID. A workflow is fail-fast,
+uses one overall timeout, saves only once after complete success when requested,
+and is never replayed after `session_start`. See
+[One-session workflows](docs/workflows.md).
+
 Static linting uses one whole-project symbol index for both extracted files and
 live workbooks, so cross-module public declarations resolve consistently.
 
@@ -194,6 +203,10 @@ python -m venv .venv
   src/xlvbatools/execution.py `
   src/xlvbatools/results.py `
   src/xlvbatools/outputs.py `
+  src/xlvbatools/workflow.py `
+  src/xlvbatools/core/workflow.py `
+  src/xlvbatools/workbook/dumper.py `
+  src/xlvbatools/workbook/modifier.py `
   src/xlvbatools/snapshots.py `
   src/xlvbatools/cli
 .venv\Scripts\python.exe -m pytest -m unit
@@ -207,6 +220,7 @@ Documentation:
 
 - [Get started](docs/get-started.md)
 - [Python API](docs/api-reference.md)
+- [One-session workflows](docs/workflows.md)
 - [Agent integration](docs/agent-integration.md)
 - [Inspection and modification](docs/dumper-and-modifier.md)
 - [Linting and formatting](docs/lint-and-format.md)

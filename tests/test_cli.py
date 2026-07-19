@@ -143,6 +143,23 @@ def test_machine_readable_help_catalog_supports_command_detail(capsys):
     assert run_options["save"]["default"] is True
     assert run_options["visible"]["default"] is False
 
+    main(["help", "workflow"])
+    workflow_detail = json.loads(capsys.readouterr().out)["data"]["command"]
+    workflow_options = {item["name"]: item for item in workflow_detail["options"]}
+    assert workflow_options["file"]["required"] is True
+    assert workflow_options["save"]["default"] is False
+    assert workflow_detail["input_schema"]["workflow_schema_version"] == "1.0"
+    assert set(workflow_detail["input_schema"]["step_kinds"]) == {
+        "macro", "modify", "inspect",
+    }
+    assert workflow_detail["input_schema"]["limits"]["maximum_steps"] == 100
+    assert workflow_detail["input_schema"]["execution"]["failure_policy"] == (
+        "fail_fast"
+    )
+    assert workflow_detail["input_schema"]["example"]["steps"][1]["kind"] == (
+        "modify"
+    )
+
     main(["help", "agents"])
     agents = json.loads(capsys.readouterr().out)["data"]["command"]
     install = next(item for item in agents["subcommands"] if item["name"] == "install")
@@ -404,6 +421,89 @@ def test_cli_run_forwards_typed_named_ranges_save_and_visibility(tmp_path):
         visible=True,
         save=False,
     )
+    patch.stopall()
+
+
+@pytest.mark.unit
+def test_cli_workflow_parses_typed_file_and_forwards_lifecycle_flags(tmp_path, capsys):
+    from xlvbatools import WorkflowOutput
+
+    workflow_file = tmp_path / "workflow.json"
+    workflow_file.write_text(json.dumps({
+        "workflow_schema_version": "1.0",
+        "steps": [
+            {
+                "id": "retrieve", "kind": "macro", "macro": "OnRetrieve",
+                "named_ranges": {"FilePath": "model.r3d"},
+            },
+            {
+                "id": "inputs", "kind": "modify", "sheet": "Input",
+                "values": {"C102:C104": [[0.1], [0.0], [-0.1]]},
+            },
+            {
+                "id": "results", "kind": "inspect", "sheets": ["Input"],
+                "include_screenshots": False,
+            },
+        ],
+    }), encoding="utf-8")
+    project = patch("xlvbatools.cli.commands._project").start().return_value
+    project.workflow.return_value = _result(
+        "workflow", WorkflowOutput(steps=(), save_requested=True, saved=True),
+    )
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+
+        with pytest.raises(SystemExit) as exc_info:
+            main([
+                "workflow", "--file", str(workflow_file), "--save", "--visible",
+                "--timeout", "240",
+            ])
+
+    assert exc_info.value.code == 0
+    steps = project.workflow.call_args.args[0]
+    assert [step.id for step in steps] == ["retrieve", "inputs", "results"]
+    assert steps[0].named_ranges["FilePath"] == "model.r3d"
+    assert steps[1].values["C102:C104"] == ((0.1,), (0.0,), (-0.1,))
+    assert project.workflow.call_args.kwargs == {
+        "timeout": 240.0, "visible": True, "save": True,
+    }
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "workflow"
+    patch.stopall()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"workflow_schema_version": "99.0", "steps": []},
+        {"workflow_schema_version": "1.0", "steps": [], "typo": True},
+        {
+            "workflow_schema_version": "1.0",
+            "steps": [{"id": "bad", "kind": "shell"}],
+        },
+    ],
+)
+def test_cli_workflow_rejects_invalid_file_before_project(payload, tmp_path, capsys):
+    workflow_file = tmp_path / "workflow.json"
+    workflow_file.write_text(json.dumps(payload), encoding="utf-8")
+    project = patch("xlvbatools.cli.commands._project").start().return_value
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test"
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["workflow", "--file", str(workflow_file)])
+
+    assert exc_info.value.code == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"]["code"] == "invalid_workflow"
+    project.workflow.assert_not_called()
     patch.stopall()
 
 

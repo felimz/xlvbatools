@@ -12,6 +12,7 @@ from typing import Optional
 from xlvbatools._version import __version__ as source_version
 from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION
 from xlvbatools.results import RESULT_SCHEMA_VERSION
+from xlvbatools.workflow import WORKFLOW_SCHEMA_VERSION
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class VersionInfo:
     requested_revision: Optional[str] = None
     result_schema_version: str = RESULT_SCHEMA_VERSION
     worker_protocol_version: str = WORKER_PROTOCOL_VERSION
+    workflow_schema_version: str = WORKFLOW_SCHEMA_VERSION
 
     def to_dict(self) -> dict:
         return asdict(self)

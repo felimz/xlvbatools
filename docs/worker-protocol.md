@@ -1,6 +1,6 @@
 # Internal isolated-worker protocol
 
-Protocol version: **2.0**.
+Protocol version: **2.1**.
 
 This protocol is private to `IsolatedExecutor`. Applications use `Project`
 and `OperationResult`; they must not create worker files or invoke the worker
@@ -31,7 +31,7 @@ No COM object is serialized and no existing Excel instance is selected.
 
 ```json
 {
-  "protocol_version": "2.0",
+  "protocol_version": "2.1",
   "request_id": "uuid",
   "operation": "extract",
   "arguments": {
@@ -43,14 +43,14 @@ No COM object is serialized and no existing Excel instance is selected.
 ```
 
 Supported transport operations are `inspect`, `run_macro`,
-`list_components`, `extract`, `inject`, `diff`, `lint_workbook`, and
-`modify`.
+`list_components`, `extract`, `inject`, `diff`, `lint_workbook`, `modify`, and
+`workflow`.
 
 ## Progress
 
 ```json
 {
-  "protocol_version": "2.0",
+  "protocol_version": "2.1",
   "request_id": "uuid",
   "operation": "extract",
   "worker_pid": 1234,
@@ -61,6 +61,10 @@ Supported transport operations are `inspect`, `run_macro`,
 
 Atomic replacement is retried because Windows readers can briefly deny a
 rename. Readers therefore observe complete JSON documents.
+
+Workflow progress additionally records `step_id`, `step_kind`, zero-based
+`step_index`, `step_count`, and `step_phase`. Timeout and missing-result
+envelopes retain the last complete progress document.
 
 ## Result envelope
 
@@ -76,6 +80,8 @@ at the transport top level. Common transport fields include:
 
 For inspection, `data` contains `workbook_data` and `screenshots`. For a
 macro, `data` contains the run ID, return value, and macro-specific fields.
+For a workflow, `data` contains its schema version, ordered step results,
+failed-step identity, and explicit-save outcome.
 
 The transport dictionary is discarded after conversion. Public JSON comes
 from `OperationResult.to_dict()` and is governed independently by

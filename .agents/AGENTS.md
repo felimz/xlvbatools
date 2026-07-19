@@ -27,6 +27,8 @@ and implementation subpackages are private.
 
 - Run project commands with the repository `.venv` when one exists.
 - Use `Project` or the `xlvba` CLI for Excel-backed operations.
+- Use `Project.workflow()` or `xlvba workflow` when ordered macro,
+  modification, and inspection steps require the same in-memory workbook.
 - Check both `OperationResult.require_success()` and, for Excel operations,
   `OperationResult.require_clean_shutdown()`.
 - Let `IsolatedExecutor` own worker-start retry. It permits at most two total
@@ -40,7 +42,8 @@ and implementation subpackages are private.
   artifacts; do not pollute the workspace root.
 - Treat names in `xlvbatools.__all__` as the only supported Python API.
 - Check `xlvba version` when reproducibility matters. Package, result-
-  schema, and worker-protocol versions are independent contracts.
+  schema, worker-protocol, and workflow-schema versions are independent
+  contracts.
 - Parse the default JSON envelope. Use `--text` or `--table` only when a human
   presentation is explicitly requested.
 - Put flags after the command they configure, use an explicit `--timeout` for

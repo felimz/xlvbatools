@@ -24,6 +24,7 @@ class Operation(str, Enum):
     DIFF = "diff"
     LINT_WORKBOOK = "lint_workbook"
     MODIFY = "modify"
+    WORKFLOW = "workflow"
 
 
 def _freeze(value: Any) -> Any:

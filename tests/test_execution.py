@@ -5,7 +5,7 @@ import pytest
 
 def _worker_response(operation="extract", **overrides):
     response = {
-        "protocol_version": "2.0",
+        "protocol_version": "2.1",
         "request_id": "request-1",
         "operation": operation,
         "success": True,
@@ -75,7 +75,7 @@ def test_executor_thaws_request_for_worker_transport(monkeypatch):
     def execute(operation, arguments, **kwargs):
         captured.update(arguments)
         return {
-            "protocol_version": "2.0",
+            "protocol_version": "2.1",
             "request_id": "request-1",
             "operation": operation,
             "success": True,
@@ -104,7 +104,7 @@ def test_executor_converts_private_transport_to_public_result(monkeypatch):
         worker,
         "execute_worker_request",
         lambda *args, **kwargs: {
-            "protocol_version": "2.0",
+            "protocol_version": "2.1",
             "request_id": "request-1",
             "operation": "extract",
             "success": True,
@@ -168,7 +168,7 @@ def test_executor_preserves_structured_worker_failure_details(monkeypatch):
         worker,
         "execute_worker_request",
         lambda *args, **kwargs: {
-            "protocol_version": "2.0",
+            "protocol_version": "2.1",
             "request_id": "request-1",
             "operation": "extract",
             "success": False,
@@ -188,6 +188,65 @@ def test_executor_preserves_structured_worker_failure_details(monkeypatch):
         "traceback": "trace text",
         "worker_output": "worker log",
     }
+
+
+@pytest.mark.unit
+def test_executor_preserves_structured_workflow_timeout_progress(monkeypatch):
+    from xlvbatools import IsolatedExecutor, Operation, OperationRequest
+    from xlvbatools.core import worker
+
+    calls = []
+    progress = {
+        "phase": "workflow_step",
+        "step_id": "calculate",
+        "step_kind": "macro",
+        "step_index": 2,
+        "step_count": 4,
+        "step_phase": "macro_execution",
+    }
+
+    def execute(*args, **kwargs):
+        calls.append(1)
+        return _worker_response(
+            operation="workflow",
+            success=False,
+            phase="workflow_step",
+            primary_error="workflow exceeded 240 seconds",
+            timed_out=True,
+            progress=progress,
+        )
+
+    monkeypatch.setattr(worker, "execute_worker_request", execute)
+    result = IsolatedExecutor().execute(OperationRequest(Operation.WORKFLOW, {}))
+
+    assert result.success is False
+    assert result.error.code == "timeout"
+    assert result.error.details["progress"]["step_id"] == "calculate"
+    assert result.diagnostics.progress["step_phase"] == "macro_execution"
+    assert result.attempt_count == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.unit
+def test_executor_allows_only_pre_session_start_retry_for_workflow(monkeypatch):
+    from xlvbatools import IsolatedExecutor, Operation, OperationRequest
+    from xlvbatools.core import worker
+
+    responses = iter([
+        _safe_startup_failure(operation="workflow"),
+        _worker_response(operation="workflow", request_id="request-2", data={"steps": []}),
+    ])
+    monkeypatch.setattr(
+        worker, "execute_worker_request", lambda *args, **kwargs: next(responses),
+    )
+
+    result = IsolatedExecutor().execute(OperationRequest(Operation.WORKFLOW, {}))
+
+    assert result.success is True
+    assert result.attempt_count == 2
+    assert result.diagnostics.attempts[0].retry_reason == (
+        "worker_exited_before_session_start"
+    )
 
 
 @pytest.mark.unit

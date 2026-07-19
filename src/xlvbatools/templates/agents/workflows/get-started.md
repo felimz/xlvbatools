@@ -43,6 +43,8 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
    & $xlvba dump --sheets "Input" --screenshot --range "A1:K100" --timeout 90
    & $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" `
      --named-range "InputValue=42" --no-save --timeout 120
+   & $xlvba workflow --workbook "workbook/Model.xlsm" `
+     --file "workflow.json" --no-save --timeout 240
    ```
 
    Default stdout is one JSON result envelope. Use `--text` or `--table` only
@@ -66,6 +68,13 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
    repeat `--named-range NAME=VALUE`, choose `--save` or `--no-save`, and add
    `--visible` when the isolated owned Excel window is intentionally required.
    Python callers use the corresponding `Project.run()` arguments.
+
+   When related retrieval, range-write, calculation, and inspection steps need
+   the same live workbook state, use typed `Project.workflow()` steps or a
+   versioned `xlvba workflow --file workflow.json` request. Workflows default
+   to no-save, have one overall timeout, stop after the first failed step, and
+   are never replayed after `session_start`. Follow `excel-workflow.md` for a
+   copy-ready request.
 
    Worker-start retry is executor-owned and automatic only before Excel
    ownership. Keep `attempt_count` and `diagnostics.attempts` in logs when a

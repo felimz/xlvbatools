@@ -355,6 +355,13 @@ class ExcelSession:
             self.cleanup_result["workbook_save_error"] = str(save_error)
         return False  # Don't suppress exceptions
 
+    def save(self) -> None:
+        """Explicitly save the currently open workbook."""
+        if self.wb is None:
+            raise RuntimeError("Workbook is not open")
+        self.phase = "workbook_save"
+        self.wb.Save()
+
     # -- Convenience Properties --
 
     @property

@@ -8,6 +8,10 @@ All notable changes are documented here. This project follows
 
 ### Added
 
+- Typed, versioned one-session workflows through `Project.workflow()` and
+  `xlvba workflow`, with ordered macro, range-write, and inspection steps,
+  fail-fast results, explicit save-on-success, durable step progress, and one
+  overall timeout.
 - Typed `AttemptDiagnostic` and `WorkerExitReport` evidence for every isolated
   executor attempt, including the retry reason and explicit worker reaping.
 - Repeatable typed `xlvba run --named-range NAME=VALUE` inputs, explicit
@@ -36,8 +40,8 @@ All notable changes are documented here. This project follows
 - Worker progress now publishes `session_start` durably before any session
   construction, and worker-process exit evidence is separate from Excel
   cleanup evidence.
-- The additive result schema is `1.1`; package and private worker-protocol
-  versions remain independently versioned.
+- The additive result schema is `1.2`, the private worker protocol is `2.1`,
+  and the new workflow request schema is independently versioned at `1.0`.
 - Agent templates are self-contained for downstream repositories and now
   distinguish package installation, `.agents/` installation, and project
   configuration. Documentation now indexes every guide and names every public

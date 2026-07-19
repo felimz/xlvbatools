@@ -23,10 +23,12 @@ Usage:
 """
 
 import json
+import gc
 import logging
 import os
 import time
 from contextlib import nullcontext
+from typing import Any
 
 from xlvbatools.core.session import ExcelSession
 
@@ -82,8 +84,13 @@ def dump_named_ranges(wb) -> dict:
     refers_to, scope, value, and error (if any).
     """
     named_ranges = {}
+    names = None
+    name = None
+    rng = None
     try:
-        for name in wb.Names:
+        names = wb.Names
+        for index in range(1, int(names.Count) + 1):
+            name = names.Item(index)
             name_str = name.Name
             try:
                 refers_to = name.RefersTo
@@ -113,6 +120,8 @@ def dump_named_ranges(wb) -> dict:
                         val = wb.Application.Evaluate(refers_to)
                     except Exception:
                         val = None
+                finally:
+                    rng = None
 
                 # Format error values
                 error_type = None
@@ -133,8 +142,14 @@ def dump_named_ranges(wb) -> dict:
                     "value": None,
                     "error": str(e),
                 }
+            finally:
+                name = None
     except Exception as e:
         logger.warning(f"Failed to query Named Ranges: {e}")
+    finally:
+        rng = None
+        name = None
+        names = None
     return named_ranges
 
 
@@ -177,8 +192,17 @@ def _shape_display_text(sheet, shape, shape_type: int) -> tuple[str, str]:
 def dump_sheet_shapes(sheet) -> list:
     """Extract shapes and controls, including Forms and ActiveX captions."""
     shapes_info = []
+    shapes = None
+    shape = None
+    shape_iterator = None
     try:
-        for shape in sheet.Shapes:
+        shapes = sheet.Shapes
+        shape_iterator = (
+            (shapes.Item(index) for index in range(1, int(shapes.Count) + 1))
+            if hasattr(shapes, "Count") and hasattr(shapes, "Item")
+            else iter(shapes)
+        )
+        for shape in shape_iterator:
             on_action, linked_cell = "", ""
             try:
                 shape_type = int(shape.Type)
@@ -208,8 +232,13 @@ def dump_sheet_shapes(sheet) -> list:
                     "on_action": on_action,
                     "linked_cell": linked_cell,
                 })
+            shape = None
     except Exception as e:
         logger.warning(f"Failed to extract shapes for sheet {sheet.Name}: {e}")
+    finally:
+        shape = None
+        shape_iterator = None
+        shapes = None
     return shapes_info
 
 
@@ -602,7 +631,7 @@ def dump_sheet_data(
     Returns the complete dump data dict.
     """
     wb_path = os.path.abspath(workbook_path)
-    dump_data = {
+    dump_data: dict[str, Any] = {
         "metadata": {
             "workbook": os.path.basename(wb_path),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -622,6 +651,9 @@ def dump_sheet_data(
             dump_data["named_ranges"] = dump_named_ranges(wb)
 
         for sheet_name in sheets:
+            sheet = None
+            ur = None
+            cell = None
             try:
                 try:
                     sheet = wb.Worksheets(sheet_name)
@@ -692,9 +724,12 @@ def dump_sheet_data(
 
                             # Get formatted text (D2)
                             try:
-                                text = ur.Cells(r + 1, c + 1).Text
+                                cell = ur.Cells(r + 1, c + 1)
+                                text = cell.Text
                             except Exception:
                                 text = str(val) if val is not None else ""
+                            finally:
+                                cell = None
 
                             # Detect errors (D3)
                             is_error = False
@@ -734,6 +769,14 @@ def dump_sheet_data(
             except Exception as e:
                 logger.error(f"Error dumping worksheet '{sheet_name}': {e}")
                 dump_data["sheets"][sheet_name] = {"error": str(e)}
+            finally:
+                cell = None
+                ur = None
+                sheet = None
+                gc.collect()
+
+        wb = None
+        gc.collect()
 
     # Write JSON output
     if output_json:
@@ -791,26 +834,21 @@ def _inspect_workbook_in_process(
     )
     try:
         with session:
-            if include_screenshots:
-                result["phase"] = "range_copy_picture"
-                result["screenshots"] = export_screenshots(
-                    workbook_path, sheets, output_dir,
-                    custom_range=custom_range, _session=session,
-                    include_hidden_sheets=include_hidden_sheets,
-                )
-                render_errors = {
-                    name: value for name, value in result["screenshots"].items()
-                    if value in ("Not found", "Empty") or str(value).startswith("Error:")
-                }
-                if render_errors and not continue_on_render_error:
-                    raise RuntimeError(f"Screenshot rendering failed: {render_errors}")
-            if include_data:
-                result["phase"] = "data_dump"
-                result["data"] = dump_sheet_data(
-                    workbook_path, sheets, output_json=output_json,
-                    output_md=output_md, custom_range=custom_range,
-                    _session=session,
-                )
+            inspection = _inspect_existing_session(
+                session,
+                workbook_path=workbook_path,
+                sheets=sheets,
+                output_dir=output_dir,
+                custom_range=custom_range,
+                include_data=include_data,
+                include_screenshots=include_screenshots,
+                output_json=output_json,
+                output_md=output_md,
+                continue_on_render_error=continue_on_render_error,
+                include_hidden_sheets=include_hidden_sheets,
+            )
+            result["screenshots"] = inspection["screenshots"]
+            result["data"] = inspection["workbook_data"]
         result["phase"] = "complete"
     except Exception as error:
         result["success"] = False
@@ -822,6 +860,53 @@ def _inspect_workbook_in_process(
         )
         result["cleanup"] = dict(session.cleanup_result)
     return result
+
+
+def _inspect_existing_session(
+    session: ExcelSession,
+    *,
+    workbook_path: str,
+    sheets: list[str],
+    output_dir: str = "screenshots",
+    custom_range: str | None = None,
+    include_data: bool = True,
+    include_screenshots: bool = True,
+    output_json: str | None = None,
+    output_md: str | None = None,
+    continue_on_render_error: bool = False,
+    include_hidden_sheets: bool = False,
+) -> dict[str, Any]:
+    """Inspect workbook state through an existing workflow-owned session."""
+    screenshots: dict[str, str] = {}
+    workbook_data = None
+    if include_screenshots:
+        screenshots = export_screenshots(
+            workbook_path,
+            sheets,
+            output_dir,
+            custom_range=custom_range,
+            _session=session,
+            include_hidden_sheets=include_hidden_sheets,
+        )
+        render_errors = {
+            name: value for name, value in screenshots.items()
+            if value in ("Not found", "Empty") or str(value).startswith("Error:")
+        }
+        if render_errors and not continue_on_render_error:
+            raise RuntimeError(f"Screenshot rendering failed: {render_errors}")
+    if include_data:
+        workbook_data = dump_sheet_data(
+            workbook_path,
+            sheets,
+            output_json=output_json,
+            output_md=output_md,
+            custom_range=custom_range,
+            _session=session,
+        )
+    return {
+        "workbook_data": workbook_data,
+        "screenshots": screenshots,
+    }
 
 
 def inspect_workbook(

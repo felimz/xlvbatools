@@ -264,7 +264,7 @@ def test_project_inspection_reports_clean_owned_process(minimal_workbook):
     )
 
     assert result.success is True, result.to_dict()
-    assert result.schema_version == "1.1"
+    assert result.schema_version == "1.2"
     assert result.data.workbook_data["sheets"]["Sheet1"]
     assert result.diagnostics.cleanup.is_clean, result.to_dict()
     assert result.require_clean_shutdown().still_running is False

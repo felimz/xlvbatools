@@ -30,6 +30,10 @@ an agent host.
   src/xlvbatools/execution.py `
   src/xlvbatools/results.py `
   src/xlvbatools/outputs.py `
+  src/xlvbatools/workflow.py `
+  src/xlvbatools/core/workflow.py `
+  src/xlvbatools/workbook/dumper.py `
+  src/xlvbatools/workbook/modifier.py `
   src/xlvbatools/snapshots.py `
   src/xlvbatools/cli
 .venv\Scripts\python.exe -m pytest -m "not com and not e2e" --cov=xlvbatools --cov-fail-under=60
@@ -39,6 +43,7 @@ an agent host.
 
 # Public Project API through live Excel.
 .venv\Scripts\python.exe -m pytest tests/test_project.py -m "com or e2e" -v
+.venv\Scripts\python.exe -m pytest tests/test_workflow_live.py -v
 
 # Sequential COM lifecycle in one interpreter and a parent subprocess.
 .venv\Scripts\python.exe -m pytest tests/test_session.py -m com -q
@@ -51,8 +56,9 @@ an agent host.
 The wheel test uses normal PEP 517 isolation, installs the wheel without
 editable/source-path leakage into a fresh virtual environment outside the
 repository, and verifies the public API plus package, result-schema, and
-worker-protocol versions. It also invokes the installed `xlvba help` catalog
-and installs packaged guidance into a consumer `.agents/` directory.
+worker-protocol and workflow-schema versions. It also invokes the installed
+`xlvba help` catalog and installs packaged guidance into a consumer `.agents/`
+directory.
 
 ## Real-workbook acceptance
 

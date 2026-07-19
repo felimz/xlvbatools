@@ -69,7 +69,9 @@ After installation:
 3. Read `.agents/skills/xlvba-toolchain/SKILL.md` before Excel/VBA work.
 4. Select the relevant Python or VBA rule file.
 5. Follow `vba-edit.md` for changes or `vba-debug.md` for diagnosis.
-6. Customize paths or project-specific acceptance commands and commit those
+6. Use `excel-workflow.md` when related macro, modification, and inspection
+   steps should share one Excel lifecycle.
+7. Customize paths or project-specific acceptance commands and commit those
    changes with the repository.
 
 ## Standard edit-verify cycle
@@ -131,6 +133,12 @@ xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
 Repeat `--named-range NAME=VALUE` as needed. Valid JSON values are typed;
 other values remain strings. Add `--visible` only when the isolated owned Excel
 window is intentionally required.
+
+For pipelines whose steps depend on the same in-memory workbook state, use
+`Project.workflow()` or `xlvba workflow --file workflow.json`. The workflow
+owns one Excel process, stops after the first failed step, defaults to no-save,
+and is never replayed after `session_start`. See
+[One-session workflows](workflows.md).
 
 For unit tests, inject an `Executor` test double into `Project`. Do not mock
 or expose COM objects in downstream wrappers.
@@ -207,6 +215,7 @@ cross-module symbol merely to make modes agree.
 │   └── xlvba-toolchain/
 │       └── SKILL.md
 └── workflows/
+    ├── excel-workflow.md
     ├── get-started.md
     ├── vba-debug.md
     └── vba-edit.md

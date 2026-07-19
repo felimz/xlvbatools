@@ -24,6 +24,10 @@ jobs:
           src/xlvbatools/execution.py
           src/xlvbatools/results.py
           src/xlvbatools/outputs.py
+          src/xlvbatools/workflow.py
+          src/xlvbatools/core/workflow.py
+          src/xlvbatools/workbook/dumper.py
+          src/xlvbatools/workbook/modifier.py
           src/xlvbatools/snapshots.py
           src/xlvbatools/cli
 

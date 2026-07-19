@@ -3,7 +3,8 @@ name: xlvba-toolchain
 description: >
   Use xlvbatools v1 through its Project API and CLI for isolated VBA
   extraction, injection, linting, diffing, macro execution, snapshots,
-  workbook inspection, modification, formatting, and dependency analysis.
+  one-session workflows, workbook inspection, modification, formatting, and
+  dependency analysis.
 ---
 
 # xlvbatools v1 Toolchain
@@ -53,6 +54,7 @@ while `--text` and `--table` are explicit presentation choices.
 | `xlvba diff` | Compare live workbook VBA with extracted source |
 | `xlvba lint` | Analyze source, or a live workbook with `--workbook` |
 | `xlvba run <macro>` | Run one macro with optional inputs and lifecycle flags |
+| `xlvba workflow --file <path>` | Run ordered typed steps in one Excel session |
 | `xlvba snapshot` | Create, list, inspect, restore, diff, or prune checkpoints |
 | `xlvba dump` | Inspect sheet data and optionally render screenshots |
 | `xlvba modify` | Change cells, formulas, or named ranges |
@@ -73,7 +75,7 @@ project-specific extra files are never deleted.
 ## Python API
 
 ```python
-from xlvbatools import Project
+from xlvbatools import InspectStep, MacroStep, ModifyStep, Project
 
 project = Project.from_config()
 
@@ -84,6 +86,19 @@ run_result = project.run("OnCalculate", timeout=120, save=False)
 macro = run_result.require_success()
 print(macro.run_id)
 run_result.require_clean_shutdown()
+
+workflow_result = project.workflow(
+    [
+        MacroStep("retrieve", "OnRetrieve"),
+        ModifyStep("inputs", "Input", {"C102:C104": [[0.1], [0.0], [-0.1]]}),
+        MacroStep("calculate", "OnCalculate"),
+        InspectStep("results", ("Input",), include_screenshots=False),
+    ],
+    timeout=240,
+    save=False,
+)
+workflow = workflow_result.require_success()
+workflow_result.require_clean_shutdown()
 
 snapshot = project.snapshots().create("before change")
 project.snapshots().restore(snapshot)
@@ -112,7 +127,7 @@ Every operation returns an `OperationResult`. Check:
 
 Operation data is modeled, not a private dictionary: use attributes on
 `MacroOutput`, `ExtractionOutput`, `InjectionOutput`, `ComponentDiff`,
-`ModificationOutput`, and `SnapshotRecord`.
+`ModificationOutput`, `WorkflowOutput`, and `SnapshotRecord`.
 
 CLI output is one versioned JSON envelope by default. Use `--text` or `--table`
 only when presentation output is explicitly requested. Do not parse private
@@ -135,6 +150,7 @@ duplicate that policy.
 | Need to set a value | `xlvba modify --sheet Sheet1 --cell A1 --value 42` |
 | Need macro inputs without saving | Repeat `--named-range NAME=VALUE` and add `--no-save` |
 | Need visible macro execution | Add `--visible`; the Excel instance remains isolated and owned |
+| Related steps need one workbook open | Use typed `Project.workflow()` steps or `xlvba workflow --file ...` |
 | Macro timed out or Excel failed | Inspect cleanup diagnostics; never kill Excel globally |
 | Need rollback | `xlvba snapshot restore latest` |
 

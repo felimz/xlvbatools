@@ -10,6 +10,9 @@ command catalog. `xlvba help COMMAND` narrows it to one command. Conventional
 with complete option descriptions and examples. JSON discovery includes the
 actual parser flags, defaults, choices, and nested subcommands.
 
+`xlvba help workflow` also includes the current workflow request schema and
+required and optional fields for each typed step kind.
+
 ```powershell
 xlvba lint --source vba_source
 xlvba extract
@@ -35,6 +38,7 @@ xlvba lint --source vba_source --text
 xlvba extract --list --table
 xlvba snapshot list --output-format table
 xlvba version --output-format text
+xlvba workflow --file workflow.json --output-format table
 ```
 
 The supported values are:

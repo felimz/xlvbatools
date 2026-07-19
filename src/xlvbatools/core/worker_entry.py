@@ -66,6 +66,24 @@ class ProgressReporter:
         self.value["phase"] = "workbook_open"
         self.write()
 
+    def workflow_step(
+        self,
+        step: dict[str, Any],
+        *,
+        index: int,
+        count: int,
+        step_phase: str,
+    ) -> None:
+        self.value.update({
+            "phase": "workflow_step",
+            "step_id": step["id"],
+            "step_kind": step["kind"],
+            "step_index": index,
+            "step_count": count,
+            "step_phase": step_phase,
+        })
+        self.write()
+
 
 def _session_result(
     operation: str,
@@ -228,6 +246,12 @@ def _dispatch(
     arguments: dict[str, Any],
     reporter: ProgressReporter,
 ) -> dict[str, Any]:
+    if operation == "workflow":
+        reporter.phase("session_start")
+        from xlvbatools.core.workflow import execute_workflow
+
+        return execute_workflow(arguments, reporter)
+
     if operation == "inspect":
         reporter.phase("session_start")
         from xlvbatools.workbook.dumper import _inspect_workbook_in_process
@@ -327,6 +351,7 @@ def main() -> int:
         "elapsed_seconds": result.get(
             "elapsed_seconds", time.monotonic() - started,
         ),
+        "progress": dict(reporter.value),
     })
     reporter.phase("result_write")
     _atomic_json(result_path, result)

@@ -380,6 +380,77 @@ def _cmd_run(args):
     sys.exit(0 if result.success else 1)
 
 
+def _cmd_workflow(args):
+    """Run a versioned JSON workflow in one owned Excel session."""
+    from xlvbatools.config.loader import load_config
+    from xlvbatools.logging import setup_logging
+    from xlvbatools.workflow import (
+        WORKFLOW_SCHEMA_VERSION,
+        _steps_from_payload,
+    )
+
+    cfg = load_config()
+    setup_logging(
+        verbose=getattr(args, "verbose", False),
+        tool_name="workflow",
+        log_dir=_cfg_path(cfg, "log_dir_path", "log_dir"),
+        log_name=cfg.log_name,
+    )
+    try:
+        if args.file == "-":
+            payload = json.load(sys.stdin)
+        else:
+            with open(args.file, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        if not isinstance(payload, dict):
+            raise ValueError("workflow file must contain one JSON object")
+        unexpected = set(payload) - {"workflow_schema_version", "steps"}
+        if unexpected:
+            raise ValueError(
+                "unknown workflow top-level fields: " + ", ".join(sorted(unexpected))
+            )
+        schema = str(payload.get("workflow_schema_version") or "")
+        if schema != WORKFLOW_SCHEMA_VERSION:
+            raise ValueError(
+                f"workflow_schema_version must be {WORKFLOW_SCHEMA_VERSION!r}, "
+                f"got {schema!r}"
+            )
+        steps = _steps_from_payload(payload.get("steps"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        result = _local_result(
+            "workflow", success=False, error=error, code="invalid_workflow",
+        )
+        _fail_result(args, result, "Invalid workflow", exit_code=2)
+
+    project = _project(cfg, workbook=args.workbook)
+    result = project.workflow(
+        steps,
+        timeout=args.timeout,
+        visible=args.visible,
+        save=args.save,
+    )
+    if _is_machine(args):
+        _print_result_json(result)
+    elif _is_table(args):
+        workflow = result.data
+        _print_table(
+            ("id", "kind", "status", "phase", "elapsed_seconds"),
+            (
+                (step.id, step.kind, step.status, step.phase, step.elapsed_seconds)
+                for step in workflow.steps
+            ),
+        )
+    else:
+        status = "OK" if result.success else "FAILED"
+        print(f"{status} workflow ({result.elapsed_seconds or 0:.2f}s)")
+        if result.data is not None:
+            for step in result.data.steps:
+                print(f"  {step.id}: {step.status} ({step.phase})")
+        if result.error is not None:
+            print(f"  Error: {result.error.message}")
+    raise SystemExit(0 if result.success else 1)
+
+
 def _cmd_snapshot(args):
     """Handle snapshot subcommands."""
     from xlvbatools.config.loader import load_config

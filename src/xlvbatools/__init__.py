@@ -40,6 +40,17 @@ from xlvbatools.results import (
 )
 from xlvbatools.snapshots import SnapshotGitInfo, SnapshotRecord, SnapshotService
 from xlvbatools.version import VersionInfo, get_version_info
+from xlvbatools.workflow import (
+    InspectStep,
+    MacroStep,
+    ModifyStep,
+    ModifyStepOutput,
+    RangeWriteResult,
+    WORKFLOW_SCHEMA_VERSION,
+    WorkflowOutput,
+    WorkflowStep,
+    WorkflowStepResult,
+)
 
 
 __all__ = [
@@ -54,11 +65,15 @@ __all__ = [
     "ExtractionOutput",
     "HeadlessCleanupError",
     "InspectionOutput",
+    "InspectStep",
     "InjectionChange",
     "InjectionOutput",
     "IsolatedExecutor",
     "MacroOutput",
+    "MacroStep",
     "ModificationOutput",
+    "ModifyStep",
+    "ModifyStepOutput",
     "Operation",
     "OperationFailedError",
     "OperationRequest",
@@ -66,6 +81,7 @@ __all__ = [
     "Project",
     "ProjectSettings",
     "RESULT_SCHEMA_VERSION",
+    "RangeWriteResult",
     "SnapshotError",
     "SnapshotGitInfo",
     "SnapshotNotFoundError",
@@ -76,6 +92,10 @@ __all__ = [
     "VBAIssue",
     "VersionInfo",
     "WorkerExitReport",
+    "WORKFLOW_SCHEMA_VERSION",
+    "WorkflowOutput",
+    "WorkflowStep",
+    "WorkflowStepResult",
     "XlvbaError",
     "__version__",
     "get_version_info",

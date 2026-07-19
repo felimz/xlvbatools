@@ -9,7 +9,7 @@ from typing import Any, Callable, Generic, Mapping, Optional, TypeVar, cast
 from xlvbatools.errors import HeadlessCleanupError, OperationFailedError
 
 
-RESULT_SCHEMA_VERSION = "1.1"
+RESULT_SCHEMA_VERSION = "1.2"
 T = TypeVar("T")
 U = TypeVar("U")
 
@@ -188,6 +188,7 @@ class Diagnostics:
     excel_pid: Optional[int] = None
     worker_exit: Optional[WorkerExitReport] = None
     attempts: tuple[AttemptDiagnostic, ...] = ()
+    progress: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def _from_worker(cls, value: Mapping[str, Any]) -> "Diagnostics":
@@ -214,6 +215,7 @@ class Diagnostics:
                 for item in raw_attempts
                 if isinstance(item, Mapping)
             ),
+            progress=dict(value.get("progress") or {}),
         )
 
 
@@ -265,7 +267,7 @@ class OperationResult(Generic[T]):
                 or f"{operation} failed"
             )
             details = dict(structured_error.get("details") or {})
-            for key in ("traceback", "worker_output", "timed_out"):
+            for key in ("traceback", "worker_output", "timed_out", "progress"):
                 if value.get(key) is not None:
                     details[key] = value[key]
             error = ErrorInfo(

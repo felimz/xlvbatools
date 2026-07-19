@@ -15,10 +15,64 @@ Usage:
 import logging
 import os
 from contextlib import nullcontext
+from typing import Any, Mapping
 
 from xlvbatools.core.session import ExcelSession
 
 logger = logging.getLogger(__name__)
+
+
+def _write_ranges_in_session(
+    session: ExcelSession,
+    *,
+    sheet: str,
+    values: Mapping[str, Any],
+    calculate: bool = False,
+) -> dict[str, Any]:
+    """Apply validated range values through an already-owned Excel session."""
+    worksheet = None
+    target = None
+    writes: list[dict[str, Any]] = []
+    try:
+        worksheet = session.wb.Worksheets(sheet)
+        for address, raw_value in values.items():
+            target = worksheet.Range(address)
+            rows = int(target.Rows.Count)
+            columns = int(target.Columns.Count)
+            if isinstance(raw_value, (list, tuple)):
+                matrix = tuple(tuple(row) for row in raw_value)
+                value_rows = len(matrix)
+                value_columns = len(matrix[0]) if matrix else 0
+                if value_rows != rows or value_columns != columns:
+                    raise ValueError(
+                        f"Values for {sheet}!{address} have shape "
+                        f"{value_rows}x{value_columns}; range is {rows}x{columns}"
+                    )
+                target.Value = matrix
+            else:
+                if rows != 1 or columns != 1:
+                    raise ValueError(
+                        f"Scalar value requires a single cell, not "
+                        f"{sheet}!{address} ({rows}x{columns})"
+                    )
+                target.Value = raw_value
+            writes.append({
+                "sheet": sheet,
+                "range": address,
+                "rows": rows,
+                "columns": columns,
+            })
+            target = None
+        if calculate:
+            session.excel.Calculate()
+        return {
+            "applied": True,
+            "writes": writes,
+            "calculated": calculate,
+        }
+    finally:
+        target = None
+        worksheet = None
 
 
 def modify_cell(

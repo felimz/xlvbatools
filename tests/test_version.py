@@ -32,8 +32,9 @@ def test_version_info_reads_git_commit_from_direct_url():
     assert info.source_url == "https://github.com/example/xlvbatools.git"
     assert info.commit_id == "abc123"
     assert info.requested_revision == "main"
-    assert info.result_schema_version == "1.1"
-    assert info.worker_protocol_version == "2.0"
+    assert info.result_schema_version == "1.2"
+    assert info.worker_protocol_version == "2.1"
+    assert info.workflow_schema_version == "1.0"
 
 
 @pytest.mark.unit

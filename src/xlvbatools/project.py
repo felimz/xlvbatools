@@ -24,6 +24,14 @@ from xlvbatools.outputs import (
 )
 from xlvbatools.results import Artifact, ErrorInfo, InspectionOutput, OperationResult
 from xlvbatools.snapshots import SnapshotService
+from xlvbatools.workflow import (
+    InspectStep,
+    WorkflowOutput,
+    WorkflowStep,
+    WORKFLOW_SCHEMA_VERSION,
+    _steps_to_worker,
+    _validate_workflow_steps,
+)
 
 
 @dataclass(frozen=True)
@@ -246,6 +254,70 @@ class Project:
             result,
             data=MacroOutput._from_mapping(macro, payload),
             metadata={"macro": macro},
+        )
+
+    def workflow(
+        self,
+        steps: Iterable[WorkflowStep],
+        *,
+        timeout: float = 240.0,
+        visible: bool = False,
+        save: bool = False,
+    ) -> OperationResult[WorkflowOutput]:
+        """Run ordered steps in one isolated worker and one Excel session."""
+        if not isinstance(visible, bool):
+            raise TypeError("visible must be boolean")
+        if not isinstance(save, bool):
+            raise TypeError("save must be boolean")
+        validated = _validate_workflow_steps(steps)
+        worker_steps = _steps_to_worker(validated)
+        for step, step_payload in zip(validated, worker_steps):
+            if isinstance(step, InspectStep):
+                step_payload["output_dir"] = os.path.abspath(step.output_dir)
+                step_payload["output_json"] = (
+                    str(Path(step.output_json).resolve()) if step.output_json else None
+                )
+                step_payload["output_markdown"] = (
+                    str(Path(step.output_markdown).resolve())
+                    if step.output_markdown else None
+                )
+        result = self.execute(
+            Operation.WORKFLOW,
+            {
+                "workbook_path": str(self.workbook),
+                "steps": worker_steps,
+                "visible": visible,
+                "save_on_success": save,
+                "workflow_schema_version": WORKFLOW_SCHEMA_VERSION,
+            },
+            timeout=timeout,
+        )
+        result_payload = (
+            result.data
+            if isinstance(result.data, Mapping)
+            else {
+                "workflow_schema_version": WORKFLOW_SCHEMA_VERSION,
+                "steps": [],
+                "failed_step_id": result.diagnostics.progress.get("step_id"),
+                "save_requested": save,
+                "saved": False,
+            }
+        )
+        output = WorkflowOutput._from_mapping(result_payload)
+        artifacts = tuple(
+            artifact
+            for step_result in output.steps
+            for artifact in step_result.artifacts
+        )
+        return replace(
+            result,
+            data=output,
+            artifacts=artifacts,
+            metadata={
+                "step_ids": tuple(step.id for step in validated),
+                "save_requested": save,
+                "visible": visible,
+            },
         )
 
     def lint_source(

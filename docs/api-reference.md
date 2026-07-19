@@ -8,7 +8,7 @@ surface consists of:
 - `Project` and `ProjectSettings`;
 - `Operation`, `OperationRequest`, `Executor`, and `IsolatedExecutor`;
 - `OperationResult` and its typed diagnostic, error, artifact, inspection,
-  operation-output, and snapshot models;
+  workflow, operation-output, and snapshot models;
 - documented public exceptions, `VBAIssue`, and version helpers.
 
 Modules under `core`, `vba`, `macro`, `workbook`, `analysis`, and
@@ -27,6 +27,8 @@ The following names are the complete supported import surface:
 | Inspection data | `InspectionOutput` |
 | VBA component data | `VBAComponent`, `ExtractionOutput`, `InjectionChange`, `InjectionOutput` |
 | VBA action data | `ComponentDiff`, `MacroOutput`, `ModificationOutput` |
+| Workflow request | `WorkflowStep`, `MacroStep`, `ModifyStep`, `InspectStep`, `WORKFLOW_SCHEMA_VERSION` |
+| Workflow result | `WorkflowOutput`, `WorkflowStepResult`, `ModifyStepOutput`, `RangeWriteResult` |
 | Snapshots | `SnapshotService`, `SnapshotRecord`, `SnapshotGitInfo` |
 | Analysis | `VBAIssue` |
 | Operation errors | `XlvbaError`, `ConfigurationError`, `OperationFailedError`, `HeadlessCleanupError` |
@@ -82,6 +84,7 @@ Paths are resolved at construction. Workbooks must use `.xlsm`, `.xlsb`, or
 | `list_components(timeout=60)` | yes | tuple of `VBAComponent` |
 | `inspect(sheets, ..., timeout=60)` | yes | `InspectionOutput` |
 | `run(macro, ..., timeout=120)` | yes | `MacroOutput` |
+| `workflow(steps, ..., timeout=240)` | yes, one session for all steps | `WorkflowOutput` |
 | `extract(..., timeout=120)` | yes | `ExtractionOutput` |
 | `inject(..., timeout=120)` | yes, except dry-run backend | `InjectionOutput` |
 | `diff(..., timeout=120)` | yes | tuple of `ComponentDiff` |
@@ -143,6 +146,34 @@ The equivalent CLI controls are repeatable `--named-range NAME=VALUE`,
 xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
 ```
 
+### One-session workflow
+
+```python
+from xlvbatools import InspectStep, MacroStep, ModifyStep
+
+result = project.workflow(
+    [
+        MacroStep("retrieve", "OnRetrieve"),
+        ModifyStep("inputs", "Input", {"C102:C104": [[0.1], [0.0], [-0.1]]}),
+        MacroStep("calculate", "OnCalculate"),
+        InspectStep("results", ("Input",), include_screenshots=False),
+    ],
+    timeout=240,
+    save=False,
+)
+workflow = result.require_success()
+result.require_clean_shutdown()
+results = workflow.step("results")
+```
+
+All steps use one worker, one Excel process, and one workbook open. Execution
+is ordered and fail-fast. `WorkflowStepResult.status` is `succeeded`, `failed`,
+or `not_run`; `WorkflowOutput.failed_step_id` identifies the first failure.
+Saving defaults off and, when requested, occurs once after every step succeeds.
+The complete workflow has one timeout and is not replayed after
+`session_start`. See [One-session workflows](workflows.md) for the complete
+Python and versioned CLI contracts.
+
 ### Source and workbook lint
 
 ```python
@@ -177,7 +208,7 @@ raise `SnapshotNotFoundError` during restore or diff.
 - `request_id`, `elapsed_seconds`, and `attempt_count`;
 - `Diagnostics` with dialog events, worker PID, Excel PID, COM evidence, an
   optional `CleanupReport`, an optional `WorkerExitReport`, and typed
-  `AttemptDiagnostic` entries.
+  `AttemptDiagnostic` entries, plus the latest durable `progress` state.
 
 ```python
 if not result.success:
@@ -247,6 +278,7 @@ info = get_version_info()
 print(__version__)
 print(info.result_schema_version)
 print(info.worker_protocol_version)
+print(info.workflow_schema_version)
 ```
 
 See [Versioning and releases](versioning.md).

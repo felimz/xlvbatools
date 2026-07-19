@@ -9,6 +9,8 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
 ## Public API
 
 - Build application wrappers around `Project` and `OperationResult`.
+- Use typed `MacroStep`, `ModifyStep`, and `InspectStep` values with
+  `Project.workflow()` when related operations need one live workbook state.
 - Do not add automatic worker-start retry around `Project`; the executor owns
   the two-attempt ceiling and exposes its evidence in `diagnostics.attempts`.
 - Import supported names from `xlvbatools`; do not import application-facing
@@ -16,8 +18,8 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
 - Never pass COM proxies or worker transport dictionaries into application
   code.
 - Use operation-specific outputs (`MacroOutput`, `ExtractionOutput`,
-  `InjectionOutput`, `ComponentDiff`, and `ModificationOutput`) instead of
-  assuming `data` is a transport dictionary.
+  `InjectionOutput`, `ComponentDiff`, `ModificationOutput`, and
+  `WorkflowOutput`) instead of assuming `data` is a transport dictionary.
 - Use `SnapshotService` and immutable `SnapshotRecord` values; never import the
   internal snapshot store.
 - Inject an `Executor` test double when a wrapper needs offline unit tests.
@@ -35,6 +37,10 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
   `--named-range NAME=VALUE`, choose `--save` or `--no-save`, and add
   `--visible` only when the isolated owned Excel window is required. The same
   controls are available through `Project.run()`.
+- A workflow has one overall timeout, stops after its first failed step,
+  defaults to no-save, and is never replayed after `session_start`. Do not
+  describe it as a database transaction; use disposable workbook and external
+  input copies when rollback-like test behavior is required.
 
 ## Packaging and versions
 
@@ -44,8 +50,8 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
 - When developing xlvbatools itself, build wheels with normal PEP 517 isolation
   and test them in a fresh consumer virtual environment outside the source
   tree.
-- Treat package, serialized-result, and worker-protocol versions as separate
-  contracts; do not infer one version from another.
+- Treat package, serialized-result, worker-protocol, and workflow-schema
+  versions as separate contracts; do not infer one version from another.
 - Declare package data under `[tool.setuptools.package-data]`.
 
 ## Process safety and tests

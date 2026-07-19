@@ -11,6 +11,8 @@ through `Project`; implementation subpackages are not an alternate public API.
 - No cleanup path terminates Excel by image name.
 - On timeout, the parent targets the reported Excel PID before the exact worker.
 - Raw COM proxies never cross the process boundary.
+- Related steps in one workflow share one owned worker and Excel PID; separate
+  workflows never share either.
 
 ## COM lifetime
 
@@ -43,6 +45,11 @@ before Excel session construction; that phase is the no-replay boundary.
 Session startup, workbook, VBA, macro, protocol, dialog, timeout, and cleanup
 failures are not startup-retried.
 
+A workflow uses one deadline for all steps, saving, and cleanup. Durable
+progress includes the current step ID, kind, index, count, and phase so a
+parent-enforced timeout identifies the interrupted stage. A workflow is never
+replayed after `session_start`, even if Excel has not yet reported its PID.
+
 Only idempotent modification may use the same remaining attempt for a
 recognized transient RPC disconnect after its owned Excel process is confirmed
 stopped. Startup and modification retry policies cannot stack beyond two total
@@ -55,6 +62,8 @@ attempts. Callers do not enable or reproduce these policies themselves.
 - Hidden and VeryHidden worksheets require explicit opt-in.
 - Mutating operations do not save after an operation exception.
 - Strict named-range setup failures stop before macro invocation.
+- Workflows stop after the first failed step, mark remaining steps `not_run`,
+  and perform an explicit save only after every step succeeds.
 - Screenshot rendering transfers a bitmap through a blank chart workbook; it
   does not copy worksheet VBA.
 

@@ -107,6 +107,8 @@ or `--table` for aligned rows only when a person is consuming stdout.
 & $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" `
   --named-range "InputValue=42" --named-range 'Mode="Design"' `
   --no-save --timeout 120
+& $xlvba workflow --workbook "workbook/Model.xlsm" `
+  --file "workflow.json" --no-save --timeout 240
 
 # Inspection requires an explicit sheet selection.
 & $xlvba dump --sheets "Input,Results" --data --range "A1:K100" --timeout 90
@@ -136,6 +138,7 @@ snapshot or equivalent rollback already exists.
 | `--data`, `--screenshot` | choosing inspection artifacts deliberately |
 | `--include-hidden-sheets` | explicitly including Hidden or VeryHidden sheets |
 | `--named-range NAME=VALUE` | supplying one macro input; repeat for additional names |
+| `--file` | supplying a versioned `xlvba workflow` JSON request; use `-` for stdin |
 | `--save`, `--no-save` | choosing whether macro workbook changes are persisted |
 | `--visible` | deliberately showing the isolated owned Excel instance |
 | `--text`, `--table` | requesting presentation output instead of default JSON |
@@ -273,6 +276,43 @@ from xlvbatools import (
 )
 ```
 
+### Run related operations in one Excel session
+
+When retrieval, input writes, calculation, and inspection depend on the same
+live workbook state, submit one typed workflow instead of opening Excel once
+per call:
+
+```python
+from xlvbatools import InspectStep, MacroStep, ModifyStep, Project
+
+project = Project.from_config()
+result = project.workflow(
+    [
+        MacroStep("retrieve", "OnRetrieve"),
+        ModifyStep("inputs", "Input", {"C102:C104": [[0.1], [0.0], [-0.1]]}),
+        MacroStep("calculate", "OnCalculate"),
+        InspectStep("results", ("Input",), include_screenshots=False),
+    ],
+    timeout=240,
+    save=False,
+)
+workflow = result.require_success()
+result.require_clean_shutdown()
+inspection = workflow.step("results").data
+```
+
+PowerShell uses a versioned JSON step file:
+
+```powershell
+& $xlvba help workflow
+& $xlvba workflow --file "workflow.json" --no-save --timeout 240
+```
+
+Workflow saving is off by default and happens only after all steps succeed when
+`--save` or `save=True` is selected. The complete workflow has one timeout and
+is never replayed after session startup. See
+[One-session workflows](workflows.md) for the JSON schema and failure contract.
+
 See the [Python API reference](api-reference.md) for the complete supported
 import surface and method signatures.
 
@@ -284,6 +324,7 @@ import surface and method signatures.
 | Typed operation data | Parse the JSON envelope | Use `OperationResult` and typed outputs |
 | Named-range macro inputs | Repeat `--named-range NAME=VALUE` | Use `Project.run(named_ranges=...)` |
 | Control macro save or visibility | Use `--save`, `--no-save`, or `--visible` | Use `Project.run(save=..., visible=...)` |
+| Share live state across related operations | Use `workflow --file ...` | Use typed `Project.workflow([...])` steps |
 | Offline wrapper tests | Invoke CLI integration tests sparingly | Inject an `Executor` test double |
 
 Choose the entry point that best fits the caller; these macro controls now map

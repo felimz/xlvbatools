@@ -56,6 +56,9 @@ Run tests with coverage:
   and `xlvbatools.__all__`. Do not expose worker backends or COM objects.
 * **Type Safety:** The project uses PEP 561 types. New public behavior requires
   explicit annotations and typed result data.
+* **Workflow Safety:** Validate all workflow steps before Excel starts, keep
+  `session_start` as the no-replay boundary, and use one parent-enforced
+  timeout for the complete workflow.
 * **Platform Safety:** Check platform status before using `win32com.client` or
   native Win32 APIs.
 * **COM Safety:** Never scan or terminate Excel globally. Cleanup may target

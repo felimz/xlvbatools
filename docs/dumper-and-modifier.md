@@ -3,6 +3,10 @@
 Use `Project.inspect` or `xlvba dump` to read workbook state and render
 worksheets. Use `Project.modify` or `xlvba modify` for targeted changes.
 Both operations run in an isolated, owned Excel process.
+When reads and writes belong to one ordered calculation pipeline, typed
+`ModifyStep` and `InspectStep` values can instead run inside
+`Project.workflow()` without reopening Excel. See
+[One-session workflows](workflows.md).
 
 ## Inspection
 
