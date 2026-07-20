@@ -20,6 +20,7 @@ result = project.inspect(
     cell_range="A1:K100",
     include_data=True,
     include_screenshots=True,
+    include_rich_text=True,
     output_dir="artifacts/screenshots",
     output_json="artifacts/workbook.json",
     include_hidden_sheets=False,
@@ -33,6 +34,7 @@ The equivalent CLI commands are:
 
 ```powershell
 xlvba dump --sheets "Input,Results" --data
+xlvba dump --sheets Input --data --rich-text --range A1:K100
 xlvba dump --sheets Input --screenshot --range A1:K100
 ```
 
@@ -45,17 +47,40 @@ Workbook data stores populated cells by address:
   "A1": {
     "row": 1,
     "col": 1,
-    "value": 42.0,
-    "text": "$42.00",
+    "value": "BoldPlain",
+    "text": "BoldPlain",
     "formula": null,
     "is_error": false,
-    "error_type": null
+    "error_type": null,
+    "rich_text": {
+      "status": "complete",
+      "text_length": 9,
+      "characters_inspected": 9,
+      "truncated": false,
+      "runs": [
+        {
+          "start": 1,
+          "length": 4,
+          "text": "Bold",
+          "font": {"name": "Aptos", "size": 11.0, "bold": true}
+        }
+      ]
+    }
   }
 }
 ```
 
 The model preserves Excel's formatted text, formulas, error types, shapes,
 named ranges, and the inspected range bounds.
+
+Partial rich text is opt-in through `include_rich_text=True` or `--rich-text`.
+Each run uses Excel's 1-based character position and includes the font name,
+size, bold, italic, underline, strikeout, subscript, superscript, color, and
+color index. Collection is bounded to 4,096 characters and 256 runs per cell.
+A cell reports `truncated` at either limit and `unsupported` if Excel cannot
+expose its Characters model; one unsupported cell does not fail the dump.
+This option implies `--data` in the CLI and requires `include_data=True` in
+Python.
 
 ### Screenshot rendering
 
@@ -67,10 +92,21 @@ named ranges, and the inspected range bounds.
 - Excel renders the requested range; only the resulting bitmap is moved through
   a blank temporary chart workbook. Worksheet VBA is not copied or compiled.
 - Data and screenshots requested together share one worker and one owned Excel
-  lifecycle.
+  lifecycle. Structured data is collected first and supplies independent
+  evidence that the rendered range contains visible content.
 - Column letters, row numbers, gridlines, cropped bounds, merged cells, and
   non-default row/column dimensions are composited from the inspected range.
 - Clipboard-sensitive copy/paste operations use bounded retries.
+- Before each capture, xlvbatools temporarily enables `ScreenUpdating`, makes
+  only its owned Excel window renderable (off-screen for headless calls), and
+  flushes the window paint queue. It restores the caller's original
+  `ScreenUpdating` and visibility state afterward.
+- The unmodified Excel bitmap is measured before headers and gridlines are
+  composited. If a populated range repeatedly yields an implausibly blank
+  bitmap, the operation fails with `error.code == "render_content_mismatch"`
+  and per-attempt pixel metrics instead of publishing a misleading artifact.
+  Set `continue_on_render_error=True` in Python only when partial inspection
+  output is explicitly acceptable; the CLI remains fail-closed.
 
 Screenshot files appear in both
 `InspectionOutput.screenshots` and `OperationResult.artifacts`.

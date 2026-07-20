@@ -54,6 +54,7 @@ WM_GETTEXTLENGTH = 0x000E
 WM_CLOSE = 0x0010
 WM_CANCELMODE = 0x001F
 BM_CLICK = 0x00F5
+SW_HIDE = 0
 DIALOG_CLASS = "#32770"
 
 # Button labels we'll click to dismiss dialogs (case-insensitive matching)
@@ -93,6 +94,8 @@ if IS_WINDOWS:
         ctypes.POINTER(ctypes.c_size_t),
     ]
     user32.SendMessageTimeoutW.restype = ctypes.wintypes.LPARAM
+    user32.ShowWindow.argtypes = [HWND, ctypes.c_int]
+    user32.ShowWindow.restype = BOOL
 else:
     user32 = None
     HWND = BOOL = LPARAM = None
@@ -174,6 +177,11 @@ def _is_window_visible(hwnd: int) -> bool:
 def _close_window(hwnd: int):
     """Send WM_CLOSE to a window."""
     return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
+
+
+def _hide_window(hwnd: int) -> None:
+    """Hide one owned top-level window without activating another window."""
+    user32.ShowWindow(hwnd, SW_HIDE)
 
 
 def _get_window_pid(hwnd: int) -> tuple:
@@ -405,6 +413,18 @@ _VB_TITLE_RE = re.compile(r"microsoft\s+visual\s+basic", re.IGNORECASE)
 _EXCEL_TITLE_RE = re.compile(r"microsoft\s+excel", re.IGNORECASE)
 
 
+def _is_vbe_main_window(title: str, class_name: str) -> bool:
+    """Identify the non-modal VBE editor frame, never a VBA dialog."""
+    if class_name == DIALOG_CLASS:
+        return False
+    normalized_class = (class_name or "").casefold()
+    normalized_title = (title or "").casefold()
+    return (
+        normalized_class.startswith("wndclass_desked")
+        or "microsoft visual basic for applications" in normalized_title
+    )
+
+
 def _classify_dialog(title: str, texts: List[str]) -> str:
     """Classify a dialog based on its title and content."""
     all_text = " ".join([title] + texts).lower()
@@ -461,6 +481,7 @@ class DialogWatchdog:
         target_pid: Optional[int] = None,
         capture_attempts: int = 3,
         capture_retry_delay: float = 0.075,
+        hide_vbe_main_window: bool = False,
     ):
         from xlvbatools._compat import require_windows
         require_windows("DialogWatchdog")
@@ -473,6 +494,9 @@ class DialogWatchdog:
         self.target_pid = target_pid
         if self.auto_dismiss and self.target_pid is None:
             raise ValueError("An auto-dismissing watchdog requires target_pid.")
+        if hide_vbe_main_window and self.target_pid is None:
+            raise ValueError("A VBE-hiding watchdog requires target_pid.")
+        self.hide_vbe_main_window = hide_vbe_main_window
         self.capture_attempts = max(1, capture_attempts)
         self.capture_retry_delay = max(0.0, capture_retry_delay)
 
@@ -569,19 +593,22 @@ class DialogWatchdog:
     def _scan_for_dialogs(self):
         """Scan all top-level windows for dialog class (#32770)."""
         dialog_hwnds = []
+        vbe_hwnds = []
 
         def _enum_callback(hwnd, _lparam):
             try:
                 if not _is_window_visible(hwnd):
                     return True
                 cls = _get_window_class(hwnd)
+                if self.target_pid is not None:
+                    _, pid = _get_window_pid(hwnd)
+                    if pid != self.target_pid:
+                        return True
+                title = _get_window_text(hwnd)
+                if self.hide_vbe_main_window and _is_vbe_main_window(title, cls):
+                    vbe_hwnds.append(hwnd)
+                    return True
                 if cls == DIALOG_CLASS and hwnd not in self._seen_hwnds:
-                    # Filter by process if target_pid is set
-                    if self.target_pid is not None:
-                        _, pid = _get_window_pid(hwnd)
-                        if pid != self.target_pid:
-                            return True
-                    title = _get_window_text(hwnd)
                     # Filter for Excel/VB related dialogs
                     if self._is_excel_dialog(title):
                         dialog_hwnds.append(hwnd)
@@ -591,6 +618,9 @@ class DialogWatchdog:
 
         callback = EnumWindowsProc(_enum_callback)
         user32.EnumWindows(callback, 0)
+
+        for hwnd in vbe_hwnds:
+            _hide_window(hwnd)
 
         for hwnd in dialog_hwnds:
             self._handle_dialog(hwnd)
@@ -760,7 +790,12 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
     own_watchdog = watchdog is None
     if own_watchdog:
         _, target_pid = _get_window_pid(excel.Hwnd)
-        watchdog = DialogWatchdog(poll_interval=0.2, timeout=30.0, target_pid=target_pid)
+        watchdog = DialogWatchdog(
+            poll_interval=0.2,
+            timeout=30.0,
+            target_pid=target_pid,
+            hide_vbe_main_window=True,
+        )
         watchdog.start()
 
     result = {
@@ -809,9 +844,14 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
         # CommandBar API can flash a File menu even while MainWindow is hidden.
         compile_btn = vbe.CommandBars.FindControl(Id=578)
         if compile_btn is None:
+            result["success"] = False
+            result["compile_verified"] = False
             result["errors"].append({
-                "type": "warning",
-                "message": "VBE compile button (ID=578) not found. Skipping compile test."
+                "type": "compile_unverified",
+                "message": (
+                    "VBE compile control (ID=578) was unavailable; "
+                    "compilation could not be verified."
+                ),
             })
             return result
 
@@ -880,10 +920,15 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
                     "message": "VBE compilation did not complete; compile control remained enabled.",
                 })
         elif compile_incomplete:
+            result["success"] = False
             result["compile_verified"] = False
-            result["warnings"].append(
-                "VBE compile control remained enabled, but no compile error dialog or static Option Explicit failure was found."
-            )
+            result["errors"].append({
+                "type": "compile_unverified",
+                "message": (
+                    "VBE compile control remained enabled, but no compile "
+                    "error dialog or static compile location was available."
+                ),
+            })
         elif probe_error is not None:
             result["success"] = False
             result["errors"].append({

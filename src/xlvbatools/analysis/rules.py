@@ -14,6 +14,7 @@ Built-in rules:
     PF003  ActiveSheet/ActiveCell usage (fragile, prefer explicit references)
     OE001  Option Explicit missing (with impact assessment)
     UV001  Undeclared variable usage (compile error with Option Explicit)
+    DV001  Duplicate declaration in one VBA scope (compile error)
     BK001  Block-level variable declaration (hoisting vulnerability)
     SD002  Multiple variable declarations on a single line
     PF004  Avoid Integer data type (use Long to avoid silent promotion)
@@ -63,7 +64,7 @@ VBA_RESERVED = {
 
 # Proc start patterns
 _PROC_START_RE = re.compile(
-    r"^(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property\s+(Get|Let|Set))\s+",
+    r"^(Public\s+|Private\s+|Friend\s+|Static\s+)?(Sub|Function|Property\s+(Get|Let|Set))\s+",
     re.IGNORECASE,
 )
 _PROC_END_RE = re.compile(r"^End\s+(Sub|Function|Property)", re.IGNORECASE)
@@ -143,7 +144,8 @@ def _parse_vba_declarations(line: str) -> List[tuple[str, str | None]]:
     """
     stripped = line.strip()
     if re.match(
-        r"^(Public\s+|Private\s+|Friend\s+|Static\s+)?(Sub|Function|Property|Type|Enum)\s+",
+        r"^(Public\s+|Private\s+|Friend\s+|Static\s+)?"
+        r"(Sub|Function|Property|Type|Enum|Event|Declare)\s+",
         stripped,
         re.IGNORECASE,
     ):
@@ -155,28 +157,14 @@ def _parse_vba_declarations(line: str) -> List[tuple[str, str | None]]:
         return []
 
     decl_body = m.group(2).strip()
+    if decl_body.lower().startswith("withevents "):
+        decl_body = decl_body[len("withevents "):].strip()
     if decl_body.lower().startswith("const "):
         decl_body = decl_body[len("const "):].strip()
     if m.group(1).lower() == "redim" and decl_body.lower().startswith("preserve "):
         decl_body = decl_body[len("preserve "):].strip()
 
-    # Split by comma taking paren depth into account
-    parts = []
-    current = []
-    paren_depth = 0
-    for char in decl_body:
-        if char == "(":
-            paren_depth += 1
-        elif char == ")":
-            paren_depth -= 1
-
-        if char == "," and paren_depth == 0:
-            parts.append("".join(current))
-            current = []
-        else:
-            current.append(char)
-    if current:
-        parts.append("".join(current))
+    parts = _split_top_level_commas(decl_body)
 
     results = []
     for part in parts:
@@ -190,6 +178,153 @@ def _parse_vba_declarations(line: str) -> List[tuple[str, str | None]]:
             var_type = type_match.group(1) if type_match else None
             results.append((var_name, var_type))
     return results
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    """Split a VBA list without splitting array bounds or string defaults."""
+    parts: list[str] = []
+    current: list[str] = []
+    paren_depth = 0
+    in_string = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            if in_string and index + 1 < len(text) and text[index + 1] == '"':
+                current.extend(('"', '"'))
+                index += 2
+                continue
+            in_string = not in_string
+        elif not in_string:
+            if char == "(":
+                paren_depth += 1
+            elif char == ")":
+                paren_depth = max(0, paren_depth - 1)
+            elif char == "," and paren_depth == 0:
+                parts.append("".join(current))
+                current = []
+                index += 1
+                continue
+        current.append(char)
+        index += 1
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _procedure_parameters(signature: str) -> list[str]:
+    """Return parameter names from one joined VBA procedure signature."""
+    start = signature.find("(")
+    if start < 0:
+        return []
+
+    depth = 0
+    in_string = False
+    end = -1
+    for index in range(start, len(signature)):
+        char = signature[index]
+        if char == '"':
+            in_string = not in_string
+        elif not in_string:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+    if end < 0:
+        return []
+
+    parameters: list[str] = []
+    for raw_parameter in _split_top_level_commas(signature[start + 1:end]):
+        parameter = raw_parameter.strip()
+        while True:
+            stripped = re.sub(
+                r"^(Optional|ParamArray|ByVal|ByRef)\s+",
+                "",
+                parameter,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if stripped == parameter:
+                break
+            parameter = stripped.strip()
+        match = re.match(r"^(\w+)", parameter)
+        if match:
+            parameters.append(match.group(1))
+    return parameters
+
+
+def check_duplicate_declarations(rel_path: str, lines: List[str]) -> List[VBAIssue]:
+    """DV001: Duplicate names in one module or procedure scope."""
+    issues: list[VBAIssue] = []
+    module_declarations: dict[str, tuple[str, int]] = {}
+    procedure_declarations: dict[str, tuple[str, int]] | None = None
+    procedure_name = ""
+
+    def record(
+        name: str,
+        kind: str,
+        line_num: int,
+        scope: dict[str, tuple[str, int]],
+    ) -> None:
+        normalized = name.casefold()
+        previous = scope.get(normalized)
+        if previous is None:
+            scope[normalized] = (kind, line_num)
+            return
+        previous_kind, previous_line = previous
+        location = (
+            f"procedure '{procedure_name}'"
+            if procedure_declarations is not None
+            else "module scope"
+        )
+        issues.append(VBAIssue(
+            rule_id="DV001",
+            severity="ERROR",
+            module=rel_path,
+            line_num=line_num,
+            message=(
+                f"Duplicate declaration '{name}' in {location}; first declared "
+                f"as {previous_kind} at line {previous_line}. VBA cannot compile "
+                "two declarations with the same name in one scope."
+            ),
+        ))
+
+    for line_num, raw_line in _get_logical_lines(lines):
+        uncommented = _strip_trailing_comment(raw_line)
+        for raw_statement in _split_colon_statements(uncommented):
+            statement = raw_statement.strip()
+            if not statement:
+                continue
+            if _PROC_START_RE.match(statement):
+                procedure_name = _extract_proc_name(statement)
+                procedure_declarations = {}
+                for parameter in _procedure_parameters(statement):
+                    record(parameter, "parameter", line_num, procedure_declarations)
+                continue
+            if _PROC_END_RE.match(statement):
+                procedure_declarations = None
+                procedure_name = ""
+                continue
+
+            # ReDim changes array storage; it is not a new declaration.
+            if re.match(r"^ReDim\b", statement, re.IGNORECASE):
+                continue
+            declarations = _parse_vba_declarations(statement)
+            target_scope = (
+                procedure_declarations
+                if procedure_declarations is not None
+                else module_declarations
+            )
+            kind = "local variable" if procedure_declarations is not None else "module variable"
+            if re.match(r"^(Public\s+|Private\s+)?Const\b|^Const\b", statement, re.IGNORECASE):
+                kind = "local constant" if procedure_declarations is not None else "module constant"
+            for name, _ in declarations:
+                record(name, kind, line_num, target_scope)
+
+    return issues
 
 
 def check_dim_after_exec(rel_path: str, lines: List[str]) -> List[VBAIssue]:
@@ -1431,6 +1566,7 @@ ALL_RULES: dict[str, Callable] = {
     "PF003": check_active_refs,
     "OE001": check_option_explicit,
     "UV001": check_undeclared_variables,
+    "DV001": check_duplicate_declarations,
     "BK001": check_block_declarations,
     "SD002": check_one_declaration_per_line,
     "PF004": check_avoid_integer,
@@ -1453,6 +1589,10 @@ ALL_RULES: dict[str, Callable] = {
     "IP001": check_invalid_outside_procedure,
     "SM001": check_class_members,
 }
+
+# Project-level, compile, and secondary member findings are emitted outside
+# the one-file rule loop but remain valid public rule filters.
+ALL_RULE_IDS = frozenset((*ALL_RULES, "DP001", "DC003", "CT001", "SM002"))
 
 
 def run_all_rules(

@@ -175,11 +175,14 @@ class Project:
         output_markdown: str | os.PathLike[str] | None = None,
         continue_on_render_error: bool = False,
         include_hidden_sheets: bool = False,
+        include_rich_text: bool = False,
         timeout: float = 60.0,
     ) -> OperationResult[InspectionOutput]:
         requested_sheets = tuple(str(sheet) for sheet in sheets)
         if not requested_sheets:
             raise ValueError("at least one sheet is required")
+        if include_rich_text and not include_data:
+            raise ValueError("include_rich_text requires include_data=True")
         result = self.execute(
             Operation.INSPECT,
             {
@@ -193,6 +196,7 @@ class Project:
                 "output_md": str(Path(output_markdown).resolve()) if output_markdown else None,
                 "continue_on_render_error": continue_on_render_error,
                 "include_hidden_sheets": include_hidden_sheets,
+                "include_rich_text": include_rich_text,
             },
             timeout=timeout,
         )
@@ -220,7 +224,11 @@ class Project:
                 screenshots=screenshots,
             ),
             artifacts=artifacts,
-            metadata={"sheets": requested_sheets, "cell_range": cell_range},
+            metadata={
+                "sheets": requested_sheets,
+                "cell_range": cell_range,
+                "include_rich_text": include_rich_text,
+            },
         )
 
     def run(
@@ -323,16 +331,54 @@ class Project:
     def lint_source(
         self,
         source: str | os.PathLike[str] | None = None,
+        *,
+        severities: Iterable[str] | None = None,
+        rules: Iterable[str] | None = None,
+        baseline: str | os.PathLike[str] | None = None,
+        new_only: bool = False,
+        write_baseline: str | os.PathLike[str] | None = None,
     ) -> OperationResult[tuple[VBAIssue, ...]]:
+        from xlvbatools.analysis.filtering import (
+            select_lint_issues,
+            write_lint_baseline,
+        )
         from xlvbatools.analysis.preflight import lint_files
 
-        issues = tuple(
+        severity_values = tuple(severities or ())
+        rule_values = tuple(rules or ())
+        select_lint_issues(
+            (), severities=severity_values, rules=rule_values,
+            baseline=baseline, new_only=new_only,
+        )
+        raw_issues = tuple(
             lint_files(
                 os.fspath(source) if source is not None else str(self.source),
                 disabled_rules=list(self.settings.disabled_lint_rules),
             )
         )
+        selection = select_lint_issues(
+            raw_issues,
+            severities=severity_values,
+            rules=rule_values,
+            baseline=baseline,
+            new_only=new_only,
+        )
+        baseline_written = (
+            write_lint_baseline(write_baseline, raw_issues)
+            if write_baseline is not None else None
+        )
+        issues = selection.issues
         errors = tuple(issue for issue in issues if issue.severity == "ERROR")
+        artifacts = (
+            (
+                Artifact(
+                    kind="lint_baseline",
+                    path=baseline_written,
+                    media_type="application/json",
+                ),
+            )
+            if baseline_written else ()
+        )
         return OperationResult(
             operation="lint_source",
             success=not errors,
@@ -345,15 +391,40 @@ class Project:
                 )
                 if errors else None
             ),
-            metadata={"error_count": len(errors), "issue_count": len(issues)},
+            artifacts=artifacts,
+            metadata={
+                **selection.metadata(),
+                "error_count": len(errors),
+                "raw_error_count": sum(
+                    issue.severity == "ERROR" for issue in raw_issues
+                ),
+                "baseline_written": baseline_written,
+            },
         )
 
     def lint_workbook(
         self,
         *,
         compile_test: bool = True,
+        severities: Iterable[str] | None = None,
+        rules: Iterable[str] | None = None,
+        baseline: str | os.PathLike[str] | None = None,
+        new_only: bool = False,
+        write_baseline: str | os.PathLike[str] | None = None,
         timeout: float = 120.0,
     ) -> OperationResult[tuple[VBAIssue, ...]]:
+        from xlvbatools.analysis.filtering import (
+            select_lint_issues,
+            write_lint_baseline,
+        )
+
+        severity_values = tuple(severities or ())
+        rule_values = tuple(rules or ())
+        # Validate user-controlled selection before starting Excel.
+        select_lint_issues(
+            (), severities=severity_values, rules=rule_values,
+            baseline=baseline, new_only=new_only,
+        )
         result = self.execute(
             Operation.LINT_WORKBOOK,
             {
@@ -363,18 +434,62 @@ class Project:
             },
             timeout=timeout,
         )
-        issues = tuple(
+        raw_issues = tuple(
             item if isinstance(item, VBAIssue) else VBAIssue(**item)
             for item in (result.data or ())
         )
+        lint_failure = bool(result.error and result.error.code == "lint_failed")
+        analyzer_outcome = result.success or lint_failure
+        selection = select_lint_issues(
+            raw_issues,
+            severities=severity_values,
+            rules=rule_values,
+            baseline=baseline,
+            new_only=new_only,
+        )
+        baseline_written = (
+            write_lint_baseline(write_baseline, raw_issues)
+            if write_baseline is not None and analyzer_outcome else None
+        )
+        issues = selection.issues
         errors = tuple(issue for issue in issues if issue.severity == "ERROR")
+        success = not errors if analyzer_outcome else False
+        error = result.error
+        phase = result.phase
+        if analyzer_outcome:
+            error = (
+                ErrorInfo(
+                    message=f"Static analysis found {len(errors)} selected error(s)",
+                    code="lint_failed",
+                )
+                if errors else None
+            )
+            phase = "lint_workbook" if errors else "complete"
+        artifacts = result.artifacts + (
+            (
+                Artifact(
+                    kind="lint_baseline",
+                    path=baseline_written,
+                    media_type="application/json",
+                ),
+            )
+            if baseline_written else ()
+        )
         return replace(
             result,
+            success=success,
+            phase=phase,
             data=issues,
+            error=error,
+            artifacts=artifacts,
             metadata={
+                **selection.metadata(),
                 "error_count": len(errors),
-                "issue_count": len(issues),
+                "raw_error_count": sum(
+                    issue.severity == "ERROR" for issue in raw_issues
+                ),
                 "compile_test": compile_test,
+                "baseline_written": baseline_written,
             },
         )
 
@@ -474,8 +589,12 @@ class Project:
         *,
         source: str | os.PathLike[str] | None = None,
         component: str | None = None,
+        comparison: str = "vba",
         timeout: float = 120.0,
     ) -> OperationResult[tuple[ComponentDiff, ...]]:
+        comparison = str(comparison).strip().casefold()
+        if comparison not in {"vba", "text"}:
+            raise ValueError("comparison must be one of: text, vba")
         source_path = Path(source).resolve() if source else self.source
         result = self.execute(
             Operation.DIFF,
@@ -483,6 +602,7 @@ class Project:
                 "workbook_path": str(self.workbook),
                 "source_dir": str(source_path),
                 "component": component,
+                "comparison": comparison,
             },
             timeout=timeout,
         )

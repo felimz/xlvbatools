@@ -5,7 +5,7 @@ import pytest
 
 def _worker_response(operation="extract", **overrides):
     response = {
-        "protocol_version": "2.1",
+        "protocol_version": "2.2",
         "request_id": "request-1",
         "operation": operation,
         "success": True,
@@ -75,7 +75,7 @@ def test_executor_thaws_request_for_worker_transport(monkeypatch):
     def execute(operation, arguments, **kwargs):
         captured.update(arguments)
         return {
-            "protocol_version": "2.1",
+            "protocol_version": "2.2",
             "request_id": "request-1",
             "operation": operation,
             "success": True,
@@ -104,7 +104,7 @@ def test_executor_converts_private_transport_to_public_result(monkeypatch):
         worker,
         "execute_worker_request",
         lambda *args, **kwargs: {
-            "protocol_version": "2.1",
+            "protocol_version": "2.2",
             "request_id": "request-1",
             "operation": "extract",
             "success": True,
@@ -168,7 +168,7 @@ def test_executor_preserves_structured_worker_failure_details(monkeypatch):
         worker,
         "execute_worker_request",
         lambda *args, **kwargs: {
-            "protocol_version": "2.1",
+            "protocol_version": "2.2",
             "request_id": "request-1",
             "operation": "extract",
             "success": False,

@@ -70,6 +70,7 @@ def test_repeated_formula_formatting_and_macro_sessions(runtime_error_workbook):
             code_module = None
             with ExcelSession(
                 sys.argv[1], save_on_exit=False, kill_on_enter=False,
+                allow_workbook_events=True, allow_macro_execution=True,
             ) as session:
                 sheet = session.wb.Worksheets(1)
                 cell = sheet.Range("B1")

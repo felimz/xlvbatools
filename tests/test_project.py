@@ -15,6 +15,7 @@ from xlvbatools import (
     OperationResult,
     Project,
 )
+from xlvbatools.results import ErrorInfo
 
 
 class RecordingExecutor:
@@ -74,6 +75,7 @@ def test_project_inspection_returns_typed_contract(tmp_path):
     assert request.operation is Operation.INSPECT
     assert request.arguments["custom_range"] == "B2:C3"
     assert request.arguments["include_hidden_sheets"] is False
+    assert request.arguments["include_rich_text"] is False
 
 
 @pytest.mark.unit
@@ -147,6 +149,84 @@ def test_project_lint_source_uses_resolved_source_path(tmp_path):
     assert result.phase == "complete"
     assert result.metadata["issue_count"] >= 0
     json.dumps(result.to_dict())
+
+
+@pytest.mark.unit
+def test_project_lint_source_writes_baseline_and_returns_only_new_findings(tmp_path):
+    source = tmp_path / "vba_source"
+    source.mkdir()
+    (source / "modTest.bas").write_text(
+        "Option Explicit\nPublic Sub Test()\n    x = 1\nEnd Sub\n",
+        encoding="utf-8",
+    )
+    baseline = tmp_path / "lint-baseline.json"
+    project = Project.open(tmp_path / "book.xlsm", source=source)
+
+    initial = project.lint_source(write_baseline=baseline)
+    filtered = project.lint_source(baseline=baseline, new_only=True)
+
+    assert initial.metadata["baseline_written"] == str(baseline.resolve())
+    assert initial.artifacts[0].kind == "lint_baseline"
+    assert filtered.success is True
+    assert filtered.data == ()
+    assert filtered.metadata["known_issue_count"] == initial.metadata["raw_issue_count"]
+
+
+@pytest.mark.unit
+def test_project_diff_propagates_vba_comparison_mode(tmp_path):
+    executor = RecordingExecutor([_successful(Operation.DIFF.value, [])])
+    project = Project.open(tmp_path / "book.xlsm", executor=executor)
+
+    project.diff(comparison="text")
+
+    assert executor.requests[0].arguments["comparison"] == "text"
+
+
+@pytest.mark.unit
+def test_workbook_lint_baseline_can_clear_only_analyzer_failure(tmp_path):
+    from xlvbatools.analysis.filtering import write_lint_baseline
+    from xlvbatools.analysis.issue import VBAIssue
+
+    issue = VBAIssue(
+        "IP001", "ERROR", "modules/modMain.bas", 20,
+        "Variable 'FileCount' is undeclared", "Run",
+    )
+    baseline = tmp_path / "lint-baseline.json"
+    write_lint_baseline(baseline, [issue])
+    failed_lint = replace(
+        _successful(Operation.LINT_WORKBOOK.value, [issue.to_dict()]),
+        success=False,
+        phase="lint_workbook",
+        error=ErrorInfo("Static analysis found workbook errors", code="lint_failed"),
+    )
+    executor = RecordingExecutor([failed_lint])
+    project = Project.open(tmp_path / "book.xlsm", executor=executor)
+
+    result = project.lint_workbook(baseline=baseline, new_only=True)
+
+    assert result.success is True
+    assert result.phase == "complete"
+    assert result.error is None
+    assert result.data == ()
+    assert result.diagnostics.cleanup.pid == 91
+
+
+@pytest.mark.unit
+def test_workbook_lint_filter_does_not_hide_operational_failure(tmp_path):
+    failed = replace(
+        _successful(Operation.LINT_WORKBOOK.value, []),
+        success=False,
+        phase="cleanup",
+        error=ErrorInfo("Owned Excel remained running", code="cleanup_failed"),
+    )
+    project = Project.open(
+        tmp_path / "book.xlsm", executor=RecordingExecutor([failed]),
+    )
+
+    result = project.lint_workbook(severities=["WARNING"])
+
+    assert result.success is False
+    assert result.error.code == "cleanup_failed"
 
 
 @pytest.mark.unit
@@ -264,7 +344,7 @@ def test_project_inspection_reports_clean_owned_process(minimal_workbook):
     )
 
     assert result.success is True, result.to_dict()
-    assert result.schema_version == "1.2"
+    assert result.schema_version == "1.3"
     assert result.data.workbook_data["sheets"]["Sheet1"]
     assert result.diagnostics.cleanup.is_clean, result.to_dict()
     assert result.require_clean_shutdown().still_running is False
@@ -310,6 +390,107 @@ def test_project_vba_round_trip_uses_clean_sequential_workers(
     assert executed.success is True, executed.to_dict()
     assert executed.diagnostics.cleanup.is_clean, executed.to_dict()
     assert executed.require_clean_shutdown().still_running is False
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_live_diff_classifies_vba_case_and_spacing_as_equivalent(
+    runtime_error_workbook, tmp_path,
+):
+    source = tmp_path / "case_source"
+    project = Project.open(runtime_error_workbook, source=source)
+    extracted = project.extract(timeout=90)
+    assert extracted.success is True, extracted.to_dict()
+    component = next(
+        item for item in extracted.data.components
+        if item.name == "modReliabilityTest"
+    )
+    component_path = source / component.file
+    original = component_path.read_text(encoding="utf-8")
+    changed = original.replace(
+        "Public Sub CompleteNormally()",
+        "PUBLIC  SUB  completenormally ( )",
+    )
+    assert changed != original
+    component_path.write_text(changed, encoding="utf-8")
+
+    semantic = project.diff(comparison="vba", timeout=90)
+    semantic_component = next(
+        item for item in semantic.data if item.name == "modReliabilityTest"
+    )
+    assert semantic.success is True, semantic.to_dict()
+    assert semantic_component.status == "equivalent"
+    assert semantic_component.equivalence == "vba_token_equivalent"
+    assert semantic.require_clean_shutdown().still_running is False
+
+    raw = project.diff(comparison="text", timeout=90)
+    raw_component = next(
+        item for item in raw.data if item.name == "modReliabilityTest"
+    )
+    assert raw.success is True, raw.to_dict()
+    assert raw_component.status == "modified"
+    assert raw_component.lines_added > 0
+    assert raw_component.lines_removed > 0
+    assert raw.require_clean_shutdown().still_running is False
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_source_operations_never_execute_workbook_startup_code(
+    startup_event_workbook, tmp_path,
+):
+    """Extract/diff/inject/lint open untrusted workbooks with code disabled."""
+    workbook, marker = startup_event_workbook
+    source = tmp_path / "startup_safe_source"
+    project = Project.open(workbook, source=source)
+
+    extracted = project.extract(timeout=90)
+    assert extracted.success is True, extracted.to_dict()
+    assert not marker.exists()
+
+    compared = project.diff(timeout=90)
+    assert compared.success is True, compared.to_dict()
+    assert not marker.exists()
+
+    injected = project.inject(backup=False, timeout=90)
+    assert injected.success is True, injected.to_dict()
+    assert not marker.exists()
+
+    linted = project.lint_workbook(compile_test=True, timeout=90)
+    assert linted.require_clean_shutdown().still_running is False
+    assert not marker.exists()
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_live_lint_rejects_duplicate_declaration_and_closes_cleanly(
+    duplicate_declaration_workbook, tmp_path,
+):
+    baseline = tmp_path / "duplicate-baseline.json"
+    result = Project.open(duplicate_declaration_workbook).lint_workbook(
+        compile_test=True,
+        write_baseline=baseline,
+        timeout=90,
+    )
+
+    rule_ids = {issue.rule_id for issue in result.data}
+    assert result.success is False, result.to_dict()
+    assert "DV001" in rule_ids
+    assert "CT001" in rule_ids
+    assert result.error.code == "lint_failed"
+    assert result.metadata["baseline_written"] == str(baseline.resolve())
+    assert result.require_clean_shutdown().still_running is False
+
+    new_only = Project.open(duplicate_declaration_workbook).lint_workbook(
+        compile_test=True,
+        baseline=baseline,
+        new_only=True,
+        timeout=90,
+    )
+    assert new_only.success is True, new_only.to_dict()
+    assert new_only.data == ()
+    assert new_only.metadata["known_issue_count"] == len(result.data)
+    assert new_only.require_clean_shutdown().still_running is False
 
 
 @pytest.mark.com

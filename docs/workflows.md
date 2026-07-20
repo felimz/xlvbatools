@@ -37,6 +37,7 @@ result = project.workflow(
             cell_range="A1:K120",
             include_data=True,
             include_screenshots=False,
+            include_rich_text=True,
         ),
     ],
     timeout=240,
@@ -59,6 +60,8 @@ so a later macro can control when the workbook recalculates.
 screenshot, JSON, or Markdown outputs without opening another workbook.
 Visible worksheets are the default screenshot scope; set
 `include_hidden_sheets=True` only when hidden content is intentionally needed.
+Partial cell formatting is opt-in with `include_rich_text=True`; it uses the
+same bounded run model as `Project.inspect()` without opening another session.
 
 ## CLI
 
@@ -88,7 +91,8 @@ The CLI reads the same versioned typed request from a JSON file:
       "sheets": ["Input"],
       "cell_range": "A1:K120",
       "include_data": true,
-      "include_screenshots": false
+      "include_screenshots": false,
+      "include_rich_text": true
     }
   ]
 }

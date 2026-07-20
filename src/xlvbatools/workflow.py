@@ -195,6 +195,7 @@ class InspectStep:
     output_markdown: str | None = None
     continue_on_render_error: bool = False
     include_hidden_sheets: bool = False
+    include_rich_text: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _validate_step_id(self.id))
@@ -203,6 +204,7 @@ class InspectStep:
         for name in (
             "include_data", "include_screenshots", "continue_on_render_error",
             "include_hidden_sheets",
+            "include_rich_text",
         ):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be boolean")
@@ -217,6 +219,8 @@ class InspectStep:
             raise ValueError("InspectStep sheet names must be unique")
         if not self.include_data and not self.include_screenshots:
             raise ValueError("InspectStep must include data, screenshots, or both")
+        if self.include_rich_text and not self.include_data:
+            raise ValueError("InspectStep rich text requires include_data=True")
         if not isinstance(self.output_dir, str):
             raise TypeError("output_dir must be a string")
         if not self.output_dir.strip():
@@ -442,6 +446,7 @@ def _steps_to_worker(steps: Sequence[WorkflowStep]) -> list[dict[str, Any]]:
                 "output_markdown": step.output_markdown,
                 "continue_on_render_error": step.continue_on_render_error,
                 "include_hidden_sheets": step.include_hidden_sheets,
+                "include_rich_text": step.include_rich_text,
             })
     return payload
 
@@ -496,6 +501,7 @@ def _steps_from_payload(value: Any) -> tuple[WorkflowStep, ...]:
                     "include_data", "include_screenshots", "output_json",
                     "output_markdown", "continue_on_render_error",
                     "include_hidden_sheets",
+                    "include_rich_text",
                 },
                 index=index,
             )
@@ -515,6 +521,7 @@ def _steps_from_payload(value: Any) -> tuple[WorkflowStep, ...]:
                 output_markdown=item.get("output_markdown"),
                 continue_on_render_error=item.get("continue_on_render_error", False),
                 include_hidden_sheets=item.get("include_hidden_sheets", False),
+                include_rich_text=item.get("include_rich_text", False),
             ))
         else:
             raise ValueError(

@@ -41,11 +41,18 @@ COMMAND_SPECS = (
     ),
     CommandSpec(
         "diff", "Compare workbook VBA with source", "xlvba diff [options]",
-        ("xlvba diff", "xlvba diff --summary --text"), True,
+        (
+            "xlvba diff --comparison vba",
+            "xlvba diff --comparison text --summary --text",
+        ), True,
     ),
     CommandSpec(
         "lint", "Analyze extracted source or a live workbook", "xlvba lint [options]",
-        ("xlvba lint --source vba_source", "xlvba lint --workbook workbook/Model.xlsm"),
+        (
+            "xlvba lint --source vba_source --severity ERROR",
+            "xlvba lint --source vba_source --write-baseline .xlvba/lint-baseline.json",
+            "xlvba lint --source vba_source --baseline .xlvba/lint-baseline.json --new-only",
+        ),
     ),
     CommandSpec(
         "run", "Execute a VBA macro in an isolated worker", "xlvba run MACRO [options]",
@@ -71,7 +78,11 @@ COMMAND_SPECS = (
     ),
     CommandSpec(
         "dump", "Inspect worksheet data and screenshots", "xlvba dump [options]",
-        ("xlvba dump --sheets Input --data", "xlvba dump --sheets Input --screenshot"),
+        (
+            "xlvba dump --sheets Input --data",
+            "xlvba dump --sheets Input --data --rich-text",
+            "xlvba dump --sheets Input --screenshot",
+        ),
         True,
     ),
     CommandSpec(
@@ -195,6 +206,7 @@ def _workflow_input_schema() -> dict[str, Any]:
                     "output_dir", "cell_range", "include_data",
                     "include_screenshots", "output_json", "output_markdown",
                     "continue_on_render_error", "include_hidden_sheets",
+                    "include_rich_text",
                 ],
             },
         },

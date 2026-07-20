@@ -26,6 +26,8 @@ jobs:
           src/xlvbatools/outputs.py
           src/xlvbatools/workflow.py
           src/xlvbatools/core/workflow.py
+          src/xlvbatools/analysis/filtering.py
+          src/xlvbatools/vba/differ.py
           src/xlvbatools/workbook/dumper.py
           src/xlvbatools/workbook/modifier.py
           src/xlvbatools/snapshots.py

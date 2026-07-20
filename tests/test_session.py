@@ -130,7 +130,25 @@ class TestSessionProperties:
         assert result["primary_error"] == "new error"
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-    def test_watchdog_starts_with_spawned_pid(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(
+        ("session_kwargs", "expected_events", "expected_security"),
+        [
+            ({}, False, 3),
+            ({"allow_macro_execution": True}, False, 1),
+            ({
+                "allow_workbook_events": True,
+                "allow_macro_execution": True,
+            }, True, 1),
+        ],
+    )
+    def test_watchdog_starts_with_spawned_pid(
+        self,
+        tmp_path,
+        monkeypatch,
+        session_kwargs,
+        expected_events,
+        expected_security,
+    ):
         import win32com.client
         import win32process
         from xlvbatools.core import session as session_module
@@ -170,12 +188,15 @@ class TestSessionProperties:
         monkeypatch.setattr(session_module, "is_process_running", lambda pid: False)
 
         with session_module.ExcelSession(
-            str(workbook), kill_on_enter=False, init_delay=0
+            str(workbook), kill_on_enter=False, init_delay=0, **session_kwargs,
         ) as session:
             assert session.excel_pid == 4321
 
+        assert fake_excel.EnableEvents is expected_events
+        assert fake_excel.AutomationSecurity == expected_security
         assert created[0]["target_pid"] == 4321
         assert created[0]["auto_dismiss"] is True
+        assert created[0]["hide_vbe_main_window"] is True
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_com_apartment_is_balanced(self, monkeypatch):
@@ -233,7 +254,12 @@ class TestSessionCOM:
     def test_multiline_runtime_error_is_captured(self, runtime_error_workbook):
         from xlvbatools.core.session import ExcelSession
 
-        with ExcelSession(runtime_error_workbook, save_on_exit=False) as session:
+        with ExcelSession(
+            runtime_error_workbook,
+            save_on_exit=False,
+            allow_workbook_events=True,
+            allow_macro_execution=True,
+        ) as session:
             result = session.run_macro("RaiseMultilineError")
 
         assert result["success"] is False
@@ -247,7 +273,12 @@ class TestSessionCOM:
     def test_compile_error_location_is_headless(self, compile_error_workbook):
         from xlvbatools.core.session import ExcelSession
 
-        with ExcelSession(compile_error_workbook, save_on_exit=False) as session:
+        with ExcelSession(
+            compile_error_workbook,
+            save_on_exit=False,
+            allow_workbook_events=False,
+            allow_macro_execution=True,
+        ) as session:
             result = session.compile_test()
             assert session.excel.VBE.MainWindow.Visible is False
 

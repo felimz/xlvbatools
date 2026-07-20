@@ -7,6 +7,82 @@ from types import SimpleNamespace
 import pytest
 
 
+class _RichFont:
+    def __init__(self, styles):
+        defaults = {
+            "Name": "Aptos", "Size": 11, "Bold": False, "Italic": False,
+            "Underline": 0, "Strikethrough": False, "Subscript": False,
+            "Superscript": False, "Color": 0, "ColorIndex": 1,
+        }
+        for name, default in defaults.items():
+            values = {style.get(name, default) for style in styles}
+            setattr(self, name, values.pop() if len(values) == 1 else None)
+
+
+class _RichCharacters:
+    def __init__(self, styles):
+        self.Font = _RichFont(styles)
+
+
+class _RichCell:
+    def __init__(self, styles):
+        self.styles = styles
+        self.calls = []
+
+    def GetCharacters(self, Start, Length):
+        self.calls.append((Start, Length))
+        return _RichCharacters(self.styles[Start - 1:Start - 1 + Length])
+
+
+@pytest.mark.unit
+def test_rich_text_dump_models_partial_font_runs_with_bounded_probes():
+    from xlvbatools.workbook.dumper import _dump_cell_rich_text
+
+    styles = [
+        *({"Bold": True} for _ in range(5)),
+        *({"Italic": True, "Color": 255} for _ in range(5)),
+    ]
+    cell = _RichCell(styles)
+
+    result = _dump_cell_rich_text(cell, "HelloWorld")
+
+    assert result["status"] == "complete"
+    assert [(run["start"], run["length"], run["text"]) for run in result["runs"]] == [
+        (1, 5, "Hello"),
+        (6, 5, "World"),
+    ]
+    assert result["runs"][0]["font"]["bold"] is True
+    assert result["runs"][1]["font"]["italic"] is True
+    assert len(cell.calls) < len(styles)
+
+
+@pytest.mark.unit
+def test_rich_text_dump_reports_character_and_run_truncation():
+    from xlvbatools.workbook.dumper import _dump_cell_rich_text
+
+    styles = [{"Bold": index % 2 == 0} for index in range(12)]
+    result = _dump_cell_rich_text(
+        _RichCell(styles), "abcdefghijkl", max_characters=8, max_runs=3,
+    )
+
+    assert result["status"] == "truncated"
+    assert result["truncated"] is True
+    assert result["text_length"] == 12
+    assert result["characters_inspected"] == 3
+    assert len(result["runs"]) == 3
+
+
+@pytest.mark.unit
+def test_rich_text_dump_degrades_per_cell_when_characters_are_unsupported():
+    from xlvbatools.workbook.dumper import _dump_cell_rich_text
+
+    result = _dump_cell_rich_text(object(), "content")
+
+    assert result["status"] == "unsupported"
+    assert result["runs"] == []
+    assert "Characters" in result["error"]
+
+
 def test_shared_worker_inspection_result_is_returned(monkeypatch, tmp_path):
     from xlvbatools.core import worker
     from xlvbatools.workbook import dumper
@@ -34,17 +110,62 @@ def test_excel_session_safe_defaults():
     session = ExcelSession("book.xlsm")
     assert session.kill_on_enter is False
     assert session.read_only is False
-    assert session.disable_macros is False
+    assert session.allow_workbook_events is False
+    assert session.allow_macro_execution is False
+    assert session.allow_vbe_visible is False
 
 
 def test_renderer_does_not_copy_worksheet_source():
     import inspect
     from xlvbatools.workbook import dumper
 
-    source = inspect.getsource(dumper.export_screenshots)
+    source = (
+        inspect.getsource(dumper.export_screenshots)
+        + inspect.getsource(dumper._capture_native_range)
+    )
     assert "sheet.Copy(" not in source
     assert "export_range.CopyPicture" in source
     assert "excel.Workbooks.Add()" in source
+
+
+def test_native_bitmap_validation_precedes_overlay(tmp_path):
+    from PIL import Image, ImageDraw
+    from xlvbatools.workbook.dumper import (
+        _image_is_implausibly_blank,
+        _native_image_metrics,
+    )
+
+    blank = tmp_path / "blank.png"
+    Image.new("RGB", (240, 120), (255, 255, 255)).save(blank)
+    blank_metrics = _native_image_metrics(str(blank))
+    assert _image_is_implausibly_blank(blank_metrics, 3) is True
+    assert _image_is_implausibly_blank(blank_metrics, 0) is False
+
+    content = tmp_path / "content.png"
+    image = Image.new("RGB", (240, 120), (255, 255, 255))
+    ImageDraw.Draw(image).rectangle((20, 20, 80, 50), fill=(0, 0, 0))
+    image.save(content)
+    content_metrics = _native_image_metrics(str(content))
+    assert _image_is_implausibly_blank(content_metrics, 3) is False
+
+
+def test_structured_content_count_uses_visible_cell_values():
+    from xlvbatools.workbook.dumper import _structured_visible_content_counts
+
+    counts = _structured_visible_content_counts({
+        "sheets": {
+            "Input": {
+                "cells": {
+                    "A1": {"text": "heading", "value": "heading"},
+                    "A2": {"text": "", "value": None},
+                    "A3": {"text": "0", "value": 0},
+                },
+                "shapes": [{"name": "Run"}],
+            },
+        },
+    })
+
+    assert counts == {"Input": 2}
 
 
 def test_scaled_boundaries_are_exact_and_support_hidden_cells():
@@ -187,6 +308,48 @@ def test_shape_dump_uses_textframe2_when_legacy_textframe_is_empty():
 
     assert result[0]["text"] == "TextFrame2 label"
     assert result[0]["text_accessor"] == "TextFrame2.TextRange.Text"
+
+
+@pytest.mark.com
+@pytest.mark.e2e
+def test_live_dump_reports_partial_rich_text_runs(minimal_workbook):
+    from xlvbatools import Project
+    from xlvbatools.core.session import ExcelSession
+
+    sheet = None
+    cell = None
+    characters = None
+    with ExcelSession(minimal_workbook, save_on_exit=True) as session:
+        sheet = session.wb.Worksheets("Sheet1")
+        cell = sheet.Range("A1")
+        cell.Value = "BoldPlain"
+        cell.Font.Bold = False
+        cell.Font.Italic = False
+        characters = cell.GetCharacters(1, 4)
+        characters.Font.Bold = True
+        characters = None
+        characters = cell.GetCharacters(5, 5)
+        characters.Font.Italic = True
+        characters = None
+        cell = None
+        sheet = None
+
+    result = Project.open(minimal_workbook).inspect(
+        ["Sheet1"], include_data=True, include_screenshots=False,
+        include_rich_text=True,
+    )
+
+    assert result.success is True, result.to_dict()
+    rich_text = result.data.workbook_data["sheets"]["Sheet1"]["cells"]["A1"][
+        "rich_text"
+    ]
+    assert rich_text["status"] == "complete"
+    assert [(run["start"], run["length"]) for run in rich_text["runs"]] == [
+        (1, 4), (5, 5),
+    ]
+    assert bool(rich_text["runs"][0]["font"]["bold"]) is True
+    assert bool(rich_text["runs"][1]["font"]["italic"]) is True
+    assert result.diagnostics.cleanup.still_running is False
 
 
 @pytest.mark.com

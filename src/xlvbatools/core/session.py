@@ -83,7 +83,7 @@ class ExcelSession:
     save_on_exit : bool
         Whether to save the workbook on context exit (default True).
     kill_on_enter : bool
-        Whether to kill stale Excel processes on entry (default True).
+        Whether to kill stale Excel processes on entry (default False).
     init_delay : float
         Seconds to wait after opening for VBProject initialization (default 1.5).
     enable_watchdog : bool
@@ -91,6 +91,17 @@ class ExcelSession:
         debugging when you want to see dialogs manually.
     watchdog_poll_interval : float
         How often (seconds) the watchdog polls for dialogs (default 0.25).
+    read_only : bool
+        Open the workbook read-only.
+    allow_workbook_events : bool
+        Permit workbook startup and worksheet events. The safe default is
+        False; macro and workflow operations opt in explicitly.
+    allow_macro_execution : bool
+        Permit explicitly requested VBA execution after the workbook opens.
+        Live compile testing enables this while keeping events suppressed.
+    allow_vbe_visible : bool
+        Permit the owned VBA editor frame to remain visible. Only the explicit
+        interactive debugger opts in; headless operations continuously hide it.
     """
 
     def __init__(
@@ -106,7 +117,9 @@ class ExcelSession:
         terminate_owned_process: bool = True,
         on_excel_started: Optional[Callable[[int], None]] = None,
         read_only: bool = False,
-        disable_macros: bool = False,
+        allow_workbook_events: bool = False,
+        allow_macro_execution: bool = False,
+        allow_vbe_visible: bool = False,
     ):
         require_windows("ExcelSession")
 
@@ -121,7 +134,9 @@ class ExcelSession:
         self.terminate_owned_process = terminate_owned_process
         self.on_excel_started = on_excel_started
         self.read_only = read_only
-        self.disable_macros = disable_macros
+        self.allow_workbook_events = allow_workbook_events
+        self.allow_macro_execution = allow_macro_execution
+        self.allow_vbe_visible = allow_vbe_visible
 
         self.excel = None
         self.wb = None
@@ -232,6 +247,7 @@ class ExcelSession:
             self.watchdog = DialogWatchdog(
                 poll_interval=self.watchdog_poll_interval, timeout=600.0,
                 auto_dismiss=True, dismiss_strategy="ok", target_pid=self.excel_pid,
+                hide_vbe_main_window=not self.allow_vbe_visible,
             )
             self.watchdog.start()
 
@@ -241,9 +257,9 @@ class ExcelSession:
         try:
             self.excel.Visible = self.visible
             self.excel.DisplayAlerts = False
-            self.excel.EnableEvents = not self.disable_macros
+            self.excel.EnableEvents = self.allow_workbook_events
             self.excel.AskToUpdateLinks = False
-            self.excel.AutomationSecurity = 3 if self.disable_macros else 1
+            self.excel.AutomationSecurity = 1 if self.allow_macro_execution else 3
             self.wb = self.excel.Workbooks.Open(
                 self.workbook_path,
                 UpdateLinks=0,

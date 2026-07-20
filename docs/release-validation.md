@@ -32,6 +32,8 @@ an agent host.
   src/xlvbatools/outputs.py `
   src/xlvbatools/workflow.py `
   src/xlvbatools/core/workflow.py `
+  src/xlvbatools/analysis/filtering.py `
+  src/xlvbatools/vba/differ.py `
   src/xlvbatools/workbook/dumper.py `
   src/xlvbatools/workbook/modifier.py `
   src/xlvbatools/snapshots.py `
@@ -127,3 +129,34 @@ The `v1.1.0` release completed with:
 - a build-isolated wheel installed and exercised from a clean consumer
   environment; and
 - zero residual Excel or xlvbatools worker processes after live validation.
+
+## v1.2.0 candidate validation record
+
+The unreleased `v1.2.0` candidate completed with:
+
+- clean Ruff, CI-scoped mypy, documentation/template parity, and diff checks;
+- 337 passing offline/non-COM tests, including the build-isolated wheel
+  contract;
+- 372 passing tests in the complete suite in 1,105.38 seconds;
+- clean same-interpreter COM tests, five repeated direct macro/formatting
+  sessions, 50 sequential `Project.run()` operations, and 25 sequential
+  one-session workflows with no native finalizer diagnostics;
+- a sentinel `Workbook_Open` that remained unexecuted across extract, diff,
+  inject, and live compile lint;
+- a duplicate parameter/local declaration reported as both `DV001` static
+  evidence and `CT001` Excel compile evidence;
+- screenshot capture succeeding after VBA left `ScreenUpdating=False`, then
+  restoring that state for the following workflow step; and
+- zero residual Excel or xlvbatools worker processes after the complete run.
+
+The 1.2.0 feature pass also live-verified that VBA case/spacing changes are
+`equivalent` while raw text reports them as modified, that an analyzer failure
+can be baselined and then cleared by `new_only` without hiding lifecycle
+failures, and that a disposable workbook exposes two partial font spans through
+`Project.inspect(include_rich_text=True)`. The final complete-run audit found
+zero Excel processes and zero xlvbatools worker processes before and after the
+suite.
+
+This is upstream candidate evidence only. Re-run the WA-OCEAN Section 5
+rejected-travel screenshot and broken-startup acceptance cases after installing
+the released wheel before closing XL-13 and XL-14 downstream.

@@ -9,7 +9,7 @@ from typing import Any, Callable, Generic, Mapping, Optional, TypeVar, cast
 from xlvbatools.errors import HeadlessCleanupError, OperationFailedError
 
 
-RESULT_SCHEMA_VERSION = "1.2"
+RESULT_SCHEMA_VERSION = "1.3"
 T = TypeVar("T")
 U = TypeVar("U")
 

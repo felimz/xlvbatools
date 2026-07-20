@@ -34,7 +34,7 @@ def test_operation_result_serializes_and_requires_clean_shutdown():
     assert result.require_success() == result.data
     assert result.require_clean_shutdown().pid == 42
     payload = result.to_dict()
-    assert payload["schema_version"] == "1.2"
+    assert payload["schema_version"] == "1.3"
     assert payload["data"]["screenshots"] == {"Input": "input.png"}
     json.dumps(payload)
 

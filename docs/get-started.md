@@ -102,8 +102,11 @@ or `--table` for aligned rows only when a person is consuming stdout.
 & $xlvba extract --output "workbook/vba_source" --timeout 120
 & $xlvba inject --source "workbook/vba_source" --dry-run --timeout 120
 & $xlvba inject --source "workbook/vba_source" --timeout 120
-& $xlvba diff --source "workbook/vba_source" --summary --timeout 120
+& $xlvba diff --source "workbook/vba_source" `
+  --comparison vba --summary --timeout 120
 & $xlvba lint --workbook "workbook/Model.xlsm" --timeout 240
+& $xlvba lint --source "workbook/vba_source" `
+  --severity ERROR --severity WARNING --rule DV001
 & $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" `
   --named-range "InputValue=42" --named-range 'Mode="Design"' `
   --no-save --timeout 120
@@ -112,6 +115,7 @@ or `--table` for aligned rows only when a person is consuming stdout.
 
 # Inspection requires an explicit sheet selection.
 & $xlvba dump --sheets "Input,Results" --data --range "A1:K100" --timeout 90
+& $xlvba dump --sheets "Input" --data --rich-text --range "A1:K100" --timeout 90
 & $xlvba dump --sheets "Input" --screenshot --range "B91:K99" --timeout 90
 
 # Workbook changes require a target and the intended value or formula.
@@ -134,8 +138,13 @@ snapshot or equivalent rollback already exists.
 | `--timeout` | bounding any Excel-backed operation; leave room for cleanup |
 | `--dry-run` | previewing injection or formatting before writing |
 | `--summary` | checking whether a diff exists without printing every changed line |
+| `--comparison vba|text` | choosing default token-aware VBA semantics or an explicit raw text diff |
+| `--severity`, `--rule` | selecting lint findings; repeat either flag as needed |
+| `--baseline`, `--new-only` | returning lint findings not represented in a reviewed baseline |
+| `--write-baseline` | atomically recording all current lint findings for later comparison |
 | `--sheets`, `--range` | constraining inspection to the required worksheet area |
 | `--data`, `--screenshot` | choosing inspection artifacts deliberately |
+| `--rich-text` | adding bounded partial font runs to cell data; implies `--data` |
 | `--include-hidden-sheets` | explicitly including Hidden or VeryHidden sheets |
 | `--named-range NAME=VALUE` | supplying one macro input; repeat for additional names |
 | `--file` | supplying a versioned `xlvba workflow` JSON request; use `-` for stdin |
@@ -206,6 +215,13 @@ source_lint = project.lint_source()
 issues = source_lint.require_success()
 print(f"Source issues: {len(issues)}")
 
+project.lint_source(write_baseline=".xlvba/lint-baseline.json")
+new_lint = project.lint_source(
+    severities=("ERROR", "WARNING"),
+    baseline=".xlvba/lint-baseline.json",
+    new_only=True,
+)
+
 macro_result = project.run("OnCalculate", timeout=120, save=False)
 macro = macro_result.require_success()
 macro_result.require_clean_shutdown()
@@ -232,12 +248,17 @@ inspection_result = project.inspect(
     cell_range="A1:K100",
     include_data=True,
     include_screenshots=True,
+    include_rich_text=True,
     include_hidden_sheets=False,
     timeout=90,
 )
 inspection = inspection_result.require_success()
 inspection_result.require_clean_shutdown()
 print(inspection.screenshots)
+
+diff_result = project.diff(comparison="vba", timeout=120)
+for component in diff_result.require_success():
+    print(component.name, component.status, component.equivalence)
 
 change_result = project.modify(
     sheet="Input",
@@ -249,6 +270,16 @@ change = change_result.require_success()
 change_result.require_clean_shutdown()
 print(change.applied)
 ```
+
+Source management (`extract`, `inject`, `diff`, live lint, and component
+listing), inspection, and modification disable workbook startup events before
+opening the file. Non-executing operations also force-disable macros; live lint
+with compile testing permits only its explicit post-open compile probe. Use
+`Project.run()` or `Project.workflow()` only when workbook code is intended.
+Screenshot inspection validates the
+native Excel bitmap before adding headers or gridlines; treat
+`error.code == "render_content_mismatch"` as a failed visual artifact and
+retain its per-attempt metrics for diagnosis.
 
 Every operation method above returns an `OperationResult`. Call
 `require_success()` to obtain its typed data or raise `OperationFailedError`.

@@ -1,6 +1,6 @@
 # Internal isolated-worker protocol
 
-Protocol version: **2.1**.
+Protocol version: **2.2**.
 
 This protocol is private to `IsolatedExecutor`. Applications use `Project`
 and `OperationResult`; they must not create worker files or invoke the worker
@@ -31,7 +31,7 @@ No COM object is serialized and no existing Excel instance is selected.
 
 ```json
 {
-  "protocol_version": "2.1",
+  "protocol_version": "2.2",
   "request_id": "uuid",
   "operation": "extract",
   "arguments": {
@@ -50,7 +50,7 @@ Supported transport operations are `inspect`, `run_macro`,
 
 ```json
 {
-  "protocol_version": "2.1",
+  "protocol_version": "2.2",
   "request_id": "uuid",
   "operation": "extract",
   "worker_pid": 1234,

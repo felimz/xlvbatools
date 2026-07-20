@@ -6,6 +6,44 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-19
+
+### Added
+
+- `DV001` static analysis for case-insensitive duplicate parameter, local,
+  constant, and module declarations that prevent VBA compilation.
+- Native screenshot content metrics and structured
+  `render_content_mismatch` diagnostics when populated workbook ranges
+  repeatedly produce implausibly blank bitmaps.
+- VBA-token-aware workbook/source comparison, with case- and spacing-only code
+  differences reported as `equivalent` while string and comment text remain
+  exact. Raw text comparison remains available explicitly.
+- Opt-in, bounded partial rich-text font runs in worksheet cell dumps and
+  one-session inspection steps.
+- Repeatable lint severity and rule selection, versioned line-stable baselines,
+  atomic baseline creation, and multiset-aware new-finding output for both
+  source and live-workbook analysis.
+
+### Changed
+
+- Extraction, injection, differencing, inspection, modification, component
+  listing, and live lint now suppress workbook events before `Workbooks.Open`.
+  Non-executing operations also force-disable macros; live compile enables only
+  its explicit post-open probe while events remain suppressed.
+- Noninteractive sessions continuously hide the owned VBE main window. The VBE
+  may remain visible only in the explicit interactive debugger.
+- Live compile tests fail closed when VBE compilation cannot be verified.
+- Screenshot capture forces a repaint in the owned Excel process, retries the
+  complete copy/export transaction, validates native pixels before adding
+  headers or gridlines, and restores the caller's visibility and
+  `ScreenUpdating` state.
+- `Project.diff()` and `xlvba diff` now use VBA-aware comparison by default;
+  use `comparison="text"` or `--comparison text` for raw line differencing.
+- The additive result schema is `1.3`, the private worker protocol is `2.2`,
+  and the lint-baseline schema is independently versioned at `1.0`.
+- Version diagnostics distinguish the authoritative imported-code version from
+  potentially stale editable-install metadata and flag any mismatch directly.
+
 ## [1.1.0] - 2026-07-18
 
 ### Added

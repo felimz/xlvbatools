@@ -34,7 +34,7 @@ description: Safely modify, lint, inject, diff, and verify VBA through xlvbatool
    ```powershell
    xlvba inject --dry-run --timeout 120
    xlvba inject --timeout 120
-   xlvba diff --summary --timeout 120
+   xlvba diff --comparison vba --summary --timeout 120
    ```
 
 6. Run the relevant macro and inspect both the outcome and cleanup:
@@ -48,4 +48,11 @@ description: Safely modify, lint, inject, diff, and verify VBA through xlvbatool
 
 Document modules are updated in place because the VBE cannot remove and
 re-import them. Use `--no-backup` only when a verified snapshot already
-exists. Never use global Excel termination to recover a failed run.
+exists. Extract, lint, inject, and diff suppress workbook startup code and keep
+the VBE hidden; do not bypass that safety when repairing broken startup VBA.
+Never use global Excel termination to recover a failed run.
+
+For a reviewed legacy finding set, create a versioned baseline with
+`--write-baseline <path>` and gate later changes with
+`--baseline <path> --new-only`. Baselines do not excuse new ERROR findings and
+cannot suppress worker, Excel, timeout, or cleanup failures.

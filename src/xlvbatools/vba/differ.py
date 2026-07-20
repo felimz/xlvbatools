@@ -24,14 +24,24 @@ from xlvbatools.vba.constants import VBE_HEADER_STRIP_RE as _VBE_HEADER_RE
 logger = logging.getLogger(__name__)
 
 
-def diff_all(workbook_path: str, source_dir: str, *, _session=None) -> list[dict]:
+COMPARISON_MODES = frozenset({"vba", "text"})
+
+
+def diff_all(
+    workbook_path: str,
+    source_dir: str,
+    *,
+    comparison: str = "vba",
+    _session=None,
+) -> list[dict]:
     """
     Compare all VBA components between the workbook and source files.
 
     Returns a list of dicts, one per component:
-        name, status ("identical"|"modified"|"missing_source"|"missing_workbook"),
-        lines_added, lines_removed, unified_diff
+        name, status ("identical"|"equivalent"|"modified"|"missing_source"|
+        "missing_workbook"), comparison, lines_added, lines_removed, unified_diff
     """
+    comparison = _validate_comparison(comparison)
     wb_path = os.path.abspath(workbook_path)
     src_dir = os.path.abspath(source_dir)
     results = []
@@ -59,13 +69,16 @@ def diff_all(workbook_path: str, source_dir: str, *, _session=None) -> list[dict
                 results.append({
                     "name": name,
                     "status": "missing_source",
+                    "comparison": comparison,
                     "lines_added": 0,
                     "lines_removed": 0,
                 })
                 continue
 
             src_lines = _read_source_file(src_path, comp.Type)
-            result = _compare(name, wb_lines, src_lines, src_path)
+            result = _compare(
+                name, wb_lines, src_lines, src_path, comparison=comparison,
+            )
             results.append(result)
 
         # Check for source files not in workbook
@@ -74,6 +87,7 @@ def diff_all(workbook_path: str, source_dir: str, *, _session=None) -> list[dict
                 results.append({
                     "name": src_name,
                     "status": "missing_workbook",
+                    "comparison": comparison,
                     "lines_added": 0,
                     "lines_removed": 0,
                 })
@@ -86,6 +100,7 @@ def diff_component(
     source_dir: str,
     component_name: str,
     *,
+    comparison: str = "vba",
     _session=None,
 ) -> dict | None:
     """
@@ -93,6 +108,7 @@ def diff_component(
 
     Returns a result dict, or None if the component is not found in either location.
     """
+    comparison = _validate_comparison(comparison)
     wb_path = os.path.abspath(workbook_path)
     src_dir = os.path.abspath(source_dir)
 
@@ -123,20 +139,48 @@ def diff_component(
             return {
                 "name": component_name,
                 "status": "missing_source",
+                "comparison": comparison,
                 "lines_added": 0,
                 "lines_removed": 0,
             }
 
         src_lines = _read_source_file(src_path, comp.Type)
-        return _compare(component_name, wb_lines, src_lines, src_path)
+        return _compare(
+            component_name,
+            wb_lines,
+            src_lines,
+            src_path,
+            comparison=comparison,
+        )
 
 
-def _compare(name: str, wb_lines: list[str], src_lines: list[str], src_path: str) -> dict:
+def _compare(
+    name: str,
+    wb_lines: list[str],
+    src_lines: list[str],
+    src_path: str,
+    *,
+    comparison: str = "vba",
+) -> dict:
     """Generate a unified diff between workbook and source lines."""
+    comparison = _validate_comparison(comparison)
     if wb_lines == src_lines:
         return {
             "name": name,
             "status": "identical",
+            "comparison": comparison,
+            "lines_added": 0,
+            "lines_removed": 0,
+        }
+
+    if comparison == "vba" and _normalize_vba_lines(wb_lines) == _normalize_vba_lines(
+        src_lines
+    ):
+        return {
+            "name": name,
+            "status": "equivalent",
+            "comparison": comparison,
+            "equivalence": "vba_token_equivalent",
             "lines_added": 0,
             "lines_removed": 0,
         }
@@ -154,10 +198,107 @@ def _compare(name: str, wb_lines: list[str], src_lines: list[str], src_path: str
     return {
         "name": name,
         "status": "modified",
+        "comparison": comparison,
         "lines_added": added,
         "lines_removed": removed,
         "unified_diff": "\n".join(diff),
     }
+
+
+def _validate_comparison(value: str) -> str:
+    """Validate and normalize a public comparison mode."""
+    normalized = str(value).strip().casefold()
+    if normalized not in COMPARISON_MODES:
+        choices = ", ".join(sorted(COMPARISON_MODES))
+        raise ValueError(f"comparison must be one of: {choices}")
+    return normalized
+
+
+def _normalize_vba_lines(
+    lines: list[str],
+) -> list[tuple[tuple[str, str], ...]]:
+    """Tokenize lines while preserving line structure, literals, and comments."""
+    return [_normalize_vba_line(line) for line in lines]
+
+
+def _normalize_vba_line(line: str) -> tuple[tuple[str, str], ...]:
+    """Return VBA-aware tokens, excluding insignificant code whitespace."""
+    normalized: list[tuple[str, str]] = []
+    index = 0
+    statement_start = True
+    while index < len(line):
+        char = line[index]
+
+        if char == '"':
+            literal_start = index
+            index += 1
+            while index < len(line):
+                if line[index] == '"':
+                    if index + 1 < len(line) and line[index + 1] == '"':
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            normalized.append(("string", line[literal_start:index]))
+            statement_start = False
+            continue
+
+        if char == "'":
+            normalized.append(("comment", line[index:]))
+            break
+
+        if char == "[":
+            token_start = index
+            index += 1
+            while index < len(line) and line[index] != "]":
+                index += 1
+            if index < len(line):
+                index += 1
+            normalized.append(("bracket", line[token_start:index]))
+            statement_start = False
+            continue
+
+        if char == "#" and "#" in line[index + 1:]:
+            token_start = index
+            index = line.index("#", index + 1) + 1
+            normalized.append(("date", line[token_start:index]))
+            statement_start = False
+            continue
+
+        if char.isspace():
+            index += 1
+            continue
+
+        if char.isalpha() or char == "_":
+            token_start = index
+            index += 1
+            while index < len(line) and (
+                line[index].isalnum() or line[index] == "_"
+            ):
+                index += 1
+            token = line[token_start:index]
+            normalized.append(("identifier", token.casefold()))
+            if statement_start and token.casefold() == "rem":
+                normalized.append(("comment", line[index:]))
+                break
+            statement_start = False
+            continue
+
+        if char.isdigit() and statement_start:
+            token_start = index
+            while index < len(line) and line[index].isdigit():
+                index += 1
+            normalized.append(("number", line[token_start:index]))
+            # A leading numeric label leaves the statement body at its start.
+            statement_start = index < len(line) and line[index].isspace()
+            continue
+
+        normalized.append(("punctuation", char))
+        index += 1
+        statement_start = char == ":"
+
+    return tuple(normalized)
 
 
 def _get_component_code(comp) -> list[str]:

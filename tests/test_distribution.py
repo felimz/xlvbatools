@@ -85,7 +85,7 @@ def test_built_wheel_exposes_public_wrapper_api(tmp_path):
         "Project", "Operation", "OperationRequest", "OperationResult", "VBAIssue",
         "MacroStep", "WorkflowOutput",
     ]
-    assert payload["worker_protocol"] == "2.1"
+    assert payload["worker_protocol"] == "2.2"
     assert payload["workflow_schema"] == "1.0"
     assert payload["agent_template"] is True
 

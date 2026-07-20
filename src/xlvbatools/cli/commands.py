@@ -239,7 +239,8 @@ def _cmd_diff(args):
     src = args.source or _cfg_path(cfg, "vba_source_path", "vba_source")
     project = _project(cfg, workbook=args.workbook, source=src)
     operation_result = project.diff(
-        source=src, component=args.component, timeout=args.timeout,
+        source=src, component=args.component, comparison=args.comparison,
+        timeout=args.timeout,
     )
     if not operation_result.success:
         _fail_result(args, operation_result, "Diff failed")
@@ -268,6 +269,8 @@ def _print_diff_result(r, args):
     status = r.status
     if status == "identical":
         print(f"  = {r.name}")
+    elif status == "equivalent":
+        print(f"  ~ {r.name} ({r.equivalence or 'VBA-equivalent'})")
     elif status == "modified":
         print(f"  M {r.name} (+{r.lines_added}/-{r.lines_removed})")
         if not getattr(args, "summary", False) and r.unified_diff is not None:
@@ -290,10 +293,32 @@ def _cmd_lint(args):
     project = _project(cfg, workbook=args.workbook, source=source)
     try:
         if args.workbook or (not args.source and not os.path.exists(source)):
-            result = project.lint_workbook(timeout=args.timeout)
+            result = project.lint_workbook(
+                timeout=args.timeout,
+                severities=args.severity,
+                rules=args.rule,
+                baseline=args.baseline,
+                new_only=args.new_only,
+                write_baseline=args.write_baseline,
+            )
         else:
-            result = project.lint_source(source)
-    except (FileNotFoundError, OSError, ValueError) as error:
+            result = project.lint_source(
+                source,
+                severities=args.severity,
+                rules=args.rule,
+                baseline=args.baseline,
+                new_only=args.new_only,
+                write_baseline=args.write_baseline,
+            )
+    except ValueError as error:
+        result = _local_result(
+            "lint_source",
+            success=False,
+            error=error,
+            code="invalid_lint_options",
+        )
+        _fail_result(args, result, "Lint options are invalid", exit_code=2)
+    except (FileNotFoundError, OSError) as error:
         result = _local_result(
             "lint_source",
             success=False,
@@ -572,7 +597,11 @@ def _cmd_dump(args):
         _fail_result(args, result, "Missing worksheet selection")
     project = _project(cfg, workbook=args.workbook)
     include_screenshots = getattr(args, "screenshot", False)
-    include_data = getattr(args, "data", False) or not include_screenshots
+    include_data = (
+        getattr(args, "data", False)
+        or getattr(args, "rich_text", False)
+        or not include_screenshots
+    )
     out_json = args.write_json if include_data else None
     out_md = args.write_markdown if include_data else None
     result = project.inspect(
@@ -580,6 +609,7 @@ def _cmd_dump(args):
         include_data=include_data, include_screenshots=include_screenshots,
         output_json=out_json, output_markdown=out_md, timeout=args.timeout,
         include_hidden_sheets=args.include_hidden_sheets,
+        include_rich_text=args.rich_text,
     )
     if not result.success:
         _fail_result(args, result, "Workbook inspection failed")
@@ -877,6 +907,8 @@ def _cmd_version(args):
         print(f"xlvba {info.version}")
         print(f"Python: {info.python_executable}")
         print(f"Package: {info.package_path}")
+        if info.version_mismatch:
+            print(f"Distribution metadata: {info.distribution_version} (mismatch)")
         print(f"Source: {info.source_url or 'unknown'}")
         print(f"Commit: {info.commit_id or 'unknown'}")
         if info.requested_revision:
@@ -981,6 +1013,13 @@ def _cmd_agents(args):
             "new_project": "xlvba init --agents",
             "destination": ".agents/",
             "force_update": "xlvba agents install --force",
+        },
+        "analysis_controls": {
+            "vba_diff_default": "--comparison vba",
+            "raw_text_diff": "--comparison text",
+            "lint_regressions": "--baseline PATH --new-only",
+            "write_lint_baseline": "--write-baseline PATH",
+            "partial_cell_formatting": "xlvba dump --data --rich-text",
         },
         "discovery": ["xlvba --help", "xlvba help", "xlvba help COMMAND"],
     }

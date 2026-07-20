@@ -34,6 +34,8 @@ def _run_macro_once(
             workbook_path,
             visible=visible,
             save_on_exit=save_on_exit,
+            allow_workbook_events=True,
+            allow_macro_execution=True,
             on_excel_started=on_excel_started,
         ) as session:
             phase = "named_range_setup"

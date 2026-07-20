@@ -166,14 +166,49 @@ def _register_diff(subparsers: Any) -> None:
     parser.add_argument("--source", "-s", help="VBA source directory")
     parser.add_argument("--component", "-c", help="Compare only this VBA component")
     parser.add_argument("--summary", action="store_true", help="Suppress detailed line differences")
+    parser.add_argument(
+        "--comparison",
+        choices=("vba", "text"),
+        default="vba",
+        help="Comparison semantics: VBA token case-aware (default) or raw text",
+    )
     _presentation_options(parser)
     parser.set_defaults(func=commands._cmd_diff)
 
 
 def _register_lint(subparsers: Any) -> None:
+    from xlvbatools.analysis.rules import ALL_RULE_IDS
+
     parser = _command_parser(subparsers, "lint")
     _worker_options(parser)
     parser.add_argument("--source", "-s", help="Source directory or one VBA source file")
+    parser.add_argument(
+        "--severity",
+        action="append",
+        choices=("ERROR", "WARNING", "STYLE"),
+        help="Include this severity; repeat to include more than one",
+    )
+    parser.add_argument(
+        "--rule",
+        action="append",
+        metavar="RULE_ID",
+        choices=tuple(sorted(ALL_RULE_IDS)),
+        help="Include this rule ID; repeat to include more than one",
+    )
+    parser.add_argument(
+        "--baseline",
+        help="Versioned lint baseline used to identify existing findings",
+    )
+    parser.add_argument(
+        "--new-only",
+        action="store_true",
+        help="Return only findings not present in --baseline",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        metavar="PATH",
+        help="Atomically write all unfiltered findings as a versioned baseline",
+    )
     _presentation_options(parser)
     parser.set_defaults(func=commands._cmd_lint)
 
@@ -268,6 +303,11 @@ def _register_dump(subparsers: Any) -> None:
     parser.add_argument("--sheets", "-s", help="Comma-separated worksheet names")
     parser.add_argument("--screenshot", action="store_true", help="Render worksheet screenshots")
     parser.add_argument("--data", action="store_true", help="Include worksheet cell data")
+    parser.add_argument(
+        "--rich-text",
+        action="store_true",
+        help="Include bounded partial rich-text font runs in cell data",
+    )
     parser.add_argument("--range", "-r", help="Optional cell range such as B2:K20")
     parser.add_argument("--write-json", help="Also write workbook data to this JSON path")
     parser.add_argument("--write-markdown", help="Also write workbook data to this Markdown path")

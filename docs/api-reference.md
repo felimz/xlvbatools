@@ -30,7 +30,7 @@ The following names are the complete supported import surface:
 | Workflow request | `WorkflowStep`, `MacroStep`, `ModifyStep`, `InspectStep`, `WORKFLOW_SCHEMA_VERSION` |
 | Workflow result | `WorkflowOutput`, `WorkflowStepResult`, `ModifyStepOutput`, `RangeWriteResult` |
 | Snapshots | `SnapshotService`, `SnapshotRecord`, `SnapshotGitInfo` |
-| Analysis | `VBAIssue` |
+| Analysis | `VBAIssue`, `LINT_BASELINE_SCHEMA_VERSION` |
 | Operation errors | `XlvbaError`, `ConfigurationError`, `OperationFailedError`, `HeadlessCleanupError` |
 | Excel and snapshot errors | `TrustCenterError`, `SnapshotError`, `SnapshotNotFoundError` |
 | Versioning | `__version__`, `VersionInfo`, `get_version_info` |
@@ -87,10 +87,10 @@ Paths are resolved at construction. Workbooks must use `.xlsm`, `.xlsb`, or
 | `workflow(steps, ..., timeout=240)` | yes, one session for all steps | `WorkflowOutput` |
 | `extract(..., timeout=120)` | yes | `ExtractionOutput` |
 | `inject(..., timeout=120)` | yes, except dry-run backend | `InjectionOutput` |
-| `diff(..., timeout=120)` | yes | tuple of `ComponentDiff` |
-| `lint_workbook(compile_test=True, timeout=120)` | yes | tuple of `VBAIssue` |
+| `diff(..., comparison="vba", timeout=120)` | yes | tuple of `ComponentDiff` |
+| `lint_workbook(..., severities=None, rules=None, baseline=None, new_only=False, write_baseline=None)` | yes | tuple of `VBAIssue` |
 | `modify(..., timeout=120)` | yes | `ModificationOutput` |
-| `lint_source(source=None)` | no | tuple of `VBAIssue` |
+| `lint_source(source=None, ..., severities=None, rules=None, baseline=None, new_only=False, write_baseline=None)` | no | tuple of `VBAIssue` |
 | `snapshots()` | no | `SnapshotService` |
 
 All Excel-backed calls cross the configured `Executor`. Raw COM proxies never
@@ -105,6 +105,7 @@ result = project.inspect(
     cell_range="A1:K100",
     include_data=True,
     include_screenshots=True,
+    include_rich_text=True,
     output_json="artifacts/workbook.json",
     include_hidden_sheets=False,
     timeout=90,
@@ -117,6 +118,14 @@ result.require_clean_shutdown()
 `InspectionOutput.screenshots` maps sheet names to render paths or status
 messages. Generated screenshots are also listed as `Artifact` records.
 Hidden and VeryHidden sheets are excluded unless explicitly enabled.
+Partial rich-text runs are excluded by default because each populated cell
+requires additional COM inspection. With `include_rich_text=True`, each cell
+adds bounded, 1-based font runs and a `complete`, `truncated`, or `unsupported`
+status. Inspection is capped at 4,096 characters and 256 runs per cell.
+Native pixels are validated before headers and gridlines are added. A populated
+range that remains implausibly blank returns
+`error.code == "render_content_mismatch"` with per-attempt metrics and is not
+published as a successful artifact.
 
 ### Macro execution
 
@@ -177,13 +186,41 @@ Python and versioned CLI contracts.
 ### Source and workbook lint
 
 ```python
-source_result = project.lint_source()
-workbook_result = project.lint_workbook(compile_test=True, timeout=240)
+source_result = project.lint_source(
+    severities=("ERROR", "WARNING"),
+    rules=("IP001", "DV001"),
+    write_baseline="artifacts/lint-baseline.json",
+)
+workbook_result = project.lint_workbook(
+    compile_test=True,
+    baseline="artifacts/lint-baseline.json",
+    new_only=True,
+    timeout=240,
+)
 ```
 
 Both adapters use the same project-level symbol index. Workbook lint can add
 Excel compile evidence. A lint result is unsuccessful when ERROR-severity
 issues exist.
+Live lint disables workbook events before opening, keeps the owned VBE hidden,
+and fails closed if Excel compilation cannot be verified. `DV001` detects
+duplicate declarations statically in both source and live-workbook analysis.
+
+Severity and rule filters are inclusive and can be combined. Baselines contain
+all unfiltered findings and are written atomically. Their stable fingerprints
+exclude line numbers, normalize VBA casing and whitespace, and compare
+duplicates as a multiset. Consequently, moving a known finding does not make
+it new, while adding a second identical finding does. `new_only=True` requires
+`baseline`. Only selected ERROR findings determine lint success; lifecycle,
+transport, and cleanup failures are never suppressed by lint filters.
+
+### VBA-aware diff
+
+`Project.diff()` compares VBA tokens by default. Identifier and keyword case,
+plus insignificant spacing between code tokens, produce
+`ComponentDiff.status == "equivalent"`. String literals, comments, punctuation,
+and line structure remain exact. Use `comparison="text"` for a raw,
+case-sensitive line diff.
 
 ### Snapshots
 
@@ -272,13 +309,23 @@ presentation options. See [Machine-first CLI output](cli-output.md).
 ## Versions
 
 ```python
-from xlvbatools import __version__, get_version_info
+from xlvbatools import (
+    LINT_BASELINE_SCHEMA_VERSION,
+    __version__,
+    get_version_info,
+)
 
 info = get_version_info()
 print(__version__)
 print(info.result_schema_version)
 print(info.worker_protocol_version)
 print(info.workflow_schema_version)
+print(LINT_BASELINE_SCHEMA_VERSION)
 ```
+
+`VersionInfo.version` is the authoritative version embedded in the imported
+code. `distribution_version` reports installed metadata separately and
+`version_mismatch` makes a stale editable installation explicit. Released
+wheels must report matching values.
 
 See [Versioning and releases](versioning.md).

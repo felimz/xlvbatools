@@ -51,7 +51,8 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
   and test them in a fresh consumer virtual environment outside the source
   tree.
 - Treat package, serialized-result, worker-protocol, and workflow-schema
-  versions as separate contracts; do not infer one version from another.
+  versions, plus the lint-baseline schema, as separate contracts; do not infer
+  one version from another.
 - Declare package data under `[tool.setuptools.package-data]`.
 
 ## Process safety and tests

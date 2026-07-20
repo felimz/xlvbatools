@@ -2,7 +2,7 @@
 
 ## Version domains
 
-xlvbatools versions four contracts independently:
+xlvbatools versions five contracts independently:
 
 1. **Package version** — Semantic Versioning (`MAJOR.MINOR.PATCH`). The single
    source is `src/xlvbatools/_version.py`; setuptools reads that value when it
@@ -15,9 +15,14 @@ xlvbatools versions four contracts independently:
 4. **Workflow schema** — `WORKFLOW_SCHEMA_VERSION` identifies versioned
    `xlvba workflow` request files independently from result and transport
    schemas.
+5. **Lint baseline schema** — `LINT_BASELINE_SCHEMA_VERSION` identifies the
+   durable JSON used for line-stable known/new finding comparison.
 
-`xlvba version` reports all four identifiers plus installed-package
+`xlvba version` reports all five identifiers plus installed-package
 and VCS provenance.
+It reports the imported code version and installed distribution metadata
+separately; `version_mismatch=true` identifies a stale editable installation
+that should be reinstalled before release validation.
 
 ## Public compatibility boundary
 

@@ -128,11 +128,14 @@ def _inspect_step(
     index: int,
     count: int,
 ) -> tuple[dict[str, Any], str]:
-    from xlvbatools.workbook.dumper import _inspect_existing_session
+    from xlvbatools.workbook.dumper import (
+        ScreenshotRenderError,
+        _inspect_existing_session,
+    )
 
     reporter.workflow_step(step, index=index, count=count, step_phase="inspection")
-    return (
-        _inspect_existing_session(
+    try:
+        inspection = _inspect_existing_session(
             session,
             workbook_path=workbook_path,
             sheets=list(step.get("sheets") or ()),
@@ -144,9 +147,16 @@ def _inspect_step(
             output_md=step.get("output_markdown"),
             continue_on_render_error=bool(step.get("continue_on_render_error", False)),
             include_hidden_sheets=bool(step.get("include_hidden_sheets", False)),
-        ),
-        "complete",
-    )
+            include_rich_text=bool(step.get("include_rich_text", False)),
+        )
+    except ScreenshotRenderError as error:
+        raise _StepFailure(
+            str(error),
+            phase="render_validation",
+            code=error.code,
+            details=error.details,
+        ) from error
+    return inspection, "complete"
 
 
 class _StepFailure(Exception):
@@ -215,7 +225,8 @@ def execute_workflow(arguments: Mapping[str, Any], reporter: Any) -> dict[str, A
         save_on_exit=False,
         kill_on_enter=False,
         read_only=False,
-        disable_macros=False,
+        allow_workbook_events=True,
+        allow_macro_execution=True,
         on_excel_started=reporter.excel_started,
     )
     step_results: list[dict[str, Any]] = []

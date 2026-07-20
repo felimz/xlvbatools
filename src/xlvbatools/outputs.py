@@ -102,6 +102,8 @@ class ComponentDiff:
 
     name: str
     status: str
+    comparison: str = "vba"
+    equivalence: str | None = None
     lines_added: int = 0
     lines_removed: int = 0
     unified_diff: str | None = None
@@ -111,6 +113,12 @@ class ComponentDiff:
         return cls(
             name=str(value.get("name") or ""),
             status=str(value.get("status") or "unknown"),
+            comparison=str(value.get("comparison") or "vba"),
+            equivalence=(
+                str(value["equivalence"])
+                if value.get("equivalence") is not None
+                else None
+            ),
             lines_added=int(value.get("lines_added") or 0),
             lines_removed=int(value.get("lines_removed") or 0),
             unified_diff=(

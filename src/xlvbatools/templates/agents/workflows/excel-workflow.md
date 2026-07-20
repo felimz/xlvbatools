@@ -76,4 +76,6 @@ requested presentation output.
 - A workflow is not a transaction. Use disposable copies of the workbook and
   external inputs when VBA can write files or call other systems.
 - Hidden worksheet screenshots remain excluded unless explicitly requested.
+- Partial rich-text runs remain excluded unless `include_rich_text` is
+  explicitly enabled; collection is bounded per cell.
 - Never terminate Excel globally; only xlvbatools may clean up its owned PID.

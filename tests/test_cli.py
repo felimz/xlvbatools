@@ -600,6 +600,7 @@ def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, 
         cell_range="B91:K99", include_data=False, include_screenshots=True,
         output_json=None, output_markdown=None, timeout=60.0,
         include_hidden_sheets=False,
+        include_rich_text=False,
     )
     patch.stopall()
 
@@ -651,6 +652,64 @@ def test_cli_lint_missing_target_fails_without_pass(tmp_path, capsys):
     assert payload["success"] is False
     assert payload["error"]["code"] == "invalid_lint_target"
     assert "expected a directory or VBA source file" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_cli_lint_new_only_requires_baseline(tmp_path, capsys):
+    from xlvbatools.config.schema import XlvbaConfig
+
+    source = tmp_path / "modMain.bas"
+    source.write_text("Option Explicit\n", encoding="utf-8")
+    with patch("xlvbatools.config.loader.load_config") as mock_config:
+        mock_config.return_value = XlvbaConfig(
+            workbook=str(tmp_path / "book.xlsm"),
+            vba_source=str(source),
+            log_dir=str(tmp_path),
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main(["lint", "--source", str(source), "--new-only"])
+
+    assert exc_info.value.code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "invalid_lint_options"
+    assert "requires a baseline" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_cli_lint_forwards_selection_and_baseline_flags(tmp_path, capsys):
+    source = tmp_path / "modMain.bas"
+    source.write_text("Option Explicit\n", encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    written = tmp_path / "next-baseline.json"
+    fake_project = patch("xlvbatools.cli.commands._project").start().return_value
+    fake_project.lint_source.return_value = _result("lint_source", ())
+
+    with patch("xlvbatools.config.loader.load_config") as mock_config, \
+         patch("xlvbatools.logging.setup_logging"):
+        mock_config.return_value.workbook = "book.xlsm"
+        mock_config.return_value.vba_source = "vba_source"
+        mock_config.return_value.log_dir = str(tmp_path)
+        mock_config.return_value.log_name = "test_lint"
+        with pytest.raises(SystemExit) as exc_info:
+            main([
+                "lint", "--source", str(source),
+                "--severity", "ERROR", "--severity", "WARNING",
+                "--rule", "IP001", "--rule", "DV001",
+                "--baseline", str(baseline), "--new-only",
+                "--write-baseline", str(written),
+            ])
+
+    assert exc_info.value.code == 0
+    assert json.loads(capsys.readouterr().out)["success"] is True
+    fake_project.lint_source.assert_called_once_with(
+        str(source),
+        severities=["ERROR", "WARNING"],
+        rules=["IP001", "DV001"],
+        baseline=str(baseline),
+        new_only=True,
+        write_baseline=str(written),
+    )
+    patch.stopall()
 
 
 @pytest.mark.unit
@@ -774,7 +833,7 @@ def test_cli_extract_inject_diff(tmp_path, capsys):
         assert json.loads(capsys.readouterr().out)["operation"] == "inject"
 
         # Test diff
-        main(["diff"])
+        main(["diff", "--comparison", "text"])
         assert json.loads(capsys.readouterr().out)["operation"] == "diff"
         fake_project.extract.assert_called_once_with(
             output="vba_source", component=None, timeout=120.0,
@@ -784,7 +843,7 @@ def test_cli_extract_inject_diff(tmp_path, capsys):
             dry_run=False, timeout=120.0,
         )
         fake_project.diff.assert_called_once_with(
-            source="vba_source", component=None, timeout=120.0,
+            source="vba_source", component=None, comparison="text", timeout=120.0,
         )
     patch.stopall()
 

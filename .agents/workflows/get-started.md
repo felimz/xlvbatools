@@ -39,8 +39,12 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
 
    ```powershell
    & $xlvba lint --source "workbook/vba_source"
+   & $xlvba lint --source "workbook/vba_source" `
+     --write-baseline ".xlvba/lint-baseline.json"
+   & $xlvba diff --comparison vba --summary --timeout 120
    & $xlvba inject --source "workbook/vba_source" --dry-run --timeout 120
    & $xlvba dump --sheets "Input" --screenshot --range "A1:K100" --timeout 90
+   & $xlvba dump --sheets "Input" --data --rich-text --range "A1:K100" --timeout 90
    & $xlvba run "OnCalculate" --workbook "workbook/Model.xlsm" `
      --named-range "InputValue=42" --no-save --timeout 120
    & $xlvba workflow --workbook "workbook/Model.xlsm" `
@@ -68,6 +72,10 @@ description: Install, configure, discover, and invoke xlvbatools safely from Pow
    repeat `--named-range NAME=VALUE`, choose `--save` or `--no-save`, and add
    `--visible` when the isolated owned Excel window is intentionally required.
    Python callers use the corresponding `Project.run()` arguments.
+   Use repeatable `--severity`/`--rule` lint filters and
+   `--baseline <path> --new-only` for a reviewed regression gate. The default
+   VBA diff ignores only identifier/keyword case and insignificant token
+   spacing; strings and comments remain exact.
 
    When related retrieval, range-write, calculation, and inspection steps need
    the same live workbook state, use typed `Project.workflow()` steps or a

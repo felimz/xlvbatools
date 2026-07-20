@@ -136,6 +136,19 @@ def runtime_error_workbook(tmp_path):
             'Public Sub WorkflowMustNotRun()\r\n'
             '    ThisWorkbook.Worksheets(1).Range("A5").Value = 1\r\n'
             'End Sub\r\n'
+            'Public Sub LeaveScreenUpdatingOff()\r\n'
+            '    With ThisWorkbook.Worksheets(1)\r\n'
+            '        .Range("A1").Value = "Visible screenshot content"\r\n'
+            '        .Range("A2").Value = 123.45\r\n'
+            '    End With\r\n'
+            '    Application.ScreenUpdating = False\r\n'
+            'End Sub\r\n'
+            'Public Sub VerifyScreenUpdatingStillOff()\r\n'
+            '    If Application.ScreenUpdating Then\r\n'
+            '        Err.Raise vbObjectError + 103, "VerifyScreenUpdatingStillOff", _\r\n'
+            '            "Screenshot capture did not restore ScreenUpdating."\r\n'
+            '    End If\r\n'
+            'End Sub\r\n'
             'Public Sub VerifyNamedRange()\r\n'
             '    If ThisWorkbook.Names("TestInput").RefersToRange.Value <> 42 Then\r\n'
             '        Err.Raise vbObjectError + 101, "VerifyNamedRange", _\r\n'
@@ -219,6 +232,93 @@ def compile_error_workbook(runtime_error_workbook, tmp_path):
         )
         del component
     return str(path)
+
+
+@pytest.fixture
+def duplicate_declaration_workbook(runtime_error_workbook, tmp_path):
+    """Workbook with a parameter/local-name compile failure."""
+    import shutil
+    from xlvbatools.core.session import ExcelSession
+
+    path = tmp_path / "duplicate_declaration.xlsm"
+    shutil.copy2(runtime_error_workbook, path)
+    with ExcelSession(str(path), save_on_exit=True, kill_on_enter=False) as session:
+        component = session.vb_project.VBComponents.Add(1)
+        component.Name = "modDuplicateDeclaration"
+        component.CodeModule.AddFromString(
+            "Option Explicit\r\n"
+            "Public Sub DuplicateDeclaration(ByVal FileCount As Long)\r\n"
+            "    Dim FileCount As Long\r\n"
+            "End Sub\r\n"
+        )
+        del component
+    return str(path)
+
+
+@pytest.fixture
+def startup_event_workbook(tmp_path):
+    """Workbook whose open event leaves an external sentinel if it executes."""
+    if sys.platform != "win32":
+        pytest.skip("COM tests require Windows")
+    import win32com.client
+    import win32process
+
+    path = tmp_path / "startup_event.xlsm"
+    marker = tmp_path / "workbook_open_ran.txt"
+    excel = None
+    wb = None
+    workbook_module = None
+    standard_module = None
+    excel_pid = None
+    try:
+        excel = win32com.client.DispatchEx("Excel.Application")
+        _, excel_pid = win32process.GetWindowThreadProcessId(excel.Hwnd)
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        wb = excel.Workbooks.Add()
+        workbook_module = wb.VBProject.VBComponents.Item("ThisWorkbook")
+        marker_literal = str(marker).replace('"', '""')
+        workbook_module.CodeModule.AddFromString(
+            "Option Explicit\r\n"
+            "Private Sub Workbook_Open()\r\n"
+            "    Dim channel As Integer\r\n"
+            "    channel = FreeFile\r\n"
+            f'    Open "{marker_literal}" For Output As #channel\r\n'
+            '    Print #channel, "Workbook_Open executed"\r\n'
+            "    Close #channel\r\n"
+            "End Sub\r\n"
+        )
+        standard_module = wb.VBProject.VBComponents.Add(1)
+        standard_module.Name = "modStartupSafety"
+        standard_module.CodeModule.AddFromString(
+            "Option Explicit\r\n"
+            "Public Sub SafeProcedure()\r\n"
+            "End Sub\r\n"
+        )
+        wb.SaveAs(str(path), FileFormat=52)
+        wb.Close(False)
+        wb = None
+        return str(path), marker
+    except Exception as error:
+        pytest.skip(f"Could not create startup-event workbook: {error}")
+    finally:
+        standard_module = None
+        workbook_module = None
+        if wb is not None:
+            try:
+                wb.Close(False)
+            except Exception:
+                pass
+        if excel is not None:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+        wb = None
+        excel = None
+        gc.collect()
+        if excel_pid is not None:
+            _require_owned_excel_exit(excel_pid)
 
 
 @pytest.fixture

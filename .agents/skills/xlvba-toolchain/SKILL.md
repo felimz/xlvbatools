@@ -38,7 +38,7 @@ while `--text` and `--table` are explicit presentation choices.
 4. Lint:      xlvba lint --source vba_source
 5. Preview:   xlvba inject --dry-run --timeout 120
 6. Inject:    xlvba inject --timeout 120
-7. Diff:      xlvba diff --summary --timeout 120
+7. Diff:      xlvba diff --comparison vba --summary --timeout 120
 8. Run:       xlvba run <MacroName> --timeout 120
 9. Pass:      commit workbook/source changes together
 10. Fail:     xlvba snapshot restore latest
@@ -51,8 +51,8 @@ while `--text` and `--table` are explicit presentation choices.
 | `xlvba help [command]` | Return versioned machine-readable CLI discovery |
 | `xlvba extract` | Extract VBA into the configured source tree |
 | `xlvba inject` | Inject configured VBA source into the workbook |
-| `xlvba diff` | Compare live workbook VBA with extracted source |
-| `xlvba lint` | Analyze source, or a live workbook with `--workbook` |
+| `xlvba diff` | Compare VBA tokens by default, or raw text explicitly |
+| `xlvba lint` | Analyze source/live VBA with filters and reviewed baselines |
 | `xlvba run <macro>` | Run one macro with optional inputs and lifecycle flags |
 | `xlvba workflow --file <path>` | Run ordered typed steps in one Excel session |
 | `xlvba snapshot` | Create, list, inspect, restore, diff, or prune checkpoints |
@@ -81,6 +81,13 @@ project = Project.from_config()
 
 lint_result = project.lint_source()
 issues = lint_result.require_success()
+
+project.lint_source(write_baseline=".xlvba/lint-baseline.json")
+new_lint = project.lint_source(
+    baseline=".xlvba/lint-baseline.json", new_only=True,
+)
+
+diff_result = project.diff(comparison="vba", timeout=120)
 
 run_result = project.run("OnCalculate", timeout=120, save=False)
 macro = run_result.require_success()
@@ -142,9 +149,13 @@ duplicate that policy.
 | Need module names | `xlvba extract --list` |
 | Need a procedure or symbol | `xlvba search "FunctionName"` |
 | Need source-only analysis | `xlvba lint --source vba_source/` |
+| Need only lint regressions | Add `--baseline <path> --new-only` |
+| Need a reviewed lint snapshot | Add `--write-baseline <path>` |
+| Need raw case-sensitive VBA differences | `xlvba diff --comparison text` |
 | Need live compile/analyzer validation | `xlvba lint --workbook workbook.xlsm` |
 | Need call relationships | `xlvba graph` |
 | Need sheet values | `xlvba dump --sheets Sheet1 --data` |
+| Need partial cell formatting | Add `--rich-text`; cell-run output is bounded |
 | Need a visible-sheet screenshot | `xlvba dump --sheets Sheet1 --screenshot` |
 | Need hidden sheets intentionally | Add `--include-hidden-sheets` |
 | Need to set a value | `xlvba modify --sheet Sheet1 --cell A1 --value 42` |
@@ -152,6 +163,7 @@ duplicate that policy.
 | Need visible macro execution | Add `--visible`; the Excel instance remains isolated and owned |
 | Related steps need one workbook open | Use typed `Project.workflow()` steps or `xlvba workflow --file ...` |
 | Macro timed out or Excel failed | Inspect cleanup diagnostics; never kill Excel globally |
+| Screenshot reports `render_content_mismatch` | Retain the attempt metrics and workbook data; do not accept the PNG as visual evidence |
 | Need rollback | `xlvba snapshot restore latest` |
 
 ## Safety rules
@@ -169,3 +181,6 @@ duplicate that policy.
 8. Use the repository `.venv` for development and validation.
 9. Pin released versions or exact full Git revisions in downstream projects.
 10. Use forward slashes when presenting paths in portable logs and JSON.
+11. Source management and live lint must remain non-executing. Do not work
+    around the library's suppressed startup events or hidden VBE; use `run`,
+    `workflow`, or explicit `debug` only when workbook code is intended.

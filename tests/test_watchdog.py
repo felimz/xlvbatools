@@ -121,6 +121,11 @@ class TestWatchdogLifecycle:
         from xlvbatools.core.watchdog import DialogWatchdog
         assert DialogWatchdog(auto_dismiss=False).target_pid is None
 
+    def test_vbe_hiding_requires_pid(self):
+        from xlvbatools.core.watchdog import DialogWatchdog
+        with pytest.raises(ValueError, match="VBE-hiding watchdog requires target_pid"):
+            DialogWatchdog(auto_dismiss=False, hide_vbe_main_window=True)
+
 
 @pytest.mark.unit
 class TestDialogCapture:
@@ -185,3 +190,66 @@ class TestDialogCapture:
         monkeypatch.setattr(wd, "_handle_dialog", handled.append)
         wd._scan_for_dialogs()
         assert handled == []
+
+    def test_owned_vbe_main_window_is_hidden_without_becoming_a_dialog(
+        self, monkeypatch,
+    ):
+        from xlvbatools.core import watchdog
+
+        hidden = []
+
+        class User32:
+            def EnumWindows(self, callback, lparam):
+                callback(123, 0)
+
+        monkeypatch.setattr(watchdog, "user32", User32())
+        monkeypatch.setattr(watchdog, "EnumWindowsProc", lambda callback: callback)
+        monkeypatch.setattr(watchdog, "_is_window_visible", lambda hwnd: True)
+        monkeypatch.setattr(watchdog, "_get_window_class", lambda hwnd: "wndclass_desked_gsk")
+        monkeypatch.setattr(watchdog, "_get_window_pid", lambda hwnd: (1, 42))
+        monkeypatch.setattr(
+            watchdog,
+            "_get_window_text",
+            lambda hwnd: "Microsoft Visual Basic for Applications - Book1",
+        )
+        monkeypatch.setattr(watchdog, "_hide_window", hidden.append)
+        wd = watchdog.DialogWatchdog(
+            target_pid=42,
+            hide_vbe_main_window=True,
+        )
+        wd._scan_for_dialogs()
+
+        assert hidden == [123]
+        assert wd.events == []
+
+
+@pytest.mark.unit
+def test_compile_test_fails_closed_when_compile_control_is_unavailable(monkeypatch):
+    from types import SimpleNamespace
+    from xlvbatools.core import watchdog
+
+    project = SimpleNamespace(Name="Model", FileName="C:/model.xlsm")
+    vbe = SimpleNamespace(
+        ActiveVBProject=project,
+        CommandBars=SimpleNamespace(FindControl=lambda **kwargs: None),
+    )
+    excel = SimpleNamespace(VBE=vbe)
+    workbook = SimpleNamespace(
+        FullName="C:/model.xlsm",
+        VBProject=project,
+        Activate=lambda: None,
+    )
+    capture = SimpleNamespace(events=[])
+    monkeypatch.setattr(watchdog, "_hide_vbe_ui", lambda excel: None)
+
+    result = watchdog.compile_test_with_watchdog(excel, workbook, capture)
+
+    assert result["success"] is False
+    assert result["compile_verified"] is False
+    assert result["errors"] == [{
+        "type": "compile_unverified",
+        "message": (
+            "VBE compile control (ID=578) was unavailable; "
+            "compilation could not be verified."
+        ),
+    }]

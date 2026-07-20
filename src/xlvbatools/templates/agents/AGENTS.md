@@ -27,6 +27,10 @@ and implementation subpackages are private.
 
 - Run project commands with the repository `.venv` when one exists.
 - Use `Project` or the `xlvba` CLI for Excel-backed operations.
+- Treat extract, inject, diff, live lint, list, inspect, and modify as
+  non-executing workbook operations: xlvbatools suppresses startup events and
+  macros before opening. Only `run`, `workflow`, and explicit `debug` opt into
+  workbook code or interactive VBE behavior.
 - Use `Project.workflow()` or `xlvba workflow` when ordered macro,
   modification, and inspection steps require the same in-memory workbook.
 - Check both `OperationResult.require_success()` and, for Excel operations,
@@ -38,12 +42,21 @@ and implementation subpackages are private.
   worker and Excel PID owned by the current operation.
 - Keep hidden worksheets excluded from screenshots unless the task explicitly
   requests them.
+- Request rich-text cell runs only when partial formatting is relevant; the
+  default dump stays fast and compact.
+- Treat `render_content_mismatch` as a failed screenshot, retain its per-attempt
+  pixel metrics, and never accept the overlaid PNG as evidence merely because
+  a file was created.
 - Use `tmp_path` or operating-system temporary directories for generated test
   artifacts; do not pollute the workspace root.
 - Treat names in `xlvbatools.__all__` as the only supported Python API.
 - Check `xlvba version` when reproducibility matters. Package, result-
-  schema, worker-protocol, and workflow-schema versions are independent
-  contracts.
+  schema, worker-protocol, workflow-schema, and lint-baseline-schema versions
+  are independent contracts.
+- Use the default VBA-token diff for source synchronization. Select raw text
+  comparison only when case and formatting changes themselves are evidence.
+- Treat lint baselines as reviewed, versioned artifacts. Use `--new-only` for
+  regression gates; never let a baseline hide transport or cleanup failures.
 - Parse the default JSON envelope. Use `--text` or `--table` only when a human
   presentation is explicitly requested.
 - Put flags after the command they configure, use an explicit `--timeout` for

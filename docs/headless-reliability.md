@@ -30,6 +30,11 @@ through `Project`; implementation subpackages are not an alternate public API.
   `SendMessageTimeoutW`.
 - Captured events preserve multiline text and child-control diagnostics.
 - Compile probing keeps the VBE hidden and does not invoke its File menu.
+- The PID-scoped watchdog also hides the owned VBE editor frame throughout
+  every noninteractive operation. Only `xlvba debug` permits it to remain
+  visible.
+- A live compile test that cannot prove compilation is a structured failure;
+  it never degrades to a warning or a passing lint result.
 
 ## Deadlines and retries
 
@@ -57,6 +62,13 @@ attempts. Callers do not enable or reproduce these policies themselves.
 
 ## Workbook behavior
 
+- Source-management, lint, inspection, and modification sessions disable
+  events before `Workbooks.Open`. A broken `Workbook_Open` therefore cannot run
+  while xlvbatools is extracting, injecting, diffing, linting, listing,
+  inspecting, or modifying a workbook. Non-executing operations force-disable
+  macros; an enabled live compile test permits only its explicit post-open
+  probe while events remain suppressed.
+- Only explicit macro execution and workflow sessions opt into workbook code.
 - Inspection is read-only with macros, events, and link updates disabled.
 - Visible worksheets are the screenshot default.
 - Hidden and VeryHidden worksheets require explicit opt-in.
@@ -66,6 +78,11 @@ attempts. Callers do not enable or reproduce these policies themselves.
   and perform an explicit save only after every step succeeds.
 - Screenshot rendering transfers a bitmap through a blank chart workbook; it
   does not copy worksheet VBA.
+- Screenshot rendering makes only the owned Excel window renderable, forces a
+  range repaint, validates the native bitmap before adding headers or grid
+  overlays, retries the full capture at most three times, and restores the
+  prior visibility and `ScreenUpdating` state. A populated range that remains
+  implausibly blank fails with `render_content_mismatch` evidence.
 
 ## Acceptance
 

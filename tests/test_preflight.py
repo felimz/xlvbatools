@@ -13,6 +13,7 @@ from xlvbatools.analysis.rules import (
     check_active_refs,
     check_option_explicit,
     check_undeclared_variables,
+    check_duplicate_declarations,
     check_block_declarations,
     check_one_declaration_per_line,
     check_avoid_integer,
@@ -893,6 +894,74 @@ class TestDuplicateProcedures:
         issues = lint_files(str(tmp_path))
         dup_issues = [i for i in issues if i.rule_id == "DP001"]
         assert len(dup_issues) == 0
+
+
+@pytest.mark.unit
+class TestDuplicateDeclarations:
+    """DV001: VBA names are unique inside each declaration scope."""
+
+    def test_local_cannot_redeclare_parameter(self):
+        issues = check_duplicate_declarations("modExample.bas", [
+            "Option Explicit\n",
+            "Public Sub Work(ByVal FileCount As Long)\n",
+            "    Dim filecount As Long\n",
+            "End Sub\n",
+        ])
+        assert len(issues) == 1
+        assert issues[0].rule_id == "DV001"
+        assert issues[0].severity == "ERROR"
+        assert "first declared as parameter at line 2" in issues[0].message
+
+    def test_duplicate_parameters_are_case_insensitive(self):
+        issues = check_duplicate_declarations("modExample.bas", [
+            "Public Function Work(ByVal value As Long, ByRef VALUE As Long) As Long\n",
+            "End Function\n",
+        ])
+        assert len(issues) == 1
+        assert issues[0].line_num == 1
+
+    def test_duplicate_local_on_colon_separated_line_fails(self):
+        issues = check_duplicate_declarations("modExample.bas", [
+            "Private Sub Work()\n",
+            "    Dim result As Long: Static RESULT As Long\n",
+            "End Sub\n",
+        ])
+        assert len(issues) == 1
+        assert "local variable" in issues[0].message
+
+    def test_same_local_name_in_separate_procedures_passes(self):
+        issues = check_duplicate_declarations("modExample.bas", [
+            "Private Sub First()\n",
+            "    Dim result As Long\n",
+            "End Sub\n",
+            "Private Sub Second()\n",
+            "    Dim result As Long\n",
+            "End Sub\n",
+        ])
+        assert issues == []
+
+    def test_redim_is_not_a_second_declaration(self):
+        issues = check_duplicate_declarations("modExample.bas", [
+            "Private Sub Work()\n",
+            "    Dim values() As Long\n",
+            "    ReDim Preserve values(10)\n",
+            "End Sub\n",
+        ])
+        assert issues == []
+
+    def test_multiple_withevents_fields_use_their_real_names(self):
+        issues = check_duplicate_declarations("EventSink.cls", [
+            "Private WithEvents ExcelApp As Excel.Application\n",
+            "Private WithEvents CurrentBook As Excel.Workbook\n",
+        ])
+        assert issues == []
+
+    def test_multiple_api_declares_are_not_variable_declarations(self):
+        issues = check_duplicate_declarations("modWin32.bas", [
+            "Private Declare PtrSafe Function GetTickCount Lib \"kernel32\" () As Long\n",
+            "Private Declare PtrSafe Function GetCurrentProcessId Lib \"kernel32\" () As Long\n",
+        ])
+        assert issues == []
 
 
 @pytest.mark.unit

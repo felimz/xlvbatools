@@ -92,11 +92,13 @@ xlvba init --workbook workbook/Model.xlsm --agents
 xlvba extract --timeout 120
 xlvba inject --dry-run --timeout 120
 xlvba inject --timeout 120
-xlvba diff --summary --timeout 120
-xlvba lint --source vba_source
+xlvba diff --comparison vba --summary --timeout 120
+xlvba lint --source vba_source --severity ERROR --severity WARNING
+xlvba lint --source vba_source --write-baseline .xlvba/lint-baseline.json
 xlvba run OnCalculate --named-range InputValue=42 --no-save --timeout 120
 xlvba workflow --file workflow.json --no-save --timeout 240
 xlvba dump --sheets Input --screenshot --range B91:K99 --timeout 90
+xlvba dump --sheets Input --data --rich-text --range A1:K100 --timeout 90
 xlvba modify --sheet Input --cell C33 --value 42 --timeout 120
 xlvba snapshot create --desc "before change"
 xlvba search "FileCount"
@@ -134,6 +136,14 @@ interactive `xlvba debug` command remains text-based.
 
 Hidden and VeryHidden worksheets are excluded from inspection by default. Use
 `--include-hidden-sheets` only when hidden sheets are intentionally required.
+Partial rich-text font runs are opt-in through `--rich-text` or
+`include_rich_text=True`; collection is bounded per cell.
+
+VBA differencing is token-aware by default: code identifier case and
+insignificant token spacing are equivalent, while literals and comments remain
+exact. Use `--comparison text` only when a raw case-sensitive line diff is
+required. Lint supports repeatable severity/rule filters plus versioned,
+line-stable baselines and `--new-only` regression output.
 
 ## Architecture
 
@@ -205,6 +215,8 @@ python -m venv .venv
   src/xlvbatools/outputs.py `
   src/xlvbatools/workflow.py `
   src/xlvbatools/core/workflow.py `
+  src/xlvbatools/analysis/filtering.py `
+  src/xlvbatools/vba/differ.py `
   src/xlvbatools/workbook/dumper.py `
   src/xlvbatools/workbook/modifier.py `
   src/xlvbatools/snapshots.py `

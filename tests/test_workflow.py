@@ -375,12 +375,23 @@ def test_inspection_primitive_reuses_existing_session(monkeypatch):
     monkeypatch.setattr(
         dumper,
         "export_screenshots",
-        lambda *args, **kwargs: seen.append(kwargs["_session"]) or {"Input": "Input.png"},
+        lambda *args, **kwargs: seen.append(
+            ("render", kwargs["_session"], kwargs["expected_visible_content"])
+        ) or {"Input": "Input.png"},
     )
     monkeypatch.setattr(
         dumper,
         "dump_sheet_data",
-        lambda *args, **kwargs: seen.append(kwargs["_session"]) or {"sheets": {}},
+        lambda *args, **kwargs: seen.append(
+            ("data", kwargs["_session"], None)
+        ) or {
+            "sheets": {
+                "Input": {
+                    "cells": {"A1": {"text": "ready", "value": "ready"}},
+                    "shapes": [],
+                },
+            },
+        },
     )
 
     result = dumper._inspect_existing_session(
@@ -391,8 +402,55 @@ def test_inspection_primitive_reuses_existing_session(monkeypatch):
         include_screenshots=True,
     )
 
-    assert seen == [session, session]
+    assert seen == [
+        ("data", session, None),
+        ("render", session, {"Input": 1}),
+    ]
     assert result == {
-        "workbook_data": {"sheets": {}},
+        "workbook_data": {
+            "sheets": {
+                "Input": {
+                    "cells": {"A1": {"text": "ready", "value": "ready"}},
+                    "shapes": [],
+                },
+            },
+        },
         "screenshots": {"Input": "Input.png"},
     }
+
+
+@pytest.mark.unit
+def test_inspection_step_preserves_render_mismatch_code(monkeypatch):
+    from xlvbatools.core import workflow
+    from xlvbatools.workbook import dumper
+
+    error = dumper.ScreenshotRenderError(
+        "blank native bitmap",
+        details={"sheet": "Input", "range": "$A$1:$B$2"},
+    )
+    monkeypatch.setattr(
+        dumper,
+        "_inspect_existing_session",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+    reporter = SimpleNamespace(workflow_step=lambda *args, **kwargs: None)
+
+    with pytest.raises(workflow._StepFailure) as captured:
+        workflow._inspect_step(
+            object(),
+            "book.xlsm",
+            {
+                "id": "inspect",
+                "kind": "inspect",
+                "sheets": ["Input"],
+                "include_data": True,
+                "include_screenshots": True,
+            },
+            reporter,
+            index=1,
+            count=1,
+        )
+
+    assert captured.value.code == "render_content_mismatch"
+    assert captured.value.phase == "render_validation"
+    assert captured.value.details == {"sheet": "Input", "range": "$A$1:$B$2"}

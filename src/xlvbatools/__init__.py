@@ -2,6 +2,7 @@
 
 from xlvbatools._version import __version__
 from xlvbatools.analysis.issue import VBAIssue
+from xlvbatools.analysis.filtering import LINT_BASELINE_SCHEMA_VERSION
 from xlvbatools.errors import (
     ConfigurationError,
     HeadlessCleanupError,
@@ -69,6 +70,7 @@ __all__ = [
     "InjectionChange",
     "InjectionOutput",
     "IsolatedExecutor",
+    "LINT_BASELINE_SCHEMA_VERSION",
     "MacroOutput",
     "MacroStep",
     "ModificationOutput",

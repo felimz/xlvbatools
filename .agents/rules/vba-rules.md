@@ -32,7 +32,8 @@ description: "VBA coding, headless execution, COM safety, and encoding rules."
 3. Edit files under `vba_source/`.
 4. `xlvba lint`
 5. `xlvba inject`
-6. `xlvba diff` and confirm no unintended differences.
+6. `xlvba diff --comparison vba` and confirm no unintended differences. Use
+   raw text comparison only when casing and layout are intentionally reviewed.
 7. `xlvba run <MacroName>` and inspect the default JSON result envelope.
 8. Restore the snapshot if verification fails.
 

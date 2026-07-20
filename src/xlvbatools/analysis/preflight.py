@@ -166,7 +166,13 @@ def lint_workbook(
     from contextlib import nullcontext
     session_context = (
         nullcontext(_session) if _session is not None
-        else ExcelSession(wb_path, visible=False, save_on_exit=False)
+        else ExcelSession(
+            wb_path,
+            visible=False,
+            save_on_exit=False,
+            allow_workbook_events=False,
+            allow_macro_execution=compile_test,
+        )
     )
     with session_context as session:
         # Acquire every component first.  Name resolution is project-scoped, so

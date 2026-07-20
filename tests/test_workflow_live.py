@@ -79,6 +79,37 @@ def test_live_workflow_shares_one_excel_session_and_discards_without_save(
     assert _saved_cell_value(runtime_error_workbook, "A3") is None
 
 
+def test_screenshot_repaints_after_macro_and_restores_screen_updating(
+    runtime_error_workbook, tmp_path,
+):
+    from xlvbatools import InspectStep, MacroStep, Project
+    from xlvbatools.workbook.dumper import _native_image_metrics
+
+    result = Project.open(runtime_error_workbook).workflow(
+        [
+            MacroStep("prepare", "LeaveScreenUpdatingOff"),
+            InspectStep(
+                "inspect",
+                ("Sheet1",),
+                output_dir=str(tmp_path / "screenshots"),
+                cell_range="A1:B2",
+                include_data=True,
+                include_screenshots=True,
+            ),
+            MacroStep("verify-state", "VerifyScreenUpdatingStillOff"),
+        ],
+        timeout=90,
+        save=False,
+    )
+
+    workflow = result.require_success()
+    screenshot = Path(workflow.step("inspect").data.screenshots["Sheet1"])
+    assert screenshot.is_file()
+    assert _native_image_metrics(str(screenshot))["meaningful_pixel_count"] > 64
+    assert workflow.step("verify-state").status == "succeeded"
+    assert result.require_clean_shutdown().still_running is False
+
+
 def test_live_workflow_saves_once_only_after_complete_success(runtime_error_workbook):
     from xlvbatools import MacroStep, ModifyStep, Project
 

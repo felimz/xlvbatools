@@ -40,6 +40,9 @@ def launch_debug_session(
         visible=True,
         enable_watchdog=False,
         save_on_exit=True,
+        allow_workbook_events=True,
+        allow_macro_execution=True,
+        allow_vbe_visible=True,
     ) as session:
         excel = session.excel
         excel.DisplayAlerts = True

@@ -106,7 +106,11 @@ def _session_result(
         save_on_exit=save_on_exit,
         kill_on_enter=False,
         read_only=read_only,
-        disable_macros=read_only,
+        allow_workbook_events=False,
+        allow_macro_execution=(
+            operation == "lint_workbook"
+            and bool(arguments.get("compile_test", True))
+        ),
         on_excel_started=reporter.excel_started,
     )
     phase = "session_start"
@@ -175,6 +179,7 @@ def _session_result(
                         workbook_path,
                         arguments["source_dir"],
                         component,
+                        comparison=arguments.get("comparison", "vba"),
                         _session=session,
                     )
                     success = data is not None
@@ -182,7 +187,10 @@ def _session_result(
                         primary_error = f"Component not found: {component}"
                 else:
                     data = diff_all(
-                        workbook_path, arguments["source_dir"], _session=session,
+                        workbook_path,
+                        arguments["source_dir"],
+                        comparison=arguments.get("comparison", "vba"),
+                        _session=session,
                     )
             elif operation == "modify":
                 from xlvbatools.workbook.modifier import modify_cell
@@ -230,7 +238,7 @@ def _session_result(
             f"Owned Excel PID {session.excel_pid} remained running after cleanup"
         )
 
-    return {
+    response = {
         "success": success,
         "phase": phase,
         "data": data,
@@ -239,6 +247,12 @@ def _session_result(
         "cleanup": cleanup,
         "excel_pid": session.excel_pid,
     }
+    if operation == "lint_workbook" and phase == "lint_workbook" and data is not None:
+        response["error"] = {
+            "message": primary_error,
+            "code": "lint_failed",
+        }
+    return response
 
 
 def _dispatch(

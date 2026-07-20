@@ -28,11 +28,28 @@ import logging
 import os
 import time
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, Mapping
 
 from xlvbatools.core.session import ExcelSession
 
 logger = logging.getLogger(__name__)
+
+RICH_TEXT_MAX_CHARACTERS = 4096
+RICH_TEXT_MAX_RUNS = 256
+_RICH_TEXT_FONT_PROPERTIES = (
+    "Name", "Size", "Bold", "Italic", "Underline", "Strikethrough",
+    "Subscript", "Superscript", "Color", "ColorIndex",
+)
+
+
+class ScreenshotRenderError(RuntimeError):
+    """Excel exported a bitmap that contradicted the workbook content."""
+
+    code = "render_content_mismatch"
+
+    def __init__(self, message: str, *, details: Mapping[str, Any]) -> None:
+        super().__init__(message)
+        self.details = dict(details)
 
 # Excel cell error value mapping
 EXCEL_ERROR_MAP = {
@@ -385,6 +402,300 @@ def _show_owned_excel_offscreen(excel) -> None:
     )
 
 
+def _force_range_repaint(excel, wb, sheet, export_range, *, was_visible: bool) -> None:
+    """Put the owned window in a renderable state and flush its paint queue."""
+    import ctypes
+    import pythoncom  # type: ignore[import-untyped]
+
+    excel.ScreenUpdating = True
+    if was_visible:
+        excel.Visible = True
+    else:
+        _show_owned_excel_offscreen(excel)
+    wb.Activate()
+    sheet.Activate()
+    try:
+        export_range.Select()
+    except Exception:
+        pass
+
+    try:
+        hwnd = int(excel.Hwnd)
+        rdw_invalidate = 0x0001
+        rdw_allchildren = 0x0080
+        rdw_updatenow = 0x0100
+        user32 = ctypes.windll.user32
+        user32.RedrawWindow(
+            hwnd, 0, 0,
+            rdw_invalidate | rdw_allchildren | rdw_updatenow,
+        )
+        user32.UpdateWindow(hwnd)
+    except Exception:
+        logger.debug("Could not force an Excel HWND repaint", exc_info=True)
+    pythoncom.PumpWaitingMessages()
+    time.sleep(0.15)
+
+
+def _native_image_metrics(image_path: str) -> dict[str, Any]:
+    """Measure source pixels before headers or grid overlays can mask a blank export."""
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        rgb = image.convert("RGB")
+        histogram = rgb.getcolors(maxcolors=4096)
+        if histogram is None:
+            # RGB has at most 16.7m colors; quantization keeps this bounded for
+            # photographic worksheet backgrounds without changing the file.
+            histogram = rgb.quantize(colors=256).convert("RGB").getcolors(256)
+        meaningful = 0
+        darkest = 255
+        for count, color in histogram or []:
+            red, green, blue = color
+            darkest = min(darkest, red, green, blue)
+            if min(color) < 175 or max(color) - min(color) > 35:
+                meaningful += count
+        total = rgb.width * rgb.height
+        return {
+            "width": rgb.width,
+            "height": rgb.height,
+            "file_size": os.path.getsize(image_path),
+            "meaningful_pixel_count": meaningful,
+            "meaningful_pixel_ratio": meaningful / total if total else 0.0,
+            "darkest_channel": darkest,
+        }
+
+
+def _image_is_implausibly_blank(
+    metrics: Mapping[str, Any], expected_visible_items: int,
+) -> bool:
+    """Return true only when visible workbook evidence has no bitmap counterpart."""
+    if expected_visible_items <= 0:
+        return False
+    minimum_pixels = max(8, min(64, expected_visible_items * 2))
+    return int(metrics.get("meaningful_pixel_count", 0)) < minimum_pixels
+
+
+def _range_visible_content_count(export_range, sheet) -> int:
+    """Count cheap, render-relevant evidence in a bounded screenshot range."""
+    count = 0
+    rows = int(export_range.Rows.Count)
+    columns = int(export_range.Columns.Count)
+    values = normalize_2d(export_range.Value2, rows, columns)
+    for row in values:
+        for value in row:
+            if value is not None and str(value) != "":
+                count += 1
+
+    first_row = int(export_range.Row)
+    first_column = int(export_range.Column)
+    last_row = first_row + rows - 1
+    last_column = first_column + columns - 1
+    try:
+        for shape in sheet.Shapes:
+            if int(getattr(shape, "Visible", -1)) == 0:
+                continue
+            top_left = shape.TopLeftCell
+            bottom_right = shape.BottomRightCell
+            intersects = not (
+                int(bottom_right.Row) < first_row
+                or int(top_left.Row) > last_row
+                or int(bottom_right.Column) < first_column
+                or int(top_left.Column) > last_column
+            )
+            if intersects:
+                count += 1
+    except Exception:
+        logger.debug("Could not count shapes in screenshot range", exc_info=True)
+    return count
+
+
+def _structured_visible_content_counts(workbook_data: Mapping[str, Any]) -> dict[str, int]:
+    """Derive per-sheet render evidence from the inspection's cell model."""
+    counts: dict[str, int] = {}
+    for sheet_name, sheet_data in (workbook_data.get("sheets") or {}).items():
+        if not isinstance(sheet_data, Mapping) or sheet_data.get("error"):
+            continue
+        count = 0
+        for cell in (sheet_data.get("cells") or {}).values():
+            if not isinstance(cell, Mapping):
+                continue
+            text = cell.get("text")
+            value = cell.get("value")
+            if (text is not None and str(text) != "") or (
+                value is not None and str(value) != ""
+            ):
+                count += 1
+        counts[str(sheet_name)] = count
+    return counts
+
+
+def _capture_native_range(
+    excel,
+    wb,
+    sheet,
+    export_range,
+    out_path: str,
+    *,
+    range_width: float,
+    range_height: float,
+    expected_visible_items: int,
+    max_render_attempts: int = 3,
+    max_com_attempts: int = 5,
+) -> dict[str, Any]:
+    """Capture, validate, and atomically publish one native Excel bitmap."""
+    was_visible = bool(excel.Visible)
+    was_screen_updating = bool(excel.ScreenUpdating)
+    attempt_details: list[dict[str, Any]] = []
+    last_error: Exception | None = None
+
+    try:
+        for render_attempt in range(1, max_render_attempts + 1):
+            candidate = f"{out_path}.capture-{render_attempt}.png"
+            wb_temp = None
+            ws_temp = None
+            chart_obj = None
+            chart = None
+            shape = None
+            capture_succeeded = False
+            try:
+                if os.path.exists(candidate):
+                    os.remove(candidate)
+                _force_range_repaint(
+                    excel, wb, sheet, export_range, was_visible=was_visible,
+                )
+                for com_attempt in range(1, max_com_attempts + 1):
+                    try:
+                        export_range.CopyPicture(Appearance=1, Format=2)
+                        break
+                    except Exception:
+                        if com_attempt == max_com_attempts:
+                            raise
+                        time.sleep(0.25)
+
+                # Keep a user-requested visible workbook stable while the
+                # bitmap-only chart workbook receives the clipboard image.
+                if was_visible:
+                    excel.ScreenUpdating = False
+                else:
+                    excel.Visible = False
+                wb_temp = excel.Workbooks.Add()
+                ws_temp = wb_temp.Worksheets(1)
+                chart_obj = ws_temp.ChartObjects().Add(
+                    0, 0, range_width, range_height,
+                )
+                chart = chart_obj.Chart
+                try:
+                    chart_obj.Select()
+                except Exception:
+                    pass
+                for com_attempt in range(1, max_com_attempts + 1):
+                    try:
+                        chart.Paste()
+                        break
+                    except Exception:
+                        if com_attempt == max_com_attempts:
+                            raise
+                        time.sleep(0.25)
+                if chart.Shapes.Count > 0:
+                    shape = chart.Shapes.Item(1)
+                    shape.Left = 0
+                    shape.Top = 0
+                    shape.Width = range_width
+                    shape.Height = range_height
+                time.sleep(0.25)
+                if not chart.Export(candidate, "PNG"):
+                    raise RuntimeError("Excel chart export returned false")
+                capture_succeeded = True
+            except Exception as error:
+                last_error = error
+                attempt_details.append({
+                    "attempt": render_attempt,
+                    "capture_error": f"{type(error).__name__}: {error}",
+                })
+            finally:
+                shape = None
+                chart = None
+                if chart_obj is not None:
+                    try:
+                        chart_obj.Delete()
+                    except Exception:
+                        pass
+                chart_obj = None
+                ws_temp = None
+                if wb_temp is not None:
+                    try:
+                        wb_temp.Close(False)
+                    except Exception:
+                        pass
+                wb_temp = None
+                try:
+                    excel.CutCopyMode = False
+                except Exception:
+                    pass
+
+            if capture_succeeded and os.path.isfile(candidate):
+                try:
+                    metrics = _native_image_metrics(candidate)
+                except Exception as error:
+                    last_error = error
+                    attempt_details.append({
+                        "attempt": render_attempt,
+                        "validation_error": f"{type(error).__name__}: {error}",
+                    })
+                    os.remove(candidate)
+                    if render_attempt < max_render_attempts:
+                        time.sleep(0.25 * render_attempt)
+                    continue
+                attempt_details.append({
+                    "attempt": render_attempt,
+                    "metrics": metrics,
+                })
+                if not _image_is_implausibly_blank(
+                    metrics, expected_visible_items,
+                ):
+                    os.replace(candidate, out_path)
+                    return metrics
+                os.remove(candidate)
+            elif os.path.exists(candidate):
+                os.remove(candidate)
+            if render_attempt < max_render_attempts:
+                time.sleep(0.25 * render_attempt)
+    finally:
+        try:
+            wb.Activate()
+        except Exception:
+            pass
+        try:
+            excel.Visible = was_visible
+        except Exception:
+            pass
+        try:
+            excel.ScreenUpdating = was_screen_updating
+        except Exception:
+            pass
+        try:
+            excel.CutCopyMode = False
+        except Exception:
+            pass
+
+    metric_attempts = [item for item in attempt_details if "metrics" in item]
+    if metric_attempts:
+        raise ScreenshotRenderError(
+            "Excel repeatedly exported an implausibly blank bitmap for a range "
+            f"containing {expected_visible_items} visible item(s)",
+            details={
+                "sheet": str(sheet.Name),
+                "range": str(export_range.Address),
+                "expected_visible_items": expected_visible_items,
+                "attempts": attempt_details,
+            },
+        )
+    raise RuntimeError(
+        f"Excel could not capture {sheet.Name}!{export_range.Address} after "
+        f"{max_render_attempts} attempts: {last_error}"
+    )
+
+
 def export_screenshots(
     workbook_path: str,
     sheets: list[str],
@@ -395,6 +706,8 @@ def export_screenshots(
     include_grid_overlay: bool = True,
     include_hidden_sheets: bool = False,
     dpi: int = 144,
+    expected_visible_content: Mapping[str, int] | None = None,
+    continue_on_render_error: bool = False,
     _session: ExcelSession | None = None,
 ) -> dict[str, str]:
     """
@@ -417,7 +730,9 @@ def export_screenshots(
 
     session_context = nullcontext(_session) if _session is not None else ExcelSession(
         workbook_path, visible=False, save_on_exit=False, kill_on_enter=False,
-        read_only=True, disable_macros=True,
+        read_only=True,
+        allow_workbook_events=False,
+        allow_macro_execution=False,
     )
     with session_context as session:
         excel, wb = session.excel, session.wb
@@ -509,85 +824,24 @@ def export_screenshots(
                     filename = f"{sheet_name.lower().replace(' ', '_')}_screenshot.png"
                 out_path = os.path.abspath(os.path.join(output_dir, filename))
 
-                max_retries = 5
-                wb_temp = None
-                chart_obj = None
-                chart = None
-                try:
-                    for attempt in range(max_retries):
-                        try:
-                            sheet.Activate()
-                            try:
-                                export_range.Select()
-                            except Exception:
-                                # Large/non-contiguous used ranges can reject
-                                # Select while still supporting CopyPicture.
-                                pass
-                            export_range.CopyPicture(Appearance=1, Format=2)
-                            break
-                        except Exception:
-                            if attempt == max_retries - 1:
-                                raise
-                            if attempt == 0:
-                                # Some Excel builds require a visible normal
-                                # window for CopyPicture. Only the owned
-                                # instance is exposed, far outside the desktop.
-                                _show_owned_excel_offscreen(excel)
-                            time.sleep(0.5)
-
-                    # Never create the bitmap-only chart workbook while the
-                    # owned application is visible, even off-screen.
-                    excel.Visible = False
-                    # The clean workbook receives only the clipboard bitmap;
-                    # worksheet code and formulas never cross this boundary.
-                    wb_temp = excel.Workbooks.Add()
-                    ws_temp = wb_temp.Worksheets(1)
-                    chart_obj = ws_temp.ChartObjects().Add(
-                        0, 0, range_width, range_height
-                    )
-                    chart = chart_obj.Chart
-
-                    try:
-                        chart_obj.Select()
-                    except Exception:
-                        pass
-
-                # Paste with retry loop to handle transient clipboard lock issues
-                    for attempt in range(max_retries):
-                        try:
-                            chart.Paste()
-                            break
-                        except Exception:
-                            if attempt == max_retries - 1:
-                                raise
-                            time.sleep(0.5)
-
-                # Size the pasted shape to match the chart area
-                    if chart.Shapes.Count > 0:
-                        shape = chart.Shapes.Item(1)
-                        shape.Left = 0
-                        shape.Top = 0
-                        shape.Width = range_width
-                        shape.Height = range_height
-                    time.sleep(1.0)
-                    if not chart.Export(out_path, "PNG"):
-                        raise RuntimeError("Excel chart export returned false")
-                finally:
-                    shape = None
-                    chart = None
-                    if chart_obj is not None:
-                        try:
-                            chart_obj.Delete()
-                        except Exception:
-                            pass
-                    chart_obj = None
-                    if wb_temp is not None:
-                        try:
-                            wb_temp.Close(False)
-                        except Exception:
-                            pass
-                    wb_temp = None
-                    excel.CutCopyMode = False
+                range_visible_items = _range_visible_content_count(
+                    export_range, sheet,
+                )
+                expected_items = max(
+                    range_visible_items,
+                    int(expected_visible_content.get(sheet_name, 0))
+                    if expected_visible_content is not None else 0,
+                )
+                _capture_native_range(
+                    excel,
+                    wb,
+                    sheet,
+                    export_range,
+                    out_path,
+                    range_width=range_width,
+                    range_height=range_height,
+                    expected_visible_items=expected_items,
+                )
 
                 try:
                     _apply_headers_and_grid_overlay(
@@ -605,11 +859,133 @@ def export_screenshots(
                 logger.info(f"Saved sheet '{sheet_name}' screenshot to {out_path}")
                 results[sheet_name] = out_path
 
+            except ScreenshotRenderError as error:
+                if not continue_on_render_error:
+                    raise
+                results[sheet_name] = f"Error: {error}"
+                logger.error(f"Screenshot failed for {sheet_name}: {error}")
             except Exception as e:
                 results[sheet_name] = f"Error: {e}"
                 logger.error(f"Screenshot failed for {sheet_name}: {e}")
 
     return results
+
+
+def _dump_cell_rich_text(
+    cell: Any,
+    text: str,
+    *,
+    max_characters: int = RICH_TEXT_MAX_CHARACTERS,
+    max_runs: int = RICH_TEXT_MAX_RUNS,
+) -> dict[str, Any]:
+    """Return bounded, 1-based partial font runs for one Excel cell."""
+    text = str(text)
+    text_length = len(text)
+    if text_length == 0:
+        return {
+            "status": "complete",
+            "text_length": 0,
+            "characters_inspected": 0,
+            "truncated": False,
+            "runs": [],
+        }
+
+    inspected = min(text_length, max_characters)
+    runs: list[dict[str, Any]] = []
+    start = 1
+    try:
+        while start <= inspected and len(runs) < max_runs:
+            first_signature = _rich_text_font_signature(cell, start, 1)
+            remaining = inspected - start + 1
+            length = _largest_matching_font_span(
+                cell, start, remaining, first_signature,
+            )
+            runs.append({
+                "start": start,
+                "length": length,
+                "text": text[start - 1:start - 1 + length],
+                "font": dict(first_signature),
+            })
+            start += length
+    except Exception as error:
+        return {
+            "status": "unsupported",
+            "text_length": text_length,
+            "characters_inspected": max(0, start - 1),
+            "truncated": False,
+            "runs": runs,
+            "error": f"{type(error).__name__}: {error}",
+        }
+
+    truncated = inspected < text_length or start <= inspected
+    return {
+        "status": "truncated" if truncated else "complete",
+        "text_length": text_length,
+        "characters_inspected": min(inspected, start - 1),
+        "truncated": truncated,
+        "runs": runs,
+    }
+
+
+def _largest_matching_font_span(
+    cell: Any,
+    start: int,
+    maximum: int,
+    signature: tuple[tuple[str, Any], ...],
+) -> int:
+    """Find a maximal uniform run using logarithmic COM span probes."""
+    if maximum <= 1:
+        return 1
+    low = 1
+    high = maximum
+    while low < high:
+        candidate = (low + high + 1) // 2
+        if _rich_text_font_signature(cell, start, candidate) == signature:
+            low = candidate
+        else:
+            high = candidate - 1
+    return low
+
+
+def _rich_text_font_signature(
+    cell: Any, start: int, length: int,
+) -> tuple[tuple[str, Any], ...]:
+    characters = None
+    font = None
+    try:
+        characters = _cell_characters(cell, start, length)
+        font = characters.Font
+        return tuple(
+            (name.casefold(), _json_safe_com_scalar(getattr(font, name)))
+            for name in _RICH_TEXT_FONT_PROPERTIES
+        )
+    finally:
+        font = None
+        characters = None
+
+
+def _cell_characters(cell: Any, start: int, length: int) -> Any:
+    """Acquire Excel Characters across pywin32 dispatch variants."""
+    getter = getattr(cell, "GetCharacters", None)
+    if callable(getter):
+        try:
+            return getter(Start=start, Length=length)
+        except TypeError:
+            return getter(start, length)
+
+    characters = getattr(cell, "Characters")
+    if callable(characters):
+        try:
+            return characters(Start=start, Length=length)
+        except TypeError:
+            return characters(start, length)
+    raise TypeError("Excel cell does not expose a callable Characters accessor")
+
+
+def _json_safe_com_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def dump_sheet_data(
@@ -620,6 +996,7 @@ def dump_sheet_data(
     custom_range: str | None = None,
     dump_names: bool = True,
     max_md_rows: int = 500,
+    include_rich_text: bool = False,
     _session: ExcelSession | None = None,
 ) -> dict:
     """
@@ -627,6 +1004,8 @@ def dump_sheet_data(
 
     Uses a cell-level data model: each non-empty cell is stored as
     ``{address: {row, col, value, text, formula, is_error, error_type}}``.
+    When requested, ``rich_text`` adds bounded partial font runs without
+    making per-character COM calls.
 
     Returns the complete dump data dict.
     """
@@ -636,13 +1015,20 @@ def dump_sheet_data(
             "workbook": os.path.basename(wb_path),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "sheets_processed": sheets,
+            "rich_text": {
+                "included": include_rich_text,
+                "max_characters_per_cell": RICH_TEXT_MAX_CHARACTERS,
+                "max_runs_per_cell": RICH_TEXT_MAX_RUNS,
+            },
         },
         "sheets": {},
     }
 
     session_context = nullcontext(_session) if _session is not None else ExcelSession(
         wb_path, visible=False, save_on_exit=False, kill_on_enter=False,
-        read_only=True, disable_macros=True,
+        read_only=True,
+        allow_workbook_events=False,
+        allow_macro_execution=False,
     )
     with session_context as session:
         wb = session.wb
@@ -723,9 +1109,15 @@ def dump_sheet_data(
                             addr = f"{get_column_letter(col_num)}{row_num}"
 
                             # Get formatted text (D2)
+                            rich_text = None
                             try:
                                 cell = ur.Cells(r + 1, c + 1)
                                 text = cell.Text
+                                if include_rich_text:
+                                    rich_text = _dump_cell_rich_text(
+                                        cell,
+                                        val if isinstance(val, str) else str(text or ""),
+                                    )
                             except Exception:
                                 text = str(val) if val is not None else ""
                             finally:
@@ -741,7 +1133,7 @@ def dump_sheet_data(
                                 text = error_type
                                 errors_found.append(addr)
 
-                            sheet_cells[addr] = {
+                            cell_data = {
                                 "row": row_num,
                                 "col": col_num,
                                 "value": val,
@@ -750,6 +1142,16 @@ def dump_sheet_data(
                                 "is_error": is_error,
                                 "error_type": error_type,
                             }
+                            if include_rich_text:
+                                cell_data["rich_text"] = rich_text or {
+                                    "status": "unsupported",
+                                    "text_length": len(str(text or "")),
+                                    "characters_inspected": 0,
+                                    "truncated": False,
+                                    "runs": [],
+                                    "error": "Characters accessor unavailable",
+                                }
+                            sheet_cells[addr] = cell_data
 
                 sheet_shapes = dump_sheet_shapes(sheet)
 
@@ -811,6 +1213,7 @@ def _inspect_workbook_in_process(
     output_md: str | None = None,
     continue_on_render_error: bool = False,
     include_hidden_sheets: bool = False,
+    include_rich_text: bool = False,
     on_excel_started=None,
 ) -> dict:
     """Inspect data and render ranges in one isolated, read-only Excel session."""
@@ -820,6 +1223,7 @@ def _inspect_workbook_in_process(
         "screenshots": {},
         "data": None,
         "primary_error": None,
+        "error": None,
         "dialog_events": [],
         "cleanup": {},
     }
@@ -829,7 +1233,8 @@ def _inspect_workbook_in_process(
         save_on_exit=False,
         kill_on_enter=False,
         read_only=True,
-        disable_macros=True,
+        allow_workbook_events=False,
+        allow_macro_execution=False,
         on_excel_started=on_excel_started,
     )
     try:
@@ -846,6 +1251,7 @@ def _inspect_workbook_in_process(
                 output_md=output_md,
                 continue_on_render_error=continue_on_render_error,
                 include_hidden_sheets=include_hidden_sheets,
+                include_rich_text=include_rich_text,
             )
             result["screenshots"] = inspection["screenshots"]
             result["data"] = inspection["workbook_data"]
@@ -853,6 +1259,12 @@ def _inspect_workbook_in_process(
     except Exception as error:
         result["success"] = False
         result["primary_error"] = str(error)
+        result["error"] = {
+            "code": getattr(error, "code", "inspection_failed"),
+            "message": str(error),
+            "type": type(error).__name__,
+            "details": dict(getattr(error, "details", {}) or {}),
+        }
     finally:
         result["dialog_events"] = (
             [event.to_dict() for event in session.watchdog.events]
@@ -875,25 +1287,11 @@ def _inspect_existing_session(
     output_md: str | None = None,
     continue_on_render_error: bool = False,
     include_hidden_sheets: bool = False,
+    include_rich_text: bool = False,
 ) -> dict[str, Any]:
     """Inspect workbook state through an existing workflow-owned session."""
     screenshots: dict[str, str] = {}
     workbook_data = None
-    if include_screenshots:
-        screenshots = export_screenshots(
-            workbook_path,
-            sheets,
-            output_dir,
-            custom_range=custom_range,
-            _session=session,
-            include_hidden_sheets=include_hidden_sheets,
-        )
-        render_errors = {
-            name: value for name, value in screenshots.items()
-            if value in ("Not found", "Empty") or str(value).startswith("Error:")
-        }
-        if render_errors and not continue_on_render_error:
-            raise RuntimeError(f"Screenshot rendering failed: {render_errors}")
     if include_data:
         workbook_data = dump_sheet_data(
             workbook_path,
@@ -901,8 +1299,30 @@ def _inspect_existing_session(
             output_json=output_json,
             output_md=output_md,
             custom_range=custom_range,
+            include_rich_text=include_rich_text,
             _session=session,
         )
+    if include_screenshots:
+        expected_visible_content = (
+            _structured_visible_content_counts(workbook_data)
+            if workbook_data is not None else None
+        )
+        screenshots = export_screenshots(
+            workbook_path,
+            sheets,
+            output_dir,
+            custom_range=custom_range,
+            _session=session,
+            include_hidden_sheets=include_hidden_sheets,
+            expected_visible_content=expected_visible_content,
+            continue_on_render_error=continue_on_render_error,
+        )
+        render_errors = {
+            name: value for name, value in screenshots.items()
+            if value in ("Not found", "Empty") or str(value).startswith("Error:")
+        }
+        if render_errors and not continue_on_render_error:
+            raise RuntimeError(f"Screenshot rendering failed: {render_errors}")
     return {
         "workbook_data": workbook_data,
         "screenshots": screenshots,
@@ -920,6 +1340,7 @@ def inspect_workbook(
     output_md: str | None = None,
     continue_on_render_error: bool = False,
     include_hidden_sheets: bool = False,
+    include_rich_text: bool = False,
     timeout_seconds: float = 60,
 ) -> dict:
     """Run combined workbook inspection in a timeout-controlled worker."""
@@ -933,6 +1354,7 @@ def inspect_workbook(
         "output_md": os.path.abspath(output_md) if output_md else None,
         "continue_on_render_error": continue_on_render_error,
         "include_hidden_sheets": include_hidden_sheets,
+        "include_rich_text": include_rich_text,
     }
     return execute_worker_request("inspect", request, timeout=timeout_seconds)
 
