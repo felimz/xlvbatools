@@ -97,10 +97,19 @@ infinite-loop timeouts, modal dialog fixtures, and destructive macro tests.
 
 ## UI and dialog checks
 
-Compile probing must leave the VBE hidden and must not invoke command-bar
-control 578, which can flash the VBE File menu. Modal tests must confirm
-multiline error capture, bounded dismissal, and PID scope. A separate unrelated
-Excel instance must remain open during a worker timeout test.
+Compile validation must leave the VBE hidden and invoke command-bar control 578
+only when it is resolved as `msoControlButton` (`Type=1`). The operation must
+verify the requested workbook's exact VBProject before and after the command;
+an unrelated workbook or add-in may never supply the result. Modal tests must
+confirm multiline error capture, bounded dismissal, and PID scope. A separate
+unrelated Excel instance must remain open during targeting and worker-timeout
+tests.
+
+Compile acceptance includes a valid minimal workbook, the current production
+workbook, an undeclared-variable fixture with `CT001` location and dialog
+evidence, and a duplicate-declaration fixture that retains `DV001` and cannot
+become a false compile pass. Repeat valid and invalid cases in isolated workers
+and require graceful Excel/worker cleanup with no remaining owned PID.
 
 ## Native teardown checks
 
@@ -171,6 +180,26 @@ failures, and that a disposable workbook exposes two partial font spans through
 382 upstream tests plus one opt-in external-workbook acceptance. Plain pytest
 now runs only the 350 fast tests, roughly 147 times faster than the former
 implicit 1,105.38-second complete command.
+
+Post-release XL-15 investigation established that the 1.2.0 temporary no-op
+macro was not conclusive whole-project compile evidence. Version 1.2.1 replaces
+that probe with exact-target VBE Compile execution; therefore this historical
+record must not be used as XL-15 acceptance evidence.
+
+## v1.2.1 release validation record
+
+The `v1.2.1` patch release completed with:
+
+- clean Ruff, CI-scoped mypy, documentation/template parity, and diff checks;
+- 353 passing fast tests in 11.71 seconds with 68.95% coverage;
+- the build-isolated wheel contract passing in a fresh consumer environment in
+  20.96 seconds;
+- all 30 single-pass live Excel acceptance tests passing in 335.68 seconds;
+- two consecutive six-operation compile stress runs, covering alternating
+  valid and invalid projects with graceful cleanup and no residual owned PID;
+- the WA-OCEAN production workbook passing exact-target whole-project compile
+  validation with no `CT001` finding in 22.62 seconds; and
+- zero Excel or xlvbatools worker processes after final validation.
 
 This is upstream release evidence only. Re-run each consumer repository's
 domain-specific screenshot and broken-startup acceptance cases after installing

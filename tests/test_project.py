@@ -433,6 +433,42 @@ def test_live_diff_classifies_vba_case_and_spacing_as_equivalent(
 
 
 @pytest.mark.excel
+def test_live_lint_conclusively_compiles_valid_minimal_workbook(minimal_workbook):
+    result = Project.open(minimal_workbook).lint_workbook(
+        compile_test=True,
+        timeout=90,
+    )
+
+    assert result.success is True, result.to_dict()
+    assert not [issue for issue in result.data if issue.rule_id == "CT001"]
+    assert result.require_clean_shutdown().still_running is False
+
+
+@pytest.mark.excel
+def test_live_lint_reports_compile_error_location_and_closes_cleanly(
+    compile_error_workbook,
+):
+    result = Project.open(compile_error_workbook).lint_workbook(
+        compile_test=True,
+        timeout=90,
+    )
+
+    compile_issues = [issue for issue in result.data if issue.rule_id == "CT001"]
+    assert result.success is False, result.to_dict()
+    assert result.error.code == "lint_failed"
+    assert any(
+        issue.module == "modCompileFailure" and issue.line_num == 3
+        for issue in compile_issues
+    ), result.to_dict()
+    assert any(
+        event.get("type") == "compile_error"
+        for event in result.diagnostics.dialog_events
+    ), result.to_dict()
+    cleanup = result.require_clean_shutdown()
+    assert cleanup.exited_gracefully is True
+
+
+@pytest.mark.excel
 def test_source_operations_never_execute_workbook_startup_code(
     startup_event_workbook, tmp_path,
 ):

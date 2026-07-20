@@ -69,3 +69,16 @@ def test_external_workbook_extracts_and_analyzes_without_project_coupling(
     graph = build_call_graph(str(source_dir)).to_dict()
     assert isinstance(graph, dict)
     assert isinstance(issues, list)
+
+    compiled = Project.open(external_workbook).lint_workbook(
+        compile_test=True,
+        timeout=240,
+    )
+    compiled.require_clean_shutdown()
+    if not compiled.success:
+        assert compiled.error is not None, compiled.to_dict()
+        assert compiled.error.code == "lint_failed", compiled.to_dict()
+    compile_findings = [
+        issue for issue in compiled.data if issue.rule_id == "CT001"
+    ]
+    assert compile_findings == [], compiled.to_dict()

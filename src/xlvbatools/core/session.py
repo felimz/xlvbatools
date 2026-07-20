@@ -281,14 +281,6 @@ class ExcelSession:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Stop watchdog first
-        if self.watchdog is not None:
-            events = self.watchdog.stop()
-            if events:
-                logger.info(f"Watchdog captured {len(events)} dialog(s) during session:")
-                for event in events:
-                    logger.info(f"  {event}")
-
         # pywin32 wrappers can participate in cycles (especially VBE,
         # Names/RefersToRange, and pytest assertion temporaries). Finalize
         # those proxies while their Excel RPC server is still alive. Waiting
@@ -330,6 +322,17 @@ class ExcelSession:
         finally:
             self.excel = None
             gc.collect()
+
+        # Keep dialog protection active through Workbook.Close and
+        # Application.Quit. Excel/VBE can create a final modal prompt only
+        # while it is shutting down; stopping the watchdog before Quit would
+        # leave that owned prompt unobserved and potentially block process exit.
+        if self.watchdog is not None:
+            events = self.watchdog.stop()
+            if events:
+                logger.info(f"Watchdog captured {len(events)} dialog(s) during session:")
+                for event in events:
+                    logger.info(f"  {event}")
 
         self.cleanup_result.update({"pid": self.excel_pid, "quit_requested": quit_requested})
 

@@ -19,6 +19,8 @@ description: Diagnose VBA failures, timeouts, and dialogs through the v1 result 
 
 3. Classify the failure:
 
+   - `CT001`: use `xlvba lint --workbook <path>` evidence; do not substitute
+     a successful `xlvba run`, because one macro is not a whole-project compile;
    - `compile_error`: fix the reported module, line, and column;
    - `runtime_error`: inspect the VBA error number and description;
    - `msgbox` or `file_dialog`: add an `Application.UserControl` guard;
@@ -38,4 +40,5 @@ description: Diagnose VBA failures, timeouts, and dialogs through the v1 result 
    `xlvba debug` explicitly; it is the only workflow intended to expose Excel
    and the VBE interactively.
 
-Never run image-wide Excel termination during diagnosis.
+Never run image-wide Excel termination during diagnosis. A live lint result is
+acceptable only when its owned Excel cleanup is also clean.

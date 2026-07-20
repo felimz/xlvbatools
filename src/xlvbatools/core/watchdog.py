@@ -32,6 +32,7 @@ Usage (integrated -- via ExcelSession):
 
 import ctypes
 import ctypes.wintypes
+import gc
 import logging
 import os
 import re
@@ -56,6 +57,8 @@ WM_CANCELMODE = 0x001F
 BM_CLICK = 0x00F5
 SW_HIDE = 0
 DIALOG_CLASS = "#32770"
+MSO_CONTROL_BUTTON = 1
+VBE_COMPILE_CONTROL_ID = 578
 
 # Button labels we'll click to dismiss dialogs (case-insensitive matching)
 DISMISS_BUTTONS = {"ok", "end", "close", "abort", "cancel", "no", "yes"}
@@ -174,6 +177,11 @@ def _is_window_visible(hwnd: int) -> bool:
     return bool(user32.IsWindowVisible(hwnd))
 
 
+def _is_window(hwnd: int) -> bool:
+    """Return whether a Win32 window handle still exists."""
+    return bool(user32.IsWindow(hwnd))
+
+
 def _close_window(hwnd: int):
     """Send WM_CLOSE to a window."""
     return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
@@ -210,55 +218,91 @@ def _get_code_pane_selection(pane) -> tuple:
 def _populate_compile_location(vbe, wb, result: dict) -> None:
     """Populate the selected compile-error location without showing the VBE."""
     panes = []
+    active_pane = None
+    selected = None
+    selected_module = None
+    selected_pane = None
+    components = None
+    component = None
+    component_module = None
+    component_pane = None
+    best = None
+    candidate = None
+    pane = None
+    module = None
     try:
-        if vbe.ActiveCodePane is not None:
-            panes.append(vbe.ActiveCodePane)
-    except Exception:
-        pass
-    try:
-        selected = vbe.SelectedVBComponent
-        if selected is not None and selected.CodeModule.CodePane is not None:
-            panes.append(selected.CodeModule.CodePane)
-    except Exception:
-        pass
-    if not panes:
         try:
-            for component in wb.VBProject.VBComponents:
-                try:
-                    pane = component.CodeModule.CodePane
-                    if pane is not None:
-                        panes.append(pane)
-                except Exception:
-                    continue
+            active_pane = vbe.ActiveCodePane
+            if active_pane is not None:
+                panes.append(active_pane)
         except Exception:
             pass
-
-    best = None
-    for pane in panes:
         try:
-            selection = _get_code_pane_selection(pane)
-            # A compile error normally selects a token beyond the default
-            # 1,1 caret. Prefer that pane while retaining a final fallback.
-            candidate = (selection != (1, 1, 1, 1), pane, selection)
-            if best is None or candidate[0] > best[0]:
-                best = candidate
+            selected = vbe.SelectedVBComponent
+            if selected is not None:
+                selected_module = selected.CodeModule
+                selected_pane = selected_module.CodePane
+                if selected_pane is not None:
+                    panes.append(selected_pane)
         except Exception:
-            continue
-    if best is None or not best[0]:
-        return
+            pass
+        if not panes:
+            try:
+                components = wb.VBProject.VBComponents
+                count = int(components.Count)
+            except Exception:
+                count = 0
+            for index in range(1, count + 1):
+                try:
+                    component = components.Item(index)
+                    component_module = component.CodeModule
+                    component_pane = component_module.CodePane
+                    if component_pane is not None:
+                        panes.append(component_pane)
+                except Exception:
+                    continue
 
-    _, pane, selection = best
-    module = pane.CodeModule
-    error_line, error_column = selection[0], selection[1]
-    result["error_module"] = module.Name
-    result["error_line"] = error_line
-    result["error_column"] = error_column
-    start = max(1, error_line - 5)
-    end = min(module.CountOfLines, error_line + 5)
-    result["error_context"] = [
-        f"{'>>> ' if line == error_line else '    '}{line:4d}: {module.Lines(line, 1)}"
-        for line in range(start, end + 1)
-    ]
+        for pane in panes:
+            try:
+                selection = _get_code_pane_selection(pane)
+                # A compile error normally selects a token beyond the default
+                # 1,1 caret. Prefer that pane while retaining a final fallback.
+                candidate = (selection != (1, 1, 1, 1), pane, selection)
+                if best is None or candidate[0] > best[0]:
+                    best = candidate
+            except Exception:
+                continue
+        if best is None or not best[0]:
+            return
+
+        _, pane, selection = best
+        module = pane.CodeModule
+        error_line, error_column = selection[0], selection[1]
+        result["error_module"] = module.Name
+        result["error_line"] = error_line
+        result["error_column"] = error_column
+        start = max(1, error_line - 5)
+        end = min(module.CountOfLines, error_line + 5)
+        result["error_context"] = [
+            f"{'>>> ' if line == error_line else '    '}{line:4d}: {module.Lines(line, 1)}"
+            for line in range(start, end + 1)
+        ]
+    finally:
+        module = None
+        pane = None
+        candidate = None
+        best = None
+        panes.clear()
+        component_pane = None
+        component_module = None
+        component = None
+        components = None
+        selected_pane = None
+        selected_module = None
+        selected = None
+        active_pane = None
+        gc.collect()
+        gc.collect()
 
 
 def _populate_static_compile_location(wb, result: dict) -> None:
@@ -349,6 +393,57 @@ def _hide_vbe_ui(excel) -> None:
         del window
     except Exception:
         pass
+
+
+def _close_vbe_code_panes(vbe) -> None:
+    """Destroy compiler-opened code panes before the owned Excel teardown."""
+    try:
+        panes = vbe.CodePanes
+        count = min(int(panes.Count), 100)
+    except Exception:
+        return
+
+    for _ in range(count):
+        pane = None
+        window = None
+        try:
+            if int(panes.Count) == 0:
+                break
+            pane = panes.Item(1)
+            window = pane.Window
+            window.Close()
+        except Exception:
+            break
+        finally:
+            window = None
+            pane = None
+    panes = None
+
+
+def _close_vbe_environment(excel, vbe) -> None:
+    """Close compiler-created editor windows without exposing the VBE."""
+    main_window = None
+    _hide_vbe_ui(excel)
+    _close_vbe_code_panes(vbe)
+    _hide_vbe_ui(excel)
+    try:
+        main_window = vbe.MainWindow
+        main_window.Visible = False
+        main_window.Close()
+    except Exception:
+        pass
+    finally:
+        main_window = None
+
+
+def _wait_for_dialog_destruction(events: list, timeout: float = 0.75) -> None:
+    """Let dismissed compiler dialogs finish their VBE state transition."""
+    handles = {int(event.hwnd) for event in events if event.hwnd}
+    if not handles:
+        return
+    deadline = time.time() + timeout
+    while time.time() < deadline and any(_is_window(hwnd) for hwnd in handles):
+        time.sleep(0.025)
 
 
 # ===================================================================
@@ -758,15 +853,103 @@ class DialogWatchdog:
 #  VBE Compile Test with Dialog Protection
 # ===================================================================
 
+def _project_file(project) -> str:
+    """Return a normalized VBProject filename, or an empty string."""
+    try:
+        filename = str(project.FileName)
+    except Exception:
+        return ""
+    if not filename:
+        return ""
+    return os.path.normcase(os.path.abspath(filename))
+
+
+def _activate_target_project(excel, wb, vbe, result: dict) -> bool:
+    """Activate and conclusively identify the requested workbook project."""
+    target_project = wb.VBProject
+    target_file = _project_file(target_project)
+    result["target_project"] = str(target_project.Name)
+    result["target_project_file"] = str(target_project.FileName)
+
+    wb.Activate()
+    _hide_vbe_ui(excel)
+    activation_errors = []
+    try:
+        # The VBIDE automation interface exposes this setter even though the
+        # VBA-language reference describes ActiveVBProject as read-only.
+        vbe.ActiveVBProject = target_project
+    except Exception as error:
+        activation_errors.append(f"ActiveVBProject assignment: {error}")
+    try:
+        active_project = vbe.ActiveVBProject
+        active_file = _project_file(active_project)
+    except Exception:
+        active_project = None
+        active_file = ""
+
+    if not target_file or active_file != target_file:
+        target_component = None
+        target_pane = None
+        try:
+            target_component = target_project.VBComponents.Item(1)
+            target_component.Activate()
+        except Exception as error:
+            activation_errors.append(f"VBComponent activation: {error}")
+        try:
+            if target_component is not None:
+                target_pane = target_component.CodeModule.CodePane
+                vbe.ActiveCodePane = target_pane
+        except Exception as error:
+            activation_errors.append(f"ActiveCodePane assignment: {error}")
+
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            _hide_vbe_ui(excel)
+            try:
+                active_project = vbe.ActiveVBProject
+                active_file = _project_file(active_project)
+            except Exception:
+                active_project = None
+                active_file = ""
+            if target_file and active_file == target_file:
+                break
+            time.sleep(0.025)
+        target_pane = None
+        target_component = None
+
+    if active_project is not None:
+        try:
+            result["active_project"] = str(active_project.Name)
+            result["active_project_file"] = str(active_project.FileName)
+        except Exception:
+            pass
+
+    result["target_verified"] = bool(target_file and active_file == target_file)
+    if result["target_verified"]:
+        return True
+
+    result["warnings"].extend(activation_errors)
+    result["success"] = False
+    result["compile_verified"] = False
+    result["errors"].append({
+        "type": "compile_unverified",
+        "message": (
+            "The requested workbook VBProject could not be made the active "
+            "compile target; refusing to compile another project."
+        ),
+    })
+    return False
+
+
 def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = None) -> dict:
     """
     Trigger VBE compilation and capture any compile error dialogs.
 
-    Inspects VBE compile control ID 578, then forces project compilation by
-    running a temporary no-op probe procedure. This avoids the visible menu
-    flash caused by executing VBE CommandBar controls. If a compile error is
-    found, the function reads VBE selection or static Option Explicit evidence
-    to identify the exact module and line.
+    Activates the requested workbook's exact VBProject, resolves VBE compile
+    control ID 578 specifically as an Office command-bar button, and executes
+    the whole-project compiler while the owned VBE remains hidden. If a compile
+    error is found, the function reads VBE selection or static Option Explicit
+    evidence to identify the best available module and line.
 
     Parameters
     ----------
@@ -810,46 +993,39 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
         "active_project": "",
         "target_project_file": "",
         "active_project_file": "",
-        "compile_verified": True,
+        "project_mode_before": None,
+        "project_mode_after_compile": None,
+        "compile_verified": False,
+        "compile_command_executed": False,
+        "target_verified": False,
         "warnings": [],
     }
-    probe_component = None
+    compile_btn = None
+    vbe = None
+    active_project = None
 
     try:
-        # Make VBE available (required for compile button)
         vbe = excel.VBE
-
-        # CommandBars control 578 compiles the active VB project, which is not
-        # necessarily the workbook passed by the caller. Activate exactly one
-        # component to target this project without walking every component or
-        # making the VBE visible.
-        wb.Activate()
+        if not _activate_target_project(excel, wb, vbe, result):
+            return result
         try:
-            active_file = os.path.abspath(vbe.ActiveVBProject.FileName)
+            result["project_mode_before"] = int(wb.VBProject.Mode)
         except Exception:
-            active_file = ""
-        if os.path.normcase(active_file) != os.path.normcase(os.path.abspath(wb.FullName)):
-            target_component = wb.VBProject.VBComponents.Item(1)
-            target_component.Activate()
-            del target_component
-        result["target_project"] = wb.VBProject.Name
-        result["target_project_file"] = wb.VBProject.FileName
-        try:
-            result["active_project"] = vbe.ActiveVBProject.Name
-            result["active_project_file"] = vbe.ActiveVBProject.FileName
-        except Exception:
-            result["active_project"] = ""
+            pass
 
-        # Inspect control 578 for compatibility, but do not execute it: VBE's
-        # CommandBar API can flash a File menu even while MainWindow is hidden.
-        compile_btn = vbe.CommandBars.FindControl(Id=578)
+        # ID 578 is the VBE Compile command only when constrained to an Office
+        # command-bar button. Searching by ID alone can select a popup control
+        # and expose a menu instead of compiling the project.
+        compile_btn = vbe.CommandBars.FindControl(
+            Type=MSO_CONTROL_BUTTON,
+            Id=VBE_COMPILE_CONTROL_ID,
+        )
         if compile_btn is None:
             result["success"] = False
-            result["compile_verified"] = False
             result["errors"].append({
                 "type": "compile_unverified",
                 "message": (
-                    "VBE compile control (ID=578) was unavailable; "
+                    "VBE compile button (Type=1, ID=578) was unavailable; "
                     "compilation could not be verified."
                 ),
             })
@@ -857,30 +1033,19 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
 
         if not compile_btn.Enabled:
             result["already_compiled"] = True
+            result["compile_verified"] = True
             return result
 
         pre_sequence = max((event.sequence for event in watchdog.events), default=0)
-
-        # Adding and running a no-op procedure forces VBA to compile the active
-        # project without invoking any VBE command-bar UI. The component is
-        # removed before returning and is never intentionally persisted.
-        suffix = str(int(time.time() * 1000000))[-8:]
-        module_name = f"modXlvbaProbe{suffix}"
-        procedure_name = f"XlvbaCompileProbe{suffix}"
-        probe_component = wb.VBProject.VBComponents.Add(1)
-        probe_component.Name = module_name
-        probe_component.CodeModule.AddFromString(
-            f"Option Explicit\r\nPublic Sub {procedure_name}()\r\nEnd Sub\r\n"
-        )
         _hide_vbe_ui(excel)
-        probe_error = None
+        execute_error = None
         try:
-            escaped_name = wb.Name.replace("'", "''")
-            excel.Run(f"'{escaped_name}'!{procedure_name}")
+            compile_btn.Execute()
+            result["compile_command_executed"] = True
         except Exception as error:
-            probe_error = error
+            execute_error = error
         _hide_vbe_ui(excel)
-        compile_incomplete = bool(compile_btn.Enabled)
+
         deadline = time.time() + 1.0
         new_error_events = []
         while time.time() < deadline:
@@ -893,12 +1058,44 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
             if new_error_events:
                 break
             time.sleep(0.05)
+        _wait_for_dialog_destruction(new_error_events)
 
         try:
-            wb.VBProject.VBComponents.Remove(probe_component)
-            probe_component = None
+            compile_incomplete = bool(compile_btn.Enabled)
         except Exception as error:
-            result["warnings"].append(f"Could not remove temporary compile probe: {error}")
+            compile_incomplete = True
+            result["warnings"].append(
+                f"Could not read the post-compile control state: {error}"
+            )
+
+        # Recheck target identity after the command. A conclusive result must
+        # never be attributed to an add-in or another workbook project.
+        try:
+            active_project = vbe.ActiveVBProject
+            result["active_project"] = str(active_project.Name)
+            result["active_project_file"] = str(active_project.FileName)
+            target_still_active = (
+                _project_file(active_project)
+                == _project_file(wb.VBProject)
+            )
+        except Exception:
+            target_still_active = False
+        result["target_verified"] = bool(target_still_active)
+        try:
+            result["project_mode_after_compile"] = int(wb.VBProject.Mode)
+        except Exception:
+            pass
+        if not target_still_active:
+            result["success"] = False
+            result["compile_verified"] = False
+            result["errors"].append({
+                "type": "compile_unverified",
+                "message": (
+                    "The active VBProject changed during compilation; the "
+                    "result cannot be attributed to the requested workbook."
+                ),
+            })
+            return result
 
         # A successful compile disables control 578. If it remains enabled,
         # VBE stopped at an error even when no modal dialog was raised (a
@@ -913,6 +1110,7 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
 
         if new_error_events or result["error_line"]:
             result["success"] = False
+            result["compile_verified"] = True
             result["errors"].extend(event.to_dict() for event in new_error_events)
             if not new_error_events:
                 result["errors"].append({
@@ -929,26 +1127,35 @@ def compile_test_with_watchdog(excel, wb, watchdog: Optional[DialogWatchdog] = N
                     "error dialog or static compile location was available."
                 ),
             })
-        elif probe_error is not None:
+        elif execute_error is not None:
             result["success"] = False
+            result["compile_verified"] = False
             result["errors"].append({
                 "type": "exception",
-                "message": f"Compile probe failed without a captured compile error: {probe_error}",
+                "message": (
+                    "VBE compile command failed without captured compiler "
+                    f"evidence: {execute_error}"
+                ),
             })
+        else:
+            result["compile_verified"] = True
 
     except Exception as e:
         result["success"] = False
+        result["compile_verified"] = False
         result["errors"].append({
             "type": "exception",
             "message": f"Compile test raised exception: {e}",
         })
     finally:
+        if vbe is not None:
+            _close_vbe_environment(excel, vbe)
         _hide_vbe_ui(excel)
-        if probe_component is not None:
-            try:
-                wb.VBProject.VBComponents.Remove(probe_component)
-            except Exception:
-                pass
+        compile_btn = None
+        active_project = None
+        vbe = None
+        gc.collect()
+        gc.collect()
         if own_watchdog:
             watchdog.stop()
 

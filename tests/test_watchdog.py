@@ -229,9 +229,15 @@ def test_compile_test_fails_closed_when_compile_control_is_unavailable(monkeypat
     from xlvbatools.core import watchdog
 
     project = SimpleNamespace(Name="Model", FileName="C:/model.xlsm")
+    find_calls = []
+
+    def find_control(**kwargs):
+        find_calls.append(kwargs)
+        return None
+
     vbe = SimpleNamespace(
         ActiveVBProject=project,
-        CommandBars=SimpleNamespace(FindControl=lambda **kwargs: None),
+        CommandBars=SimpleNamespace(FindControl=find_control),
     )
     excel = SimpleNamespace(VBE=vbe)
     workbook = SimpleNamespace(
@@ -246,10 +252,109 @@ def test_compile_test_fails_closed_when_compile_control_is_unavailable(monkeypat
 
     assert result["success"] is False
     assert result["compile_verified"] is False
+    assert result["target_verified"] is True
+    assert find_calls == [{"Type": 1, "Id": 578}]
     assert result["errors"] == [{
         "type": "compile_unverified",
         "message": (
-            "VBE compile control (ID=578) was unavailable; "
+            "VBE compile button (Type=1, ID=578) was unavailable; "
             "compilation could not be verified."
         ),
     }]
+
+
+@pytest.mark.unit
+def test_compile_test_executes_button_and_verifies_exact_project(monkeypatch):
+    from types import SimpleNamespace
+    from xlvbatools.core import watchdog
+
+    class CompileButton:
+        Enabled = True
+
+        def __init__(self):
+            self.executions = 0
+
+        def Execute(self):
+            self.executions += 1
+            self.Enabled = False
+
+    project = SimpleNamespace(Name="Model", FileName="C:/model.xlsm")
+    button = CompileButton()
+    find_calls = []
+
+    def find_control(**kwargs):
+        find_calls.append(kwargs)
+        return button
+
+    vbe = SimpleNamespace(
+        ActiveVBProject=project,
+        CommandBars=SimpleNamespace(FindControl=find_control),
+    )
+    excel = SimpleNamespace(VBE=vbe)
+    workbook = SimpleNamespace(VBProject=project, Activate=lambda: None)
+    capture = SimpleNamespace(events=[])
+    monkeypatch.setattr(watchdog, "_hide_vbe_ui", lambda excel: None)
+
+    result = watchdog.compile_test_with_watchdog(excel, workbook, capture)
+
+    assert result["success"] is True
+    assert result["compile_verified"] is True
+    assert result["compile_command_executed"] is True
+    assert result["target_verified"] is True
+    assert result["target_project_file"] == "C:/model.xlsm"
+    assert result["active_project_file"] == "C:/model.xlsm"
+    assert find_calls == [{"Type": 1, "Id": 578}]
+    assert button.executions == 1
+
+
+@pytest.mark.unit
+def test_compile_test_refuses_to_compile_another_active_project(monkeypatch):
+    from types import SimpleNamespace
+    from xlvbatools.core import watchdog
+
+    class Component:
+        def Activate(self):
+            return None
+
+    class Components:
+        def Item(self, index):
+            assert index == 1
+            return Component()
+
+    target = SimpleNamespace(
+        Name="Target",
+        FileName="C:/target.xlsm",
+        VBComponents=Components(),
+    )
+    other = SimpleNamespace(Name="Other", FileName="C:/other.xlam")
+    find_calls = []
+    class ReadOnlyVBE:
+        CommandBars = SimpleNamespace(
+            FindControl=lambda **kwargs: find_calls.append(kwargs)
+        )
+
+        @property
+        def ActiveVBProject(self):
+            return other
+
+        @ActiveVBProject.setter
+        def ActiveVBProject(self, value):
+            raise AttributeError("read-only test project")
+
+    vbe = ReadOnlyVBE()
+    excel = SimpleNamespace(VBE=vbe)
+    workbook = SimpleNamespace(VBProject=target, Activate=lambda: None)
+    capture = SimpleNamespace(events=[])
+    monkeypatch.setattr(watchdog, "_hide_vbe_ui", lambda excel: None)
+    clock = iter((0.0, 2.0))
+    monkeypatch.setattr(watchdog.time, "time", lambda: next(clock))
+
+    result = watchdog.compile_test_with_watchdog(excel, workbook, capture)
+
+    assert result["success"] is False
+    assert result["compile_verified"] is False
+    assert result["target_verified"] is False
+    assert result["active_project_file"] == "C:/other.xlam"
+    assert result["errors"][0]["type"] == "compile_unverified"
+    assert "refusing to compile another project" in result["errors"][0]["message"]
+    assert find_calls == []

@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-20
+
+### Fixed
+
+- XL-15: live lint now invokes the VBE's actual whole-project Compile command
+  as the typed command-bar button (`Type=1`, `ID=578`) instead of treating a
+  temporary no-op macro as compile proof. The operation activates and verifies
+  the requested workbook's exact VBProject, keeps the VBE hidden, preserves
+  module/line/dialog evidence for real failures, and fails closed when the
+  compile state remains ambiguous.
+- VBE and dialog-watchdog COM references are released without nested proxy
+  leaks, and dialog protection now remains active through workbook close and
+  Excel quit so valid and invalid compile operations shut down cleanly.
+
 ## [1.2.0] - 2026-07-19
 
 ### Added

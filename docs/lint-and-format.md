@@ -31,7 +31,10 @@ standard modules, class members, and duplicate public procedures are resolved
 at project scope rather than through per-file allowlists. Excel compilation is
 the semantic authority for the live project. Workbook startup code is disabled
 before live lint opens the file, the owned VBE is kept hidden, and an
-unverifiable compile result fails closed.
+unverifiable compile result fails closed. Compile validation activates and
+identity-checks the requested workbook's VBProject, then invokes the real VBE
+whole-project Compile command. Running an ordinary VBA macro is not compile
+proof because VBA may compile only that procedure's dependency closure.
 
 Lint returns an unsuccessful `OperationResult` when ERROR-severity findings
 exist. Warnings and style findings remain in `data`.

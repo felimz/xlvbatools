@@ -274,8 +274,10 @@ print(change.applied)
 Source management (`extract`, `inject`, `diff`, live lint, and component
 listing), inspection, and modification disable workbook startup events before
 opening the file. Non-executing operations also force-disable macros; live lint
-with compile testing permits only its explicit post-open compile probe. Use
-`Project.run()` or `Project.workflow()` only when workbook code is intended.
+with compile testing permits only its explicit, exact-target post-open VBE
+Compile operation. A normal `Project.run()` call is not a whole-project compile
+test. Use `Project.run()` or `Project.workflow()` only when workbook code is
+intended.
 Screenshot inspection validates the
 native Excel bitmap before adding headers or gridlines; treat
 `error.code == "render_content_mismatch"` as a failed visual artifact and

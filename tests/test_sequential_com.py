@@ -39,7 +39,7 @@ def test_session_com_cases_finish_in_one_interpreter():
         output.seek(0)
         combined = output.read()
     assert completed.returncode == 0, combined
-    assert "5 passed" in combined, combined
+    assert "6 passed" in combined, combined
     assert "Windows fatal exception" not in combined, combined
     assert "0x800706ba" not in combined, combined
     assert "0x80010108" not in combined, combined
@@ -206,3 +206,45 @@ def test_fifty_project_runs_retain_progress_and_cleanup(runtime_error_workbook):
         "RPC server is unavailable", "CoInitialize has not been called",
     ):
         assert signature not in combined, combined
+
+
+@pytest.mark.excel
+@pytest.mark.stress
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_repeated_valid_and_invalid_compile_runs_clean_up_owned_processes(
+    minimal_workbook, compile_error_workbook,
+):
+    """Whole-project compile remains conclusive across sequential workers."""
+    from xlvbatools import Project
+    from xlvbatools.core.process import is_process_running
+
+    observed_pids = []
+    for _ in range(3):
+        valid = Project.open(minimal_workbook).lint_workbook(
+            compile_test=True,
+            timeout=90,
+        )
+        assert valid.success is True, valid.to_dict()
+        assert not [issue for issue in valid.data if issue.rule_id == "CT001"]
+        valid_cleanup = valid.diagnostics.cleanup
+        assert valid_cleanup is not None and valid_cleanup.is_clean, valid.to_dict()
+        assert not is_process_running(valid_cleanup.pid), valid.to_dict()
+        observed_pids.append(valid_cleanup.pid)
+
+        invalid = Project.open(compile_error_workbook).lint_workbook(
+            compile_test=True,
+            timeout=90,
+        )
+        compile_findings = [
+            issue for issue in invalid.data if issue.rule_id == "CT001"
+        ]
+        assert invalid.success is False, invalid.to_dict()
+        assert compile_findings, invalid.to_dict()
+        assert compile_findings[0].module == "modCompileFailure"
+        assert compile_findings[0].line_num == 3
+        invalid_cleanup = invalid.diagnostics.cleanup
+        assert invalid_cleanup is not None and invalid_cleanup.is_clean, invalid.to_dict()
+        assert not is_process_running(invalid_cleanup.pid), invalid.to_dict()
+        observed_pids.append(invalid_cleanup.pid)
+
+    assert len(set(observed_pids)) == 6

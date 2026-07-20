@@ -2,11 +2,27 @@
 Tests for xlvbatools.core.session -- ExcelSession context manager.
 """
 
+import gc
 import subprocess
 import sys
 import textwrap
 import pytest
 from types import SimpleNamespace
+
+
+def _vbe_is_visible(excel) -> bool:
+    """Read VBE visibility without retaining a nested COM proxy."""
+    vbe = None
+    main_window = None
+    try:
+        vbe = excel.VBE
+        main_window = vbe.MainWindow
+        return bool(main_window.Visible)
+    finally:
+        main_window = None
+        vbe = None
+        gc.collect()
+        gc.collect()
 
 
 @pytest.mark.unit
@@ -104,6 +120,26 @@ class TestSessionProperties:
         session.__exit__(None, None, None)
 
         assert calls[:2] == ["release_com", "check_pid"]
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_exit_keeps_dialog_watchdog_active_through_excel_quit(self):
+        from xlvbatools.core.session import ExcelSession
+
+        calls = []
+
+        class Watchdog:
+            def stop(self):
+                calls.append("watchdog_stop")
+                return []
+
+        session = ExcelSession("dummy.xlsm")
+        session.watchdog = Watchdog()
+        session.wb = SimpleNamespace(Close=lambda value: calls.append("workbook_close"))
+        session.excel = SimpleNamespace(Quit=lambda: calls.append("excel_quit"))
+
+        session.__exit__(None, None, None)
+
+        assert calls == ["workbook_close", "excel_quit", "watchdog_stop"]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_sequential_macro_runs_use_event_sequences(self):
@@ -268,6 +304,70 @@ class TestSessionCOM:
         assert session.cleanup_result["force_terminated"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_valid_compile_targets_requested_project_and_stays_headless(
+        self, minimal_workbook, tmp_path,
+    ):
+        import shutil
+
+        from xlvbatools.core.session import ExcelSession
+
+        unrelated_path = tmp_path / "unrelated.xlsm"
+        shutil.copy2(minimal_workbook, unrelated_path)
+
+        other_workbook = None
+        other_component = None
+        target_project = None
+        target_component = None
+        target_code = None
+        with ExcelSession(
+            minimal_workbook,
+            save_on_exit=False,
+            allow_workbook_events=False,
+            allow_macro_execution=True,
+        ) as session:
+            target_project = session.vb_project
+            target_component = target_project.VBComponents.Add(1)
+            target_component.Name = "modValidCompileTarget"
+            target_code = target_component.CodeModule
+            target_code.AddFromString(
+                "Option Explicit\r\nPublic Sub ValidCompileTarget()\r\nEnd Sub\r\n"
+            )
+
+            other_workbook = session.excel.Workbooks.Open(
+                str(unrelated_path),
+                UpdateLinks=0,
+                ReadOnly=True,
+                AddToMru=False,
+            )
+            other_component = other_workbook.VBProject.VBComponents.Item(1)
+            other_component.Activate()
+
+            result = session.compile_test()
+            assert _vbe_is_visible(session.excel) is False
+
+            assert result["success"] is True, result
+            assert result["compile_verified"] is True
+            assert result["compile_command_executed"] is True
+            assert result["target_verified"] is True
+            assert result["errors"] == []
+            assert result["target_project_file"].casefold() == minimal_workbook.casefold()
+            assert result["active_project_file"].casefold() == minimal_workbook.casefold()
+
+            other_component = None
+            other_workbook.Close(False)
+            other_workbook = None
+            target_project.VBComponents.Remove(target_component)
+            target_code = None
+            target_component = None
+            target_project = None
+            gc.collect()
+            gc.collect()
+
+        assert session.dialog_events == []
+        assert session.cleanup_result["still_running"] is False
+        assert session.cleanup_result["force_terminated"] is False
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_compile_error_location_is_headless(self, compile_error_workbook):
         from xlvbatools.core.session import ExcelSession
 
@@ -278,9 +378,14 @@ class TestSessionCOM:
             allow_macro_execution=True,
         ) as session:
             result = session.compile_test()
-            assert session.excel.VBE.MainWindow.Visible is False
+            assert _vbe_is_visible(session.excel) is False
 
         assert result["success"] is False
+        assert result["compile_verified"] is True
+        assert result["compile_command_executed"] is True
+        assert result["target_verified"] is True
+        assert result["project_mode_after_compile"] == 2, result
+        assert result["warnings"] == [], result["warnings"]
         assert result["error_module"] == "modCompileFailure"
         assert result["error_line"] == 3
         assert result["error_column"] == 5

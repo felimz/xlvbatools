@@ -29,12 +29,19 @@ through `Project`; implementation subpackages are not an alternate public API.
 - Cross-process window text and click operations are bounded by
   `SendMessageTimeoutW`.
 - Captured events preserve multiline text and child-control diagnostics.
-- Compile probing keeps the VBE hidden and does not invoke its File menu.
+- Live compile resolves the VBE Compile command specifically as an Office
+  command-bar button (`Type=1`, `ID=578`). Searching by ID alone is forbidden
+  because it can resolve a popup control and expose the File menu.
+- The requested workbook's normalized VBProject filename must match
+  `ActiveVBProject` before and after Compile; xlvbatools refuses to attribute
+  another workbook or add-in's compile state to the target.
 - The PID-scoped watchdog also hides the owned VBE editor frame throughout
   every noninteractive operation. Only `xlvba debug` permits it to remain
   visible.
-- A live compile test that cannot prove compilation is a structured failure;
-  it never degrades to a warning or a passing lint result.
+- A disabled Compile button conclusively verifies a valid project. A captured
+  compiler failure produces `CT001` with the best available dialog, module,
+  line, column, and context evidence. Any other state is an unverifiable
+  `CT001`; it never degrades to a warning or passing lint result.
 
 ## Deadlines and retries
 
@@ -66,8 +73,8 @@ attempts. Callers do not enable or reproduce these policies themselves.
   events before `Workbooks.Open`. A broken `Workbook_Open` therefore cannot run
   while xlvbatools is extracting, injecting, diffing, linting, listing,
   inspecting, or modifying a workbook. Non-executing operations force-disable
-  macros; an enabled live compile test permits only its explicit post-open
-  probe while events remain suppressed.
+  macros; an enabled live compile test permits only its explicit post-open VBE
+  Compile operation while events remain suppressed.
 - Only explicit macro execution and workflow sessions opt into workbook code.
 - Inspection is read-only with macros, events, and link updates disabled.
 - Visible worksheets are the screenshot default.

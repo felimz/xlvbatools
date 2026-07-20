@@ -192,7 +192,10 @@ xlvba lint --workbook workbook/MyProject.xlsm --timeout 240
 ```
 
 Treat Excel compilation as the semantic authority. Do not suppress a reported
-cross-module symbol merely to make modes agree.
+cross-module symbol merely to make modes agree. Live lint invokes the real VBE
+whole-project Compile command against the requested workbook's verified
+VBProject; `Project.run()` is not a substitute for this check. Treat `CT001` as
+either compiler evidence or an explicitly unverifiable, fail-closed state.
 
 ## Safety rules
 
