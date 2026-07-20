@@ -80,8 +80,7 @@ def test_targeted_timeout_cleanup(monkeypatch):
     assert cleanup["still_running"] is False
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
 def test_worker_macro_completes(runtime_error_workbook):
     from xlvbatools.macro.runner import run_macro
 
@@ -90,8 +89,7 @@ def test_worker_macro_completes(runtime_error_workbook):
     assert result["cleanup"]["still_running"] is False
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
 def test_worker_returns_multiline_runtime_error(runtime_error_workbook):
     from xlvbatools.macro.runner import run_macro
 
@@ -103,8 +101,7 @@ def test_worker_returns_multiline_runtime_error(runtime_error_workbook):
     assert result["cleanup"]["still_running"] is False
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
 def test_worker_enforces_infinite_loop_timeout(runtime_error_workbook):
     from xlvbatools.macro.runner import run_macro
 
@@ -116,8 +113,7 @@ def test_worker_enforces_infinite_loop_timeout(runtime_error_workbook):
     assert result["cleanup"]["still_running"] is False
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
 @pytest.mark.parametrize("macro_name", ["ShowMessage", "ShowFilePicker"])
 def test_worker_dismisses_modal_ui(runtime_error_workbook, macro_name):
     from xlvbatools.macro.runner import run_macro
@@ -130,8 +126,7 @@ def test_worker_dismisses_modal_ui(runtime_error_workbook, macro_name):
     assert result["cleanup"]["still_running"] is False
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
 def test_timeout_preserves_unrelated_excel(runtime_error_workbook):
     import win32com.client
     import win32process

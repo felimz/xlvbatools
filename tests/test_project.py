@@ -336,8 +336,8 @@ def test_public_api_is_small_and_does_not_import_win32com():
     assert "win32com" not in sys.modules
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
+@pytest.mark.smoke
 def test_project_inspection_reports_clean_owned_process(minimal_workbook):
     result = Project.open(minimal_workbook).inspect(
         ["Sheet1"], include_data=True, include_screenshots=False, timeout=60,
@@ -350,8 +350,8 @@ def test_project_inspection_reports_clean_owned_process(minimal_workbook):
     assert result.require_clean_shutdown().still_running is False
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
+@pytest.mark.smoke
 def test_project_macro_reports_clean_owned_process(runtime_error_workbook):
     result = Project.open(runtime_error_workbook).run(
         "CompleteNormally", timeout=60, save=False,
@@ -362,8 +362,7 @@ def test_project_macro_reports_clean_owned_process(runtime_error_workbook):
     assert result.require_clean_shutdown().still_running is False
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_project_vba_round_trip_uses_clean_sequential_workers(
     runtime_error_workbook, tmp_path,
 ):
@@ -392,8 +391,7 @@ def test_project_vba_round_trip_uses_clean_sequential_workers(
     assert executed.require_clean_shutdown().still_running is False
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_live_diff_classifies_vba_case_and_spacing_as_equivalent(
     runtime_error_workbook, tmp_path,
 ):
@@ -434,8 +432,7 @@ def test_live_diff_classifies_vba_case_and_spacing_as_equivalent(
     assert raw.require_clean_shutdown().still_running is False
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_source_operations_never_execute_workbook_startup_code(
     startup_event_workbook, tmp_path,
 ):
@@ -461,8 +458,7 @@ def test_source_operations_never_execute_workbook_startup_code(
     assert not marker.exists()
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_live_lint_rejects_duplicate_declaration_and_closes_cleanly(
     duplicate_declaration_workbook, tmp_path,
 ):
@@ -493,8 +489,7 @@ def test_live_lint_rejects_duplicate_declaration_and_closes_cleanly(
     assert new_only.require_clean_shutdown().still_running is False
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_project_modify_then_inspect_across_isolated_workers(minimal_workbook):
     project = Project.open(minimal_workbook)
     modified = project.modify(sheet="Sheet1", cell="B2", value=73, timeout=90)

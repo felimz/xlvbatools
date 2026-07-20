@@ -15,9 +15,7 @@ import pytest
 
 
 pytestmark = [
-    pytest.mark.com,
-    pytest.mark.integration,
-    pytest.mark.e2e,
+    pytest.mark.excel,
     pytest.mark.skipif(sys.platform != "win32", reason="Windows only"),
 ]
 
@@ -48,6 +46,7 @@ def _calculation_steps(*, screenshots: bool = False, output_dir: str = "screensh
     ]
 
 
+@pytest.mark.smoke
 def test_live_workflow_shares_one_excel_session_and_discards_without_save(
     runtime_error_workbook, tmp_path,
 ):
@@ -233,6 +232,7 @@ def test_live_workflow_cli_emits_one_machine_result_envelope(
     assert payload["diagnostics"]["cleanup"]["still_running"] is False
 
 
+@pytest.mark.stress
 def test_twenty_five_live_workflows_leave_no_process_or_finalizer_diagnostics(
     runtime_error_workbook,
 ):

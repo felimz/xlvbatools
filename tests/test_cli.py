@@ -534,8 +534,8 @@ def test_cli_run_rejects_invalid_named_range_inputs(options, tmp_path, capsys):
     patch.stopall()
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
+@pytest.mark.smoke
 def test_cli_run_named_range_and_no_save_reach_live_worker(
     runtime_error_workbook, tmp_path, capsys,
 ):

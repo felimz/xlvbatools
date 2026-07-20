@@ -2,7 +2,6 @@
 Tests for xlvbatools.core.session -- ExcelSession context manager.
 """
 
-import os
 import subprocess
 import sys
 import textwrap
@@ -234,8 +233,7 @@ class TestSessionProperties:
         assert calls == []
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
 class TestSessionCOM:
     """Integration tests requiring Excel COM. Skipped unless Excel is installed."""
 
@@ -290,26 +288,19 @@ class TestSessionCOM:
         assert session.cleanup_result["force_terminated"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-    def test_graceful_close_target_only(self, tmp_path):
+    def test_graceful_close_target_only(self, minimal_workbook, tmp_path):
         import shutil
         import win32com.client
         import win32process
         from xlvbatools.core.session import ExcelSession
         from xlvbatools.core.process import is_process_running
 
-        # Load real sample workbook from repository
-        workbook_src = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "sample_workbooks",
-            "Project_Code_Filter.xlsm"
-        )
-        assert os.path.exists(workbook_src), f"Source workbook {workbook_src} not found"
-
-        target_workbook = tmp_path / "Project_Code_Filter.xlsm"
-        shutil.copy(workbook_src, target_workbook)
+        # Both workbooks are disposable synthetic fixtures owned by this test.
+        target_workbook = tmp_path / "target.xlsm"
+        shutil.copy(minimal_workbook, target_workbook)
 
         unrelated_workbook = tmp_path / "unrelated.xlsm"
-        shutil.copy(workbook_src, unrelated_workbook)
+        shutil.copy(minimal_workbook, unrelated_workbook)
 
         # 1. Open unrelated_workbook manually
         excel1 = win32com.client.DispatchEx("Excel.Application")

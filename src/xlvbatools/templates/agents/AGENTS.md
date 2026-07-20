@@ -17,6 +17,10 @@ The Python package, project configuration, and agent guidance are separate:
 Installing `.agents/` files does not install the Python package or create an
 `xlvbatools.toml` unless `xlvba init --agents` is used.
 
+In the xlvbatools source repository, this root `.agents/` tree is tracked active
+guidance. Its byte-for-byte mirror under `src/xlvbatools/templates/agents/` is
+the package-installable consumer copy; neither tree is disposable build output.
+
 ## Project contract
 
 `xlvbatools` provides isolated, headless Excel/VBA automation. Application

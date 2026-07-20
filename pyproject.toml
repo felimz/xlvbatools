@@ -75,13 +75,18 @@ xlvbatools = ["py.typed", "templates/**/*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not excel and not stress and not distribution and not external'"
+strict_markers = true
+strict_config = true
+xfail_strict = true
 markers = [
-    "unit: Pure Python unit tests, no COM required",
-    "integration: Requires live Excel or multi-component integration",
-    "com: Requires Excel COM automation (Windows only, slower)",
-    "e2e: Full end-to-end pipeline tests (slowest)",
-    "distribution: Builds and imports the installed wheel contract",
+    "unit: isolated in-process test with no Excel or external consumer dependency",
+    "integration: offline multi-component or subprocess integration test",
+    "excel: live Excel test using only disposable xlvbatools-owned workbooks and processes",
+    "distribution: build-isolated wheel test in a fresh consumer environment",
+    "external: opt-in downstream workbook acceptance requiring --external-workbook",
+    "stress: repeated long-running lifecycle coverage within the Excel tier",
+    "smoke: short high-value subset of the Excel tier",
 ]
 
 [tool.ruff]

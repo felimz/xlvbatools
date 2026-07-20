@@ -9,8 +9,8 @@ import textwrap
 import pytest
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
+@pytest.mark.stress
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_session_com_cases_finish_in_one_interpreter():
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,7 +28,7 @@ def test_session_com_cases_finish_in_one_interpreter():
                 "pytest",
                 "tests/test_session.py",
                 "-m",
-                "com",
+                "excel",
                 "-q",
             ],
             cwd=project_root,
@@ -45,8 +45,8 @@ def test_session_com_cases_finish_in_one_interpreter():
     assert "0x80010108" not in combined, combined
 
 
-@pytest.mark.com
-@pytest.mark.integration
+@pytest.mark.excel
+@pytest.mark.stress
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_repeated_formula_formatting_and_macro_sessions(runtime_error_workbook):
     """Repeated rich COM reads and macros survive GC in one interpreter."""
@@ -146,9 +146,8 @@ def test_repeated_formula_formatting_and_macro_sessions(runtime_error_workbook):
         assert signature not in combined, combined
 
 
-@pytest.mark.com
-@pytest.mark.integration
-@pytest.mark.e2e
+@pytest.mark.excel
+@pytest.mark.stress
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_fifty_project_runs_retain_progress_and_cleanup(runtime_error_workbook):
     """Stress the public executor repeatedly in one long-lived interpreter."""

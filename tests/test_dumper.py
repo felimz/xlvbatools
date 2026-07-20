@@ -83,6 +83,7 @@ def test_rich_text_dump_degrades_per_cell_when_characters_are_unsupported():
     assert "Characters" in result["error"]
 
 
+@pytest.mark.unit
 def test_shared_worker_inspection_result_is_returned(monkeypatch, tmp_path):
     from xlvbatools.core import worker
     from xlvbatools.workbook import dumper
@@ -104,6 +105,7 @@ def test_shared_worker_inspection_result_is_returned(monkeypatch, tmp_path):
     assert calls[0][2] == 60
 
 
+@pytest.mark.unit
 def test_excel_session_safe_defaults():
     from xlvbatools.core.session import ExcelSession
 
@@ -115,6 +117,7 @@ def test_excel_session_safe_defaults():
     assert session.allow_vbe_visible is False
 
 
+@pytest.mark.unit
 def test_renderer_does_not_copy_worksheet_source():
     import inspect
     from xlvbatools.workbook import dumper
@@ -128,6 +131,7 @@ def test_renderer_does_not_copy_worksheet_source():
     assert "excel.Workbooks.Add()" in source
 
 
+@pytest.mark.unit
 def test_native_bitmap_validation_precedes_overlay(tmp_path):
     from PIL import Image, ImageDraw
     from xlvbatools.workbook.dumper import (
@@ -149,6 +153,7 @@ def test_native_bitmap_validation_precedes_overlay(tmp_path):
     assert _image_is_implausibly_blank(content_metrics, 3) is False
 
 
+@pytest.mark.unit
 def test_structured_content_count_uses_visible_cell_values():
     from xlvbatools.workbook.dumper import _structured_visible_content_counts
 
@@ -168,6 +173,7 @@ def test_structured_content_count_uses_visible_cell_values():
     assert counts == {"Input": 2}
 
 
+@pytest.mark.unit
 def test_scaled_boundaries_are_exact_and_support_hidden_cells():
     from xlvbatools.workbook.dumper import _scaled_boundaries
 
@@ -177,6 +183,7 @@ def test_scaled_boundaries_are_exact_and_support_hidden_cells():
     assert boundaries[-1] == 101
 
 
+@pytest.mark.unit
 def test_overlay_geometry_and_atomic_output(tmp_path):
     from PIL import Image
     from xlvbatools.workbook.dumper import _apply_headers_and_grid_overlay
@@ -201,6 +208,7 @@ def test_overlay_geometry_and_atomic_output(tmp_path):
     assert not (tmp_path / "render.png.overlay.tmp").exists()
 
 
+@pytest.mark.unit
 def test_grid_only_does_not_resize_native_image(tmp_path):
     from PIL import Image
     from xlvbatools.workbook.dumper import _apply_headers_and_grid_overlay
@@ -217,6 +225,7 @@ def test_grid_only_does_not_resize_native_image(tmp_path):
         assert rendered.getpixel((50, 10)) == (210, 210, 210)
 
 
+@pytest.mark.unit
 def test_renderer_rejects_invalid_dpi_before_starting_excel(tmp_path):
     import pytest
     from xlvbatools.workbook.dumper import export_screenshots
@@ -227,6 +236,7 @@ def test_renderer_rejects_invalid_dpi_before_starting_excel(tmp_path):
         )
 
 
+@pytest.mark.unit
 def test_hidden_worksheets_require_explicit_opt_in():
     from types import SimpleNamespace
     from xlvbatools.workbook.dumper import _worksheet_is_renderable
@@ -237,6 +247,7 @@ def test_hidden_worksheets_require_explicit_opt_in():
     assert _worksheet_is_renderable(SimpleNamespace(Visible=0), True) is True
 
 
+@pytest.mark.unit
 def test_shape_dump_reports_forms_activex_and_text_accessors():
     from xlvbatools.workbook.dumper import dump_sheet_shapes
 
@@ -292,6 +303,7 @@ def test_shape_dump_reports_forms_activex_and_text_accessors():
     assert result["ActiveButton"]["control_type"] == "activex_control"
 
 
+@pytest.mark.unit
 def test_shape_dump_uses_textframe2_when_legacy_textframe_is_empty():
     from xlvbatools.workbook.dumper import dump_sheet_shapes
 
@@ -310,8 +322,7 @@ def test_shape_dump_uses_textframe2_when_legacy_textframe_is_empty():
     assert result[0]["text_accessor"] == "TextFrame2.TextRange.Text"
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_live_dump_reports_partial_rich_text_runs(minimal_workbook):
     from xlvbatools import Project
     from xlvbatools.core.session import ExcelSession
@@ -352,8 +363,7 @@ def test_live_dump_reports_partial_rich_text_runs(minimal_workbook):
     assert result.diagnostics.cleanup.still_running is False
 
 
-@pytest.mark.com
-@pytest.mark.e2e
+@pytest.mark.excel
 def test_combined_range_data_and_screenshot_share_one_clean_session(
     minimal_workbook, tmp_path,
 ):

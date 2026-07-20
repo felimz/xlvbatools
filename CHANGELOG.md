@@ -26,6 +26,17 @@ All notable changes are documented here. This project follows
 
 ### Changed
 
+- The default pytest command is now a fast offline gate. Live Excel,
+  sequential stress, distribution, and explicitly supplied downstream
+  workbooks have separate enforced tiers and a seekable-output test runner.
+- Live test workbooks are synthetic, built in an isolated child process, and
+  copied per test; the library suite no longer scans local workbook folders or
+  depends on a consumer project.
+- Multiple snapshots created in one second receive deterministic numeric
+  suffixes instead of blocking until the wall clock advances.
+- Repository ignore rules now cover generated Python, packaging, test, Excel,
+  snapshot, log, crash, and local-secret state while preserving reviewed test
+  fixtures and both maintained agent-guidance trees.
 - Extraction, injection, differencing, inspection, modification, component
   listing, and live lint now suppress workbook events before `Workbooks.Open`.
   Non-executing operations also force-disable macros; live compile enables only

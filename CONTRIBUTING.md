@@ -31,9 +31,11 @@ Install development dependencies:
 
 ## Running Tests
 
-Tests are managed using `pytest`. The test suite is divided into `unit` (offline) and `com` (requires Excel) tests.
+Tests are managed using `pytest`. Plain `pytest` is the fast offline suite.
+Excel, stress, wheel, and external-workbook tests are explicit opt-ins; see
+[docs/testing.md](docs/testing.md) for the enforced taxonomy.
 
-Run all tests:
+Run the normal iteration suite:
 ```bash
 .venv\Scripts\python.exe -m pytest
 ```
@@ -45,8 +47,23 @@ Run only offline/unit tests:
 
 Run tests with coverage:
 ```bash
-.venv\Scripts\python.exe -m pytest --cov=xlvbatools
+.venv\Scripts\python.exe -m pytest --cov=xlvbatools --cov-fail-under=60
 ```
+
+Run live Excel smoke coverage without the long lifecycle loops:
+```bash
+.venv\Scripts\python.exe scripts/test.py excel-smoke
+```
+
+Use `scripts/test.py` for named live tiers so pytest output is captured through
+a seekable file and Excel descendants cannot retain the terminal pipe.
+
+Every test has exactly one primary marker: `unit`, `integration`, `excel`,
+`distribution`, or `external`. Use `stress` and `smoke` only as secondary
+markers on `excel` tests. The collection hook fails on missing, conflicting,
+or live-fixture markers. Library tests must use synthetic disposable workbooks;
+downstream workbooks are accepted only through an explicit
+`--external-workbook` path and never through directory auto-discovery.
 
 ---
 
@@ -80,6 +97,10 @@ When public behavior changes, update `README.md`, the relevant file under
 The packaged templates under `src/xlvbatools/templates/agents/` are canonical.
 The active `.agents/` tree must remain byte-for-byte identical so repository
 work and newly initialized consumer projects use the same guidance.
+Both trees are intentionally tracked: root `.agents/` is active immediately in
+this repository, while `src/xlvbatools/templates/agents/` is package data used
+by `xlvba agents install`. The root tree is not a generated local artifact and
+must not be added to `.gitignore`.
 
 Validate documented CLI examples against `xlvba <command> --help`. Safety
 guidance must never recommend global Excel termination or direct use of

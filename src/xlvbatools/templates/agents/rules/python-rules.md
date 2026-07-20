@@ -60,8 +60,17 @@ description: "Python API, packaging, versioning, isolation, and test rules for x
 - Never terminate Excel by image name or select an unrelated desktop Excel
   instance. Only an operation-owned PID may be cleaned up.
 - Write generated files under `tmp_path` or an OS temporary directory.
-- Mark live Excel coverage with `@pytest.mark.com` or `@pytest.mark.e2e`.
-- Run offline tests with `.venv\Scripts\python.exe -m pytest -m "not com and not e2e"`.
+- Keep consumer-project tests separate from the xlvbatools library suite. A
+  consumer should test its wrapper against the public `Project` API and a
+  pinned release; it should not copy or invoke xlvbatools' internal tests.
+- In the xlvbatools source repository, plain `pytest` is the fast offline
+  suite. Every test has exactly one primary marker: `unit`, `integration`,
+  `excel`, `distribution`, or `external`. Live Excel tests use `excel`; long
+  repetition additionally uses `stress`. Downstream workbooks require an
+  explicit `--external-workbook` path and are never auto-discovered.
+- Use `scripts/test.py` for named live tiers in the xlvbatools source
+  repository. It captures pytest output through a seekable file so Excel
+  descendants cannot retain the agent terminal pipe.
 - Run the repository's configured Ruff and mypy gates before release. In this
   xlvbatools repository, the exact release commands live in
   `docs/release-validation.md`; consumer projects should use their own checked-

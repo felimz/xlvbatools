@@ -20,11 +20,11 @@ an agent host.
 ## Validation tiers
 
 ```powershell
-# Broad offline and packaging coverage.
-.venv\Scripts\python.exe -m pytest -m "not com and not e2e"
+# Fast offline iteration suite. This is the default and starts no Excel.
+.venv\Scripts\python.exe -m pytest
 
 # Static quality and minimum offline coverage gates.
-.venv\Scripts\ruff.exe check src tests
+.venv\Scripts\ruff.exe check src tests scripts
 .venv\Scripts\mypy.exe --follow-imports=skip `
   src/xlvbatools/project.py `
   src/xlvbatools/execution.py `
@@ -38,25 +38,30 @@ an agent host.
   src/xlvbatools/workbook/modifier.py `
   src/xlvbatools/snapshots.py `
   src/xlvbatools/cli
-.venv\Scripts\python.exe -m pytest -m "not com and not e2e" --cov=xlvbatools --cov-fail-under=60
+.venv\Scripts\python.exe -m pytest --cov=xlvbatools --cov-fail-under=60
 
 # Build-isolated wheel installed into a fresh consumer environment.
-.venv\Scripts\python.exe -m pytest tests/test_distribution.py -v
+.venv\Scripts\python.exe scripts/test.py distribution
 
 # Exact release artifacts. The output directory should be empty before use.
 .venv\Scripts\python.exe -m build --sdist --wheel --outdir dist
 
-# Public Project API through live Excel.
-.venv\Scripts\python.exe -m pytest tests/test_project.py -m "com or e2e" -v
-.venv\Scripts\python.exe -m pytest tests/test_workflow_live.py -v
+# Short public Project and worker lifecycle smoke tests.
+.venv\Scripts\python.exe scripts/test.py excel-smoke
 
-# Sequential COM lifecycle in one interpreter and a parent subprocess.
-.venv\Scripts\python.exe -m pytest tests/test_session.py -m com -q
-.venv\Scripts\python.exe -m pytest tests/test_sequential_com.py -q
+# Full disposable-workbook live Excel coverage without long stress loops.
+.venv\Scripts\python.exe scripts/test.py excel
 
-# Complete release gate.
-.venv\Scripts\python.exe -m pytest
+# Sequential native teardown plus 5 direct sessions, 50 Project.run
+# operations, and 25 workflows.
+.venv\Scripts\python.exe scripts/test.py stress
+
+# Complete upstream gate; external consumer workbooks remain separate.
+.venv\Scripts\python.exe scripts/test.py all
 ```
+
+See [Testing](testing.md) for marker ownership, expected scope, and the
+downstream-project boundary.
 
 The wheel test uses normal PEP 517 isolation, installs the wheel without
 editable/source-path leakage into a fresh virtual environment outside the
@@ -70,10 +75,12 @@ that wheel and its matching source distribution without rebuilding them.
 ## Real-workbook acceptance
 
 Run at least one representative downstream workbook through the installed v1
-surface. For WA-OCEAN:
+surface from the consumer repository. The upstream helper requires an explicit
+path and never scans a directory:
 
 ```powershell
-.venv\Scripts\xlvba.exe lint --workbook C:\Users\felim\AntigravityProjects\wa_ocean\workbook\WA-OCEAN-AFR.xlsm --timeout 240
+.venv\Scripts\python.exe scripts/test.py external `
+  --external-workbook C:\path\to\disposable\Model.xlsm
 ```
 
 Acceptance requires:
@@ -109,7 +116,8 @@ The integrated v1 refactor completed with:
 - 257 passing tests in the complete suite;
 - four passing live `Project` API tests;
 - a build-isolated wheel imported from a clean consumer environment;
-- WA-OCEAN live lint with zero errors, zero `FileCount` false positives, and
+- representative downstream live lint with zero errors, zero cross-module
+  public-symbol false positives, and
   zero compile findings across 1,069 reported issues;
 - zero residual Excel and worker processes.
 
@@ -124,39 +132,46 @@ The `v1.1.0` release completed with:
   gates;
 - 323 passing tests in the complete suite, including 50 sequential
   `Project.run()` operations and 25 sequential one-session workflows;
-- WA-OCEAN live lint and compile with zero errors and zero dialogs across
+- representative downstream live lint and compile with zero errors and zero dialogs across
   1,078 reported issues;
 - a build-isolated wheel installed and exercised from a clean consumer
   environment; and
 - zero residual Excel or xlvbatools worker processes after live validation.
 
-## v1.2.0 candidate validation record
+## v1.2.0 release validation record
 
-The unreleased `v1.2.0` candidate completed with:
+The `v1.2.0` release completed with:
 
 - clean Ruff, CI-scoped mypy, documentation/template parity, and diff checks;
-- 337 passing offline/non-COM tests, including the build-isolated wheel
-  contract;
-- 372 passing tests in the complete suite in 1,105.38 seconds;
-- clean same-interpreter COM tests, five repeated direct macro/formatting
-  sessions, 50 sequential `Project.run()` operations, and 25 sequential
-  one-session workflows with no native finalizer diagnostics;
+- 350 passing fast offline tests in 7.51 seconds with 68.91% coverage;
+- the build-isolated wheel contract passing in a fresh consumer environment in
+  25.46 seconds;
+- four live Excel smoke tests passing in 38.84 seconds and 27 single-pass Excel
+  acceptance tests passing in 284.51 seconds;
+- four explicit stress tests passing in 540.76 seconds, covering
+  same-interpreter native teardown, five repeated direct sessions, 50
+  sequential `Project.run()` operations, and 25 sequential one-session
+  workflows with no native finalizer diagnostics;
+- one explicitly supplied synthetic external workbook passing extraction,
+  lint, and dependency analysis without scanning or invoking a consumer
+  project;
 - a sentinel `Workbook_Open` that remained unexecuted across extract, diff,
   inject, and live compile lint;
 - a duplicate parameter/local declaration reported as both `DV001` static
   evidence and `CT001` Excel compile evidence;
 - screenshot capture succeeding after VBA left `ScreenUpdating=False`, then
   restoring that state for the following workflow step; and
-- zero residual Excel or xlvbatools worker processes after the complete run.
+- zero residual Excel or xlvbatools worker processes after every live tier.
 
 The 1.2.0 feature pass also live-verified that VBA case/spacing changes are
 `equivalent` while raw text reports them as modified, that an analyzer failure
 can be baselined and then cleared by `new_only` without hiding lifecycle
 failures, and that a disposable workbook exposes two partial font spans through
-`Project.inspect(include_rich_text=True)`. The final complete-run audit found
-zero Excel processes and zero xlvbatools worker processes before and after the
-suite.
+`Project.inspect(include_rich_text=True)`. The tiered suite collects 383 tests:
+382 upstream tests plus one opt-in external-workbook acceptance. Plain pytest
+now runs only the 350 fast tests, roughly 147 times faster than the former
+implicit 1,105.38-second complete command.
 
-This is upstream candidate evidence only. Re-run the WA-OCEAN Section 5
-rejected-travel screenshot and broken-startup acceptance cases after installing
-the released wheel before closing XL-13 and XL-14 downstream.
+This is upstream release evidence only. Re-run each consumer repository's
+domain-specific screenshot and broken-startup acceptance cases after installing
+the released wheel. Those cases remain owned by the consumer project.

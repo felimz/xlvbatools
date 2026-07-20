@@ -8,7 +8,6 @@ import sys
 import pytest
 
 
-@pytest.mark.integration
 @pytest.mark.distribution
 def test_built_wheel_exposes_public_wrapper_api(tmp_path):
     from xlvbatools import __version__

@@ -1,40 +1,72 @@
-# Byte-compiled / optimized / DLL files
+# Python bytecode and interpreter artifacts
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyd
 
 # Virtual environments
 .venv/
 venv/
+env/
 ENV/
+.direnv/
 
-# Distribution / packaging
+# Distribution and packaging
 *.egg-info/
+.eggs/
+pip-wheel-metadata/
 dist/
 build/
+wheelhouse/
+*.whl
+*.tar.gz
 
-# IDE
+# Test, coverage, lint, and type-checker state
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+test-results/
+junit*.xml
+pytestdebug.log
+.dmypy.json
+dmypy.json
+
+# Editors and local agent state
 .vscode/
 .idea/
 .codex/
 *.swp
 *.swo
+*~
 
-# OS
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Operating-system and crash artifacts
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 .DS_Store
+*.dmp
+*.stackdump
 
 # Logs
 logs/
 *.log
-
-# Test artifacts
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-.coverage.*
 
 # Workbook backups and snapshots (user-generated, not tracked)
 backups/
@@ -51,12 +83,19 @@ dump.json
 dump.md
 
 # Excel workbooks (ignored by default to prevent repository pollution)
+~$*.xls*
 *.xlsm
 *.xlsx
 *.xls
 *.xlsb
 sample_workbooks/
 
-# Allow tracking tiny standard test fixtures explicitly if needed
+# Allow intentionally reviewed, small binary fixtures only under tests/fixtures.
 !tests/fixtures/*.xlsm
 !tests/fixtures/*.xlsx
+!tests/fixtures/*.xls
+!tests/fixtures/*.xlsb
+!tests/fixtures/**/*.xlsm
+!tests/fixtures/**/*.xlsx
+!tests/fixtures/**/*.xls
+!tests/fixtures/**/*.xlsb

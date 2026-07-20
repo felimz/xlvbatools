@@ -3,7 +3,8 @@ Snapshot Manager
 =================
 Timestamped checkpoint/rollback system for workbook and VBA source state.
 
-Every snapshot is identified by its ISO-8601 compact timestamp (YYYYMMDDTHHMMSS).
+Every snapshot is identified by an ISO-8601 compact timestamp. Rapid snapshots
+created in the same second receive a deterministic numeric suffix.
 Supports dual-layer snapshots: git commits for VBA source + binary .xlsm copies.
 
 Usage:
@@ -140,13 +141,15 @@ class _SnapshotStore:
 
         Returns the snapshot ID (timestamp string).
         """
-        snapshot_id = datetime.datetime.now().strftime(TS_FORMAT)
+        now = datetime.datetime.now()
+        base_snapshot_id = now.strftime(TS_FORMAT)
+        snapshot_id = base_snapshot_id
         log = self._load_log()
         snapshot_ids = {e["snapshot_id"] for e in log}
+        sequence = 1
         while snapshot_id in snapshot_ids:
-            import time
-            time.sleep(0.2)
-            snapshot_id = datetime.datetime.now().strftime(TS_FORMAT)
+            snapshot_id = f"{base_snapshot_id}-{sequence:03d}"
+            sequence += 1
 
         subfolder = "milestones" if milestone else "rolling"
         dest_dir = os.path.join(self.snapshots_dir, subfolder)
@@ -176,7 +179,7 @@ class _SnapshotStore:
         # Build entry
         entry = {
             "snapshot_id": snapshot_id,
-            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "timestamp": now.isoformat(timespec="seconds"),
             "description": description,
             "workbook_file": wb_filename,
             "workbook_hash": self._hash_file(self.workbook_path),

@@ -2,6 +2,12 @@ name: Excel acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      run_stress:
+        description: Run the 50-operation and 25-workflow lifecycle stress tier
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,5 +23,6 @@ jobs:
           cache: pip
       - run: python -m venv .venv
       - run: .venv\Scripts\python.exe -m pip install -e ".[dev]"
-      - run: .venv\Scripts\python.exe -m pytest tests/test_project.py -m "com or e2e" -v
-      - run: .venv\Scripts\python.exe -m pytest tests/test_sequential_com.py -q
+      - run: .venv\Scripts\python.exe scripts/test.py excel
+      - if: ${{ inputs.run_stress }}
+        run: .venv\Scripts\python.exe scripts/test.py stress

@@ -183,3 +183,30 @@ def test_vba_agent_rule_explicitly_forbids_global_excel_termination():
     assert "Only an operation-owned PID" in (
         ROOT / ".agents/rules/python-rules.md"
     ).read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_testing_contract_is_tiered_and_consumer_independent():
+    guide = (ROOT / "docs/testing.md").read_text(encoding="utf-8")
+    for marker in ("unit", "integration", "excel", "distribution", "external"):
+        assert f"`{marker}`" in guide
+    assert "scripts/test.py excel-smoke" in guide
+    assert "scripts/test.py stress" in guide
+    assert "--external-workbook" in guide
+    assert "never scans" in guide
+
+    assert not (ROOT / "tests/test_integration_samples.py").exists()
+    external_source = (ROOT / "tests/test_external_workbook.py").read_text(
+        encoding="utf-8"
+    )
+    request_source = external_source.split("def _requested_workbooks", 1)[1].split(
+        "\ndef ", 1
+    )[0]
+    for discovery_api in (".glob(", ".rglob(", "os.walk("):
+        assert discovery_api not in request_source
+    for consumer_reference in (
+        "sample_" + "workbooks",
+        "Antigravity" + "Projects",
+        "wa_" + "ocean",
+    ):
+        assert consumer_reference not in external_source

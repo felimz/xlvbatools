@@ -207,7 +207,7 @@ Version 1.0.0 establishes the intentional public API. See
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
-.venv\Scripts\ruff.exe check src tests
+.venv\Scripts\ruff.exe check src tests scripts
 .venv\Scripts\mypy.exe --follow-imports=skip `
   src/xlvbatools/project.py `
   src/xlvbatools/execution.py `
@@ -221,12 +221,15 @@ python -m venv .venv
   src/xlvbatools/workbook/modifier.py `
   src/xlvbatools/snapshots.py `
   src/xlvbatools/cli
-.venv\Scripts\python.exe -m pytest -m unit
 .venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe scripts/test.py excel-smoke
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[release validation](docs/release-validation.md).
+[testing](docs/testing.md), then use
+[release validation](docs/release-validation.md) for the full gate. Plain
+`pytest` is the fast offline suite; live Excel, stress, distribution, and
+external workbook acceptance are explicit opt-ins.
 
 Documentation:
 
@@ -241,6 +244,7 @@ Documentation:
 - [Dialog watchdog architecture](docs/watchdog-architecture.md)
 - [Versioning and releases](docs/versioning.md)
 - [Machine-first CLI output](docs/cli-output.md)
+- [Testing](docs/testing.md)
 - [Release validation](docs/release-validation.md)
 
 ## License

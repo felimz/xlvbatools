@@ -46,13 +46,32 @@ class TestSnapshotStore:
         assert info["snapshot_id"] == sid
 
     def test_info_latest(self, tmp_path):
-        import time
         mgr = self._make_manager(tmp_path)
-        mgr.create(description="first")
-        time.sleep(1.1)  # Ensure different timestamp
+        sid1 = mgr.create(description="first")
         sid2 = mgr.create(description="second")
         info = mgr.info("latest")
         assert info["snapshot_id"] == sid2
+        assert sid2 != sid1
+
+    def test_same_second_ids_are_unique_without_waiting(
+        self, tmp_path, monkeypatch,
+    ):
+        import datetime
+        from xlvbatools.snapshot import manager as manager_module
+
+        fixed = datetime.datetime(2026, 7, 19, 12, 30, 45)
+
+        class FixedDateTime(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(manager_module.datetime, "datetime", FixedDateTime)
+        mgr = self._make_manager(tmp_path)
+
+        assert mgr.create() == "20260719T123045"
+        assert mgr.create() == "20260719T123045-001"
+        assert mgr.create() == "20260719T123045-002"
 
     def test_restore(self, tmp_path):
         mgr = self._make_manager(tmp_path)
@@ -71,38 +90,31 @@ class TestSnapshotStore:
         assert content == b"PK\x03\x04fake_workbook_content"
 
     def test_auto_prune(self, tmp_path):
-        import time
         mgr = self._make_manager(tmp_path)  # rolling_limit=3
 
         for i in range(5):
             mgr.create(description=f"snapshot {i}")
-            time.sleep(1.1)
 
         snapshots = mgr.list()
         non_milestones = [s for s in snapshots if not s.get("milestone")]
         assert len(non_milestones) <= 3
 
     def test_milestone_not_pruned(self, tmp_path):
-        import time
         mgr = self._make_manager(tmp_path)  # rolling_limit=3
 
         mgr.create(description="milestone", milestone=True)
-        time.sleep(1.1)
 
         for i in range(5):
             mgr.create(description=f"rolling {i}")
-            time.sleep(1.1)
 
         snapshots = mgr.list()
         milestones = [s for s in snapshots if s.get("milestone")]
         assert len(milestones) == 1
 
     def test_prune_manual(self, tmp_path):
-        import time
         mgr = self._make_manager(tmp_path)
         for i in range(5):
             mgr.create(description=f"snap {i}")
-            time.sleep(1.1)
 
         pruned = mgr.prune(keep=2)
         assert pruned > 0

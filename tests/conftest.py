@@ -1,329 +1,181 @@
-"""
-Shared test fixtures and markers for xlvbatools test suite.
-"""
+"""Suite taxonomy plus offline and disposable-workbook fixtures."""
 
-import os
+from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
+
 import pytest
-import gc
-import time
-
-# ── Marker registration ──
-
-def pytest_configure(config):
-    config.addinivalue_line("markers", "unit: Pure Python unit tests, no COM required")
-    config.addinivalue_line("markers", "integration: Requires live Excel or multi-component integration")
-    config.addinivalue_line("markers", "com: Requires Excel COM automation (Windows only)")
-    config.addinivalue_line("markers", "e2e: Full end-to-end pipeline tests (slowest)")
 
 
-# ── Path fixtures ──
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+WORKBOOK_FACTORY = Path(__file__).resolve().parent / "_workbook_factory.py"
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIXTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+# Every collected test belongs to exactly one execution tier. Secondary
+# markers describe scheduling only. This collection-time invariant prevents a
+# live Excel test from silently entering the default fast suite.
+PRIMARY_TEST_TIERS = frozenset({
+    "unit", "integration", "excel", "distribution", "external",
+})
+LIVE_EXCEL_FIXTURES = frozenset({
+    "minimal_workbook",
+    "runtime_error_workbook",
+    "compile_error_workbook",
+    "duplicate_declaration_workbook",
+    "startup_event_workbook",
+})
 
 
-def _require_owned_excel_exit(excel_pid: int, *, grace_period: float = 20.0) -> None:
-    """Do not let a fixture-owned Excel process leak into the next test."""
-    from xlvbatools.core.process import is_process_running, kill_process_by_pid
+def pytest_addoption(parser):
+    parser.addoption(
+        "--external-workbook",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "explicit downstream workbook for the opt-in external acceptance "
+            "suite; may be repeated"
+        ),
+    )
 
-    deadline = time.time() + grace_period
-    while time.time() < deadline and is_process_running(excel_pid):
-        time.sleep(0.1)
-    if is_process_running(excel_pid):
-        kill_process_by_pid(excel_pid)
-        deadline = time.time() + 10.0
-        while time.time() < deadline and is_process_running(excel_pid):
-            time.sleep(0.1)
-    if is_process_running(excel_pid):
-        pytest.fail(f"Fixture-owned Excel PID {excel_pid} did not exit")
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items):
+    errors = []
+    for item in items:
+        tiers = sorted(
+            marker for marker in PRIMARY_TEST_TIERS
+            if item.get_closest_marker(marker) is not None
+        )
+        if len(tiers) != 1:
+            errors.append(
+                f"{item.nodeid}: expected exactly one primary test tier, got {tiers}"
+            )
+            continue
+        tier = tiers[0]
+        if item.get_closest_marker("stress") is not None and tier != "excel":
+            errors.append(f"{item.nodeid}: stress tests must belong to the excel tier")
+        if LIVE_EXCEL_FIXTURES.intersection(item.fixturenames) and tier != "excel":
+            errors.append(
+                f"{item.nodeid}: live Excel fixture is not isolated in the excel tier"
+            )
+    if errors:
+        raise pytest.UsageError("Invalid test taxonomy:\n" + "\n".join(errors))
+
+
+def _build_workbook(kind: str, output: Path, *, marker: Path | None = None) -> str:
+    """Build a fixture in a child process so pytest never owns factory COM."""
+    if sys.platform != "win32":
+        pytest.skip("Live Excel tests require Windows")
+
+    command = [
+        sys.executable,
+        "-X",
+        "faulthandler",
+        str(WORKBOOK_FACTORY),
+        "--kind",
+        kind,
+        "--output",
+        str(output),
+    ]
+    if marker is not None:
+        command.extend(("--marker", str(marker)))
+
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as log:
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"Timed out while creating {kind} Excel fixture")
+        log.seek(0)
+        output_text = log.read()
+
+    if completed.returncode != 0 or not output.is_file():
+        pytest.fail(
+            f"Could not create {kind} Excel fixture (exit "
+            f"{completed.returncode}):\n{output_text}"
+        )
+    return str(output)
 
 
 @pytest.fixture
 def fixtures_dir():
-    """Path to the test fixtures directory."""
-    return FIXTURES_DIR
+    return str(FIXTURES_DIR)
+
+
+@pytest.fixture(scope="session")
+def _minimal_workbook_template(tmp_path_factory):
+    path = tmp_path_factory.mktemp("excel_templates") / "minimal.xlsm"
+    return _build_workbook("minimal", path)
 
 
 @pytest.fixture
-def minimal_workbook(tmp_path):
-    """Path to a dynamically created minimal macro-enabled workbook."""
-    if sys.platform != "win32":
-        pytest.skip("COM tests require Windows")
-
-    import win32com.client
-    excel = None
-    wb = None
-    excel_pid = None
-    try:
-        excel = win32com.client.DispatchEx("Excel.Application")
-        import win32process
-        _, excel_pid = win32process.GetWindowThreadProcessId(excel.Hwnd)
-        excel.Visible = False
-        excel.DisplayAlerts = False
-        wb = excel.Workbooks.Add()
-        
-        path = os.path.join(tmp_path, "minimal.xlsm")
-        # FileFormat=52 is xlOpenXMLWorkbookMacroEnabled
-        wb.SaveAs(path, FileFormat=52)
-        wb.Close(False)
-        wb = None
-        return path
-    except Exception as e:
-        pytest.skip(f"Could not dynamically create minimal.xlsm: {e}")
-    finally:
-        if wb is not None:
-            try:
-                wb.Close(False)
-            except Exception:
-                pass
-        if excel is not None:
-            try:
-                excel.Quit()
-            except Exception:
-                pass
-        wb = None
-        excel = None
-        gc.collect()
-        if excel_pid is not None:
-            # Excel commonly needs more than three seconds to finish COM/VBE
-            # shutdown. Killing it mid-shutdown can destabilize the next
-            # DispatchEx call in the same interpreter.
-            _require_owned_excel_exit(excel_pid)
-
-
-@pytest.fixture
-def runtime_error_workbook(tmp_path):
-    """Macro workbook that raises a deterministic multiline VBA error."""
-    if sys.platform != "win32":
-        pytest.skip("COM tests require Windows")
-    import win32com.client
-
-    excel = None
-    wb = None
-    module = None
-    sheet = None
-    formula_cell = None
-    interior = None
-    excel_pid = None
-    try:
-        excel = win32com.client.DispatchEx("Excel.Application")
-        import win32process
-        _, excel_pid = win32process.GetWindowThreadProcessId(excel.Hwnd)
-        excel.Visible = False
-        excel.DisplayAlerts = False
-        wb = excel.Workbooks.Add()
-        module = wb.VBProject.VBComponents.Add(1)
-        module.Name = "modReliabilityTest"
-        module.CodeModule.AddFromString(
-            'Option Explicit\r\n'
-            'Public Sub CompleteNormally()\r\n'
-            '    ThisWorkbook.Worksheets(1).Range("A1").Value = 42\r\n'
-            'End Sub\r\n'
-            'Public Sub WorkflowRetrieve()\r\n'
-            '    ThisWorkbook.Worksheets(1).Range("A1").Value = 10\r\n'
-            'End Sub\r\n'
-            'Public Sub WorkflowCalculate()\r\n'
-            '    With ThisWorkbook.Worksheets(1)\r\n'
-            '        .Range("A3").Value = .Range("A1").Value + .Range("A2").Value\r\n'
-            '    End With\r\n'
-            'End Sub\r\n'
-            'Public Sub WorkflowFail()\r\n'
-            '    ThisWorkbook.Worksheets(1).Range("A4").Value = 99\r\n'
-            '    Err.Raise vbObjectError + 102, "WorkflowFail", _\r\n'
-            '        "Workflow failure."\r\n'
-            'End Sub\r\n'
-            'Public Sub WorkflowMustNotRun()\r\n'
-            '    ThisWorkbook.Worksheets(1).Range("A5").Value = 1\r\n'
-            'End Sub\r\n'
-            'Public Sub LeaveScreenUpdatingOff()\r\n'
-            '    With ThisWorkbook.Worksheets(1)\r\n'
-            '        .Range("A1").Value = "Visible screenshot content"\r\n'
-            '        .Range("A2").Value = 123.45\r\n'
-            '    End With\r\n'
-            '    Application.ScreenUpdating = False\r\n'
-            'End Sub\r\n'
-            'Public Sub VerifyScreenUpdatingStillOff()\r\n'
-            '    If Application.ScreenUpdating Then\r\n'
-            '        Err.Raise vbObjectError + 103, "VerifyScreenUpdatingStillOff", _\r\n'
-            '            "Screenshot capture did not restore ScreenUpdating."\r\n'
-            '    End If\r\n'
-            'End Sub\r\n'
-            'Public Sub VerifyNamedRange()\r\n'
-            '    If ThisWorkbook.Names("TestInput").RefersToRange.Value <> 42 Then\r\n'
-            '        Err.Raise vbObjectError + 101, "VerifyNamedRange", _\r\n'
-            '            "TestInput was not set to 42."\r\n'
-            '    End If\r\n'
-            'End Sub\r\n'
-            'Public Sub ShowMessage()\r\n'
-            '    MsgBox "Watchdog test message", vbInformation\r\n'
-            'End Sub\r\n'
-            'Public Sub ShowFilePicker()\r\n'
-            '    Dim selected As Variant\r\n'
-            '    selected = Application.GetOpenFilename()\r\n'
-            'End Sub\r\n'
-            'Public Sub LoopForever()\r\n'
-            '    Do\r\n'
-            '    Loop\r\n'
-            'End Sub\r\n'
-            'Public Sub RaiseMultilineError()\r\n'
-            '    Err.Raise vbObjectError + 100, "TestMacro", _\r\n'
-            '        "Diagnostic line one." & vbCrLf & "Diagnostic line two."\r\n'
-            'End Sub\r\n'
-        )
-        sheet = wb.Worksheets(1)
-        sheet.Range("C1").Value = 0
-        wb.Names.Add(Name="TestInput", RefersTo=f"={sheet.Name}!$C$1")
-        formula_cell = sheet.Range("B1")
-        formula_cell.Formula = "=21*2"
-        formula_cell.NumberFormat = "0.00"
-        interior = formula_cell.Interior
-        interior.Color = 65535
-        path = os.path.join(tmp_path, "runtime_error.xlsm")
-        wb.SaveAs(path, FileFormat=52)
-        interior = None
-        formula_cell = None
-        sheet = None
-        module = None
-        gc.collect()
-        wb.Close(False)
-        wb = None
-        return path
-    except Exception as error:
-        pytest.skip(f"Could not create VBA integration workbook: {error}")
-    finally:
-        if wb is not None:
-            try:
-                wb.Close(False)
-            except Exception:
-                pass
-        if excel is not None:
-            try:
-                excel.Quit()
-            except Exception:
-                pass
-        module = None
-        interior = None
-        formula_cell = None
-        sheet = None
-        wb = None
-        excel = None
-        gc.collect()
-        if excel_pid is not None:
-            _require_owned_excel_exit(excel_pid)
-
-
-@pytest.fixture
-def compile_error_workbook(runtime_error_workbook, tmp_path):
-    """Workbook with a deterministic Option Explicit compile failure."""
-    import shutil
-    from xlvbatools.core.session import ExcelSession
-
-    path = tmp_path / "compile_error.xlsm"
-    shutil.copy2(runtime_error_workbook, path)
-    with ExcelSession(str(path), save_on_exit=True, kill_on_enter=False) as session:
-        component = session.vb_project.VBComponents.Add(1)
-        component.Name = "modCompileFailure"
-        component.CodeModule.AddFromString(
-            "Option Explicit\r\n"
-            "Public Sub CompileFailure()\r\n"
-            "    undeclaredCompileValue = 1\r\n"
-            "End Sub\r\n"
-        )
-        del component
+def minimal_workbook(_minimal_workbook_template, tmp_path):
+    path = tmp_path / "minimal.xlsm"
+    shutil.copy2(_minimal_workbook_template, path)
     return str(path)
 
 
-@pytest.fixture
-def duplicate_declaration_workbook(runtime_error_workbook, tmp_path):
-    """Workbook with a parameter/local-name compile failure."""
-    import shutil
-    from xlvbatools.core.session import ExcelSession
+@pytest.fixture(scope="session")
+def _runtime_error_workbook_template(tmp_path_factory):
+    path = tmp_path_factory.mktemp("excel_runtime_templates") / "runtime_error.xlsm"
+    return _build_workbook("runtime", path)
 
+
+@pytest.fixture
+def runtime_error_workbook(_runtime_error_workbook_template, tmp_path):
+    path = tmp_path / "runtime_error.xlsm"
+    shutil.copy2(_runtime_error_workbook_template, path)
+    return str(path)
+
+
+@pytest.fixture(scope="session")
+def _compile_error_workbook_template(tmp_path_factory):
+    path = tmp_path_factory.mktemp("excel_compile_templates") / "compile_error.xlsm"
+    return _build_workbook("compile_error", path)
+
+
+@pytest.fixture
+def compile_error_workbook(_compile_error_workbook_template, tmp_path):
+    path = tmp_path / "compile_error.xlsm"
+    shutil.copy2(_compile_error_workbook_template, path)
+    return str(path)
+
+
+@pytest.fixture(scope="session")
+def _duplicate_declaration_workbook_template(tmp_path_factory):
+    path = (
+        tmp_path_factory.mktemp("excel_duplicate_templates")
+        / "duplicate_declaration.xlsm"
+    )
+    return _build_workbook("duplicate_declaration", path)
+
+
+@pytest.fixture
+def duplicate_declaration_workbook(
+    _duplicate_declaration_workbook_template, tmp_path,
+):
     path = tmp_path / "duplicate_declaration.xlsm"
-    shutil.copy2(runtime_error_workbook, path)
-    with ExcelSession(str(path), save_on_exit=True, kill_on_enter=False) as session:
-        component = session.vb_project.VBComponents.Add(1)
-        component.Name = "modDuplicateDeclaration"
-        component.CodeModule.AddFromString(
-            "Option Explicit\r\n"
-            "Public Sub DuplicateDeclaration(ByVal FileCount As Long)\r\n"
-            "    Dim FileCount As Long\r\n"
-            "End Sub\r\n"
-        )
-        del component
+    shutil.copy2(_duplicate_declaration_workbook_template, path)
     return str(path)
 
 
 @pytest.fixture
 def startup_event_workbook(tmp_path):
-    """Workbook whose open event leaves an external sentinel if it executes."""
-    if sys.platform != "win32":
-        pytest.skip("COM tests require Windows")
-    import win32com.client
-    import win32process
-
     path = tmp_path / "startup_event.xlsm"
     marker = tmp_path / "workbook_open_ran.txt"
-    excel = None
-    wb = None
-    workbook_module = None
-    standard_module = None
-    excel_pid = None
-    try:
-        excel = win32com.client.DispatchEx("Excel.Application")
-        _, excel_pid = win32process.GetWindowThreadProcessId(excel.Hwnd)
-        excel.Visible = False
-        excel.DisplayAlerts = False
-        wb = excel.Workbooks.Add()
-        workbook_module = wb.VBProject.VBComponents.Item("ThisWorkbook")
-        marker_literal = str(marker).replace('"', '""')
-        workbook_module.CodeModule.AddFromString(
-            "Option Explicit\r\n"
-            "Private Sub Workbook_Open()\r\n"
-            "    Dim channel As Integer\r\n"
-            "    channel = FreeFile\r\n"
-            f'    Open "{marker_literal}" For Output As #channel\r\n'
-            '    Print #channel, "Workbook_Open executed"\r\n'
-            "    Close #channel\r\n"
-            "End Sub\r\n"
-        )
-        standard_module = wb.VBProject.VBComponents.Add(1)
-        standard_module.Name = "modStartupSafety"
-        standard_module.CodeModule.AddFromString(
-            "Option Explicit\r\n"
-            "Public Sub SafeProcedure()\r\n"
-            "End Sub\r\n"
-        )
-        wb.SaveAs(str(path), FileFormat=52)
-        wb.Close(False)
-        wb = None
-        return str(path), marker
-    except Exception as error:
-        pytest.skip(f"Could not create startup-event workbook: {error}")
-    finally:
-        standard_module = None
-        workbook_module = None
-        if wb is not None:
-            try:
-                wb.Close(False)
-            except Exception:
-                pass
-        if excel is not None:
-            try:
-                excel.Quit()
-            except Exception:
-                pass
-        wb = None
-        excel = None
-        gc.collect()
-        if excel_pid is not None:
-            _require_owned_excel_exit(excel_pid)
+    return _build_workbook("startup_event", path, marker=marker), marker
 
 
 @pytest.fixture
 def temp_vba_source(tmp_path):
-    """Create a temporary vba_source directory structure for testing."""
     vba_dir = tmp_path / "vba_source"
     (vba_dir / "modules").mkdir(parents=True)
     (vba_dir / "classes").mkdir(parents=True)
@@ -333,7 +185,6 @@ def temp_vba_source(tmp_path):
 
 @pytest.fixture
 def sample_bas_file(temp_vba_source):
-    """Create a sample .bas file for testing."""
     content = '''Attribute VB_Name = "modTest"
 Option Explicit
 
@@ -354,7 +205,6 @@ End Function
 
 @pytest.fixture
 def sample_cls_file(temp_vba_source):
-    """Create a sample .cls file for testing."""
     content = '''VERSION 1.0 CLASS
 BEGIN
   MultiUse = -1  'True
