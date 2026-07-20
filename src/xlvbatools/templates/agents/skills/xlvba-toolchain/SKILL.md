@@ -128,6 +128,8 @@ Every operation returns an `OperationResult`. Check:
 - `diagnostics.dialog_events` for captured Excel/VBE dialogs;
 - `diagnostics.cleanup` for the owned Excel lifecycle;
 - `artifacts` for screenshots and other durable outputs;
+- `InspectionOutput.screenshot_diagnostics` for native picture-format,
+  clipboard, viewport, off-screen-window, attempt, and pixel evidence;
 - `request_id`, `elapsed_seconds`, and `attempt_count` for tracing.
 - `diagnostics.attempts` when `attempt_count` is `2`; retain the phase,
   worker-exit evidence, and retry reason instead of adding another retry.
@@ -164,6 +166,7 @@ duplicate that policy.
 | Related steps need one workbook open | Use typed `Project.workflow()` steps or `xlvba workflow --file ...` |
 | Macro timed out or Excel failed | Inspect cleanup diagnostics; never kill Excel globally |
 | Screenshot reports `render_content_mismatch` | Retain the attempt metrics and workbook data; do not accept the PNG as visual evidence |
+| Screenshot reports `screenshot_capture_failed` | Retain structured attempt evidence; do not add a retry after `session_start` |
 | Need rollback | `xlvba snapshot restore latest` |
 
 ## Safety rules

@@ -54,6 +54,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _owned_window_thread(hwnd: int, pid: int) -> int | None:
+    """Return the UI thread only when the HWND still belongs to the exact PID."""
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND, ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    owner = wintypes.DWORD()
+    thread_id = int(user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner)))
+    if not thread_id:
+        return None
+    if int(owner.value) != int(pid):
+        return None
+    return thread_id
+
+
+def _post_owned_window_close(hwnd: int, pid: int) -> int | None:
+    """Post WM_CLOSE and return its verified owned UI thread ID."""
+    from ctypes import wintypes
+
+    thread_id = _owned_window_thread(hwnd, pid)
+    if thread_id is None:
+        return None
+    user32 = ctypes.windll.user32
+    user32.PostMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+    ]
+    user32.PostMessageW.restype = wintypes.BOOL
+    if not user32.PostMessageW(hwnd, 0x0010, 0, 0):  # WM_CLOSE
+        return None
+    return thread_id
+
+
+def _post_owned_thread_quit(thread_id: int) -> bool:
+    """Request message-loop exit for the previously verified owned UI thread."""
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.PostThreadMessageW.argtypes = [
+        wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+    ]
+    user32.PostThreadMessageW.restype = wintypes.BOOL
+    return bool(user32.PostThreadMessageW(thread_id, 0x0012, 0, 0))  # WM_QUIT
+
+
 class ExcelSession:
     workbook_path: str
     visible: bool
@@ -220,7 +267,9 @@ class ExcelSession:
                     logger.warning("Could not close the stale target workbook; continuing without global termination")
 
         logger.info(f"Opening Excel session: {self.workbook_path}")
-        # Use DispatchEx to ensure a new, isolated Excel instance is spawned
+        # Use DispatchEx to ensure a new, isolated Excel instance is spawned.
+        # Startup deliberately leaves the user's registry and add-in
+        # configuration untouched.
         try:
             self.excel = win32com.client.DispatchEx("Excel.Application")
         except Exception:
@@ -291,6 +340,22 @@ class ExcelSession:
 
         close_error = None
         save_error = None
+        shutdown_workbook = None
+        shutdown_hwnd = None
+        shutdown_thread_id = None
+        sentinel_error = None
+        # Keep one blank workbook open while releasing the target and top-level
+        # pywin32 proxies. Otherwise closing the last workbook can terminate a
+        # clean automation instance before those proxies finalize.
+        if self.excel is not None:
+            try:
+                self.excel.EnableEvents = False
+                self.excel.DisplayAlerts = False
+                shutdown_workbook = self.excel.Workbooks.Add()
+                shutdown_workbook.Saved = True
+            except Exception as error:
+                sentinel_error = error
+                shutdown_workbook = None
         try:
             if self.wb is not None:
                 if self.save_on_exit and exc_type is None:
@@ -311,17 +376,58 @@ class ExcelSession:
             gc.collect()
 
         quit_requested = False
-        try:
-            if self.excel is not None:
-                quit_requested = True
+        shutdown_method = None
+        if shutdown_workbook is not None and self.excel is not None:
+            try:
+                shutdown_workbook.Saved = True
+                shutdown_hwnd = int(self.excel.Hwnd)
+                if self.excel_pid is not None:
+                    shutdown_thread_id = _owned_window_thread(
+                        shutdown_hwnd, self.excel_pid,
+                    )
+            except Exception as error:
+                sentinel_error = error
+            if shutdown_thread_id is not None:
+                # Release the Application proxy while the sentinel workbook
+                # still holds Excel alive. Then release the sentinel proxy and
+                # request normal window shutdown. No proxy is finalized after
+                # the COM server disconnects.
+                self.excel = None
+                gc.collect()
+                gc.collect()
+                shutdown_workbook = None
+                gc.collect()
+                gc.collect()
+                if self._com_initialized:
+                    self._uninitialize_com()
+                shutdown_thread_id = _post_owned_window_close(
+                    shutdown_hwnd, self.excel_pid,
+                )
+                quit_requested = shutdown_thread_id is not None
+                if quit_requested:
+                    shutdown_method = "wm_close_after_ordered_com_release"
+            else:
+                shutdown_workbook = None
+                gc.collect()
+        elif self.excel is not None:
+            try:
                 self.excel.Quit()
-                pid_suffix = f" (PID: {self.excel_pid})" if self.excel_pid else ""
-                logger.info(f"Excel quit{pid_suffix}")
-        except Exception as e:
-            logger.warning(f"Error quitting Excel: {e}")
-        finally:
-            self.excel = None
-            gc.collect()
+                quit_requested = True
+                shutdown_method = "application_quit_without_sentinel"
+            except Exception as e:
+                logger.warning(f"Error quitting Excel: {e}")
+            finally:
+                self.excel = None
+                gc.collect()
+
+        if sentinel_error is not None:
+            details = self.cleanup_result.setdefault("details", {})
+            details["shutdown_sentinel_error"] = (
+                f"{type(sentinel_error).__name__}: {sentinel_error}"
+            )
+        elif shutdown_method is not None:
+            details = self.cleanup_result.setdefault("details", {})
+            details["shutdown_method"] = shutdown_method
 
         self.cleanup_result.update({"pid": self.excel_pid, "quit_requested": quit_requested})
 
@@ -343,11 +449,28 @@ class ExcelSession:
 
         if self.excel_pid is not None:
             deadline = time.time() + self.exit_grace_period
+            thread_quit_at = time.time() + min(
+                5.0, max(1.0, self.exit_grace_period / 2.0),
+            )
+            thread_quit_attempted = False
+            thread_quit_requested = False
             while time.time() < deadline:
                 if not is_process_running(self.excel_pid):
                     self.cleanup_result["exited_gracefully"] = True
                     break
+                if (
+                    shutdown_thread_id is not None
+                    and not thread_quit_attempted
+                    and time.time() >= thread_quit_at
+                ):
+                    thread_quit_attempted = True
+                    thread_quit_requested = _post_owned_thread_quit(
+                        shutdown_thread_id,
+                    )
                 time.sleep(0.1)
+            if thread_quit_attempted:
+                details = self.cleanup_result.setdefault("details", {})
+                details["shutdown_thread_quit_requested"] = thread_quit_requested
             if is_process_running(self.excel_pid) and self.terminate_owned_process:
                 logger.warning(f"Excel PID {self.excel_pid} did not exit; terminating the owned process")
                 self.cleanup_result["force_terminated"] = kill_process_by_pid(self.excel_pid)

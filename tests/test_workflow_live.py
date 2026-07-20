@@ -102,9 +102,13 @@ def test_screenshot_repaints_after_macro_and_restores_screen_updating(
     )
 
     workflow = result.require_success()
-    screenshot = Path(workflow.step("inspect").data.screenshots["Sheet1"])
+    inspection = workflow.step("inspect").data
+    screenshot = Path(inspection.screenshots["Sheet1"])
     assert screenshot.is_file()
     assert _native_image_metrics(str(screenshot))["meaningful_pixel_count"] > 64
+    capture = inspection.screenshot_diagnostics["Sheet1"]
+    assert capture["copied_format"] in {"xlPicture", "xlBitmap"}
+    assert capture["attempts"][-1]["window"]["target_range"] == "$A$1:$B$2"
     assert workflow.step("verify-state").status == "succeeded"
     assert result.require_clean_shutdown().still_running is False
 
@@ -256,9 +260,13 @@ def test_twenty_five_live_workflows_leave_no_process_or_finalizer_diagnostics(
                         include_screenshots=False,
                     ),
                 ],
-                timeout=90,
+                # This test follows the 50-run and compile stress cases in the
+                # complete gate. It validates lifecycle behavior, not a
+                # 90-second desktop-startup latency SLA under accumulated load.
+                timeout=180,
                 save=False,
             )
+            assert result.success, result.to_dict()
             workflow = result.require_success()
             cleanup = result.require_clean_shutdown()
             assert not is_process_running(cleanup.pid), result.to_dict()

@@ -101,3 +101,16 @@ def test_no_tracked_file_is_now_classified_as_generated():
         if Path(path).suffix.lower() in {".xls", ".xlsb", ".xlsm", ".xlsx"}
         and not path.startswith("tests/fixtures/")
     ] == []
+
+
+def test_runtime_package_has_no_registry_dependency_or_mutation():
+    """Default and optional package paths must not depend on registry access."""
+    forbidden = ("winreg", "LoadBehavior", "SetValueEx", "Set-ItemProperty")
+    matches = []
+    for path in sorted((ROOT / "src" / "xlvbatools").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            if token in source:
+                matches.append(f"{path.relative_to(ROOT)}: {token}")
+
+    assert matches == []

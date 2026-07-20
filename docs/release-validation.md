@@ -217,6 +217,27 @@ The `v1.2.2` patch release completed with:
   49.65 seconds; and
 - zero Excel or xlvbatools worker processes after final validation.
 
+## v1.2.3 release validation record
+
+The `v1.2.3` patch release completed with:
+
+- clean Ruff, CI-scoped mypy, documentation/template parity, and diff checks;
+- 362 passing fast tests in 8.09 seconds with 68.69% coverage;
+- the build-isolated wheel contract passing in a fresh consumer environment in
+  15.06 seconds;
+- all 30 single-pass live Excel acceptance tests passing in 251.65 seconds,
+  with an explicit transcript scan finding no native pywin32, RPC, or COM
+  finalizer diagnostics;
+- all five stress tests passing in 537.10 seconds, covering six sequential raw
+  COM cases, five rich COM/macro sessions, 50 `Project.run()` operations, six
+  alternating valid/invalid compile operations, and 25 one-session workflows;
+- a package-wide architecture test proving runtime source has no registry
+  dependency or mutation path;
+- exact-PID liveness and termination using bounded Win32 process handles rather
+  than repeated `tasklist` or `taskkill` subprocesses; and
+- zero Excel or xlvbatools worker processes after final live and stress
+  validation.
+
 This is upstream release evidence only. Re-run each consumer repository's
 domain-specific screenshot and broken-startup acceptance cases after installing
 the released wheel. Those cases remain owned by the consumer project.

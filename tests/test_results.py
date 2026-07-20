@@ -76,3 +76,19 @@ def test_forced_cleanup_is_not_reported_as_clean():
 
     with pytest.raises(HeadlessCleanupError, match="did not exit cleanly"):
         result.require_clean_shutdown()
+
+
+@pytest.mark.unit
+def test_cleanup_report_merges_structured_and_additive_details():
+    from xlvbatools.results import CleanupReport
+
+    report = CleanupReport.from_mapping({
+        "pid": 42,
+        "details": {"disconnected_com_addins": ["Example.Addin"]},
+        "future_field": "retained",
+    })
+
+    assert report.details == {
+        "disconnected_com_addins": ["Example.Addin"],
+        "future_field": "retained",
+    }

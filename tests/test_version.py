@@ -8,10 +8,11 @@ import pytest
 
 @pytest.mark.unit
 def test_version_info_reads_git_commit_from_direct_url():
+    from xlvbatools._version import __version__
     from xlvbatools.version import get_version_info
 
     class Distribution:
-        version = "1.2.3"
+        version = "9.9.9"
 
         @staticmethod
         def read_text(name):
@@ -28,8 +29,8 @@ def test_version_info_reads_git_commit_from_direct_url():
     with patch("xlvbatools.version.metadata.distribution", return_value=Distribution()):
         info = get_version_info()
 
-    assert info.version == "1.2.2"
-    assert info.distribution_version == "1.2.3"
+    assert info.version == __version__
+    assert info.distribution_version == "9.9.9"
     assert info.version_mismatch is True
     assert info.source_url == "https://github.com/example/xlvbatools.git"
     assert info.commit_id == "abc123"

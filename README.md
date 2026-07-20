@@ -138,6 +138,10 @@ Hidden and VeryHidden worksheets are excluded from inspection by default. Use
 `--include-hidden-sheets` only when hidden sheets are intentionally required.
 Partial rich-text font runs are opt-in through `--rich-text` or
 `include_rich_text=True`; collection is bounded per cell.
+Headless screenshots scroll the requested visible range into Excel's active
+viewport and use bounded vector-then-bitmap capture. Python callers can inspect
+`InspectionOutput.screenshot_diagnostics`; CLI JSON includes the same native
+format, clipboard, window, attempt, and image-validation evidence.
 
 VBA differencing is token-aware by default: code identifier case and
 insignificant token spacing are equivalent, while literals and comments remain

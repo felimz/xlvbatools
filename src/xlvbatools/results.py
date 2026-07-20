@@ -69,8 +69,12 @@ class CleanupReport:
         known = {
             "pid", "quit_requested", "exited_gracefully", "force_terminated",
             "still_running", "worker_terminated", "workbook_close_error",
-            "workbook_save_error",
+            "workbook_save_error", "details",
         }
+        details = dict(value.get("details") or {})
+        details.update({
+            key: item for key, item in value.items() if key not in known
+        })
         return cls(
             pid=value.get("pid"),
             quit_requested=bool(value.get("quit_requested", False)),
@@ -80,7 +84,7 @@ class CleanupReport:
             worker_terminated=bool(value.get("worker_terminated", False)),
             workbook_close_error=value.get("workbook_close_error"),
             workbook_save_error=value.get("workbook_save_error"),
-            details={key: item for key, item in value.items() if key not in known},
+            details=details,
         )
 
     @property
@@ -225,6 +229,7 @@ class InspectionOutput:
 
     workbook_data: Optional[Mapping[str, Any]]
     screenshots: Mapping[str, str] = field(default_factory=dict)
+    screenshot_diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

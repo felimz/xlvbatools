@@ -10,8 +10,8 @@ import os
 import subprocess
 import time
 import logging
-import csv
-import io
+import ctypes
+from ctypes import wintypes
 from typing import Optional
 
 from xlvbatools._compat import IS_WINDOWS
@@ -121,29 +121,65 @@ def close_excel_gracefully(target_path: Optional[str] = None) -> bool:
 
 
 def is_process_running(pid: int) -> bool:
-    """Check if a process with the given PID is running."""
+    """Check an exact PID through a bounded Win32 process handle."""
     if not IS_WINDOWS:
         return False
-    try:
-        output = subprocess.check_output(
-            ["tasklist", "/fi", f"PID eq {pid}", "/fo", "csv", "/nh"],
-            text=True
-        )
-        return any(
-            len(row) > 1 and row[1].strip() == str(pid)
-            for row in csv.reader(io.StringIO(output))
-        )
-    except Exception:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, wintypes.LPDWORD]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    process_query_limited_information = 0x1000
+    handle = kernel32.OpenProcess(
+        process_query_limited_information, False, pid,
+    )
+    if not handle:
+        # Access denied proves that a process currently owns the PID even when
+        # the caller cannot query it. Other failures mean the PID is absent or
+        # cannot be established as live.
+        return ctypes.get_last_error() == 5
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return int(exit_code.value) == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def kill_process_by_pid(pid: int) -> bool:
-    """Forcefully kill a process by PID."""
+    """Terminate one exact PID and wait until its process handle is signaled."""
     if not IS_WINDOWS:
         return False
-    result = subprocess.run(
-        ["taskkill", "/f", "/pid", str(pid)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    process_terminate = 0x0001
+    synchronize = 0x00100000
+    handle = kernel32.OpenProcess(
+        process_terminate | synchronize, False, pid,
     )
-    return result.returncode == 0
+    if not handle:
+        return False
+    try:
+        if not kernel32.TerminateProcess(handle, 1):
+            return False
+        return int(kernel32.WaitForSingleObject(handle, 5000)) == 0
+    finally:
+        kernel32.CloseHandle(handle)

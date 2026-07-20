@@ -125,10 +125,55 @@ def test_renderer_does_not_copy_worksheet_source():
     source = (
         inspect.getsource(dumper.export_screenshots)
         + inspect.getsource(dumper._capture_native_range)
+        + inspect.getsource(dumper._try_copy_range_picture)
     )
     assert "sheet.Copy(" not in source
     assert "export_range.CopyPicture" in source
     assert "excel.Workbooks.Add()" in source
+
+
+@pytest.mark.unit
+def test_copy_picture_falls_back_from_vector_to_bitmap_with_evidence(monkeypatch):
+    from xlvbatools.workbook import dumper
+
+    class Range:
+        def __init__(self):
+            self.formats = []
+
+        def CopyPicture(self, *, Appearance, Format):
+            assert Appearance == 1
+            self.formats.append(Format)
+            if Format == -4147:
+                raise RuntimeError("vector unavailable")
+
+    target = Range()
+    monkeypatch.setattr(dumper, "_clipboard_formats", lambda: ["CF_BITMAP"])
+    monkeypatch.setattr(dumper.time, "sleep", lambda _: None)
+
+    copied_format, attempts = dumper._try_copy_range_picture(
+        target, max_com_attempts=2,
+    )
+
+    assert copied_format == "xlBitmap"
+    assert target.formats == [-4147, -4147, 2]
+    assert [attempt["success"] for attempt in attempts] == [False, False, True]
+    assert attempts[-1]["clipboard_formats_before"] == ["CF_BITMAP"]
+    assert attempts[-1]["clipboard_formats_after"] == ["CF_BITMAP"]
+
+
+@pytest.mark.unit
+def test_screenshot_capture_error_has_public_phase_and_code():
+    from xlvbatools.workbook.dumper import ScreenshotRenderError
+
+    error = ScreenshotRenderError(
+        "copy failed",
+        code="screenshot_capture_failed",
+        details={"attempts": []},
+    )
+
+    assert error.phase == "screenshot_capture"
+    assert error.code == "screenshot_capture_failed"
+    assert error.details == {"attempts": []}
 
 
 @pytest.mark.unit
@@ -408,4 +453,8 @@ def test_combined_range_data_and_screenshot_share_one_clean_session(
     assert "screenshots" not in result
     screenshot = result["data"]["screenshots"]["Sheet1"]
     assert os.path.isfile(screenshot), result
+    capture = result["data"]["screenshot_diagnostics"]["Sheet1"]
+    assert capture["copied_format"] in {"xlPicture", "xlBitmap"}
+    assert capture["attempts"][-1]["window"]["target_range"] == "$A$1:$B$2"
+    assert capture["attempts"][-1]["metrics"]["meaningful_pixel_count"] > 64
     assert output_json.is_file()

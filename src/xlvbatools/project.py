@@ -222,6 +222,9 @@ class Project:
             data=InspectionOutput(
                 workbook_data=payload.get("workbook_data"),
                 screenshots=screenshots,
+                screenshot_diagnostics=dict(
+                    payload.get("screenshot_diagnostics") or {}
+                ),
             ),
             artifacts=artifacts,
             metadata={

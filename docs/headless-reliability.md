@@ -19,7 +19,17 @@ through `Project`; implementation subpackages are not an alternate public API.
 - Worksheets, ranges, names, VBE components, and other child proxies are
   released while their owning session is still alive.
 - A worker balances only the COM apartment initialization it performed.
+- Startup never reads or modifies Excel's registry configuration. Installed
+  COM add-ins load according to the user's existing Excel configuration.
+- Teardown closes the target workbook, releases all COM proxies while a blank
+  sentinel workbook keeps the owned instance alive, releases the application
+  proxy before the sentinel proxy, and only then requests normal `WM_CLOSE`
+  shutdown through the exact PID-verified Excel window. A bounded `WM_QUIT`
+  request may be sent only to that verified UI thread before exact-PID force
+  termination is considered.
 - Teardown waits for graceful Excel/VBE exit before targeted termination.
+- Liveness polling and the final exact-PID fallback use Win32 process handles;
+  cleanup does not spawn `tasklist` or `taskkill` commands on every poll.
 - Sequential tests inspect stdout and stderr for native finalizer diagnostics;
   a zero process exit code alone is insufficient.
 
@@ -32,8 +42,8 @@ through `Project`; implementation subpackages are not an alternate public API.
 - A dismissal is successful only after the dialog is confirmed hidden or
   destroyed. Failed clicks are retried on a later bounded poll, including when
   VBE reuses the same window handle for a shutdown-time compiler prompt.
-- The PID-scoped watchdog remains active after `Application.Quit` returns and
-  throughout graceful-exit polling so late VBE prompts cannot strand Excel.
+- The PID-scoped watchdog remains active after normal shutdown is requested
+  and throughout graceful-exit polling so late VBE prompts cannot strand Excel.
 - Live compile resolves the VBE Compile command specifically as an Office
   command-bar button (`Type=1`, `ID=578`). Searching by ID alone is forbidden
   because it can resolve a popup control and expose the File menu.
@@ -91,10 +101,12 @@ attempts. Callers do not enable or reproduce these policies themselves.
 - Screenshot rendering transfers a bitmap through a blank chart workbook; it
   does not copy worksheet VBA.
 - Screenshot rendering makes only the owned Excel window renderable, forces a
-  range repaint, validates the native bitmap before adding headers or grid
-  overlays, retries the full capture at most three times, and restores the
-  prior visibility and `ScreenUpdating` state. A populated range that remains
-  implausibly blank fails with `render_content_mismatch` evidence.
+  viewport scroll and range repaint, requests vector picture capture before
+  bitmap fallback, validates native pixels before adding headers or grid
+  overlays, and restores the prior visibility and `ScreenUpdating` state. A
+  populated range that remains implausibly blank fails with
+  `render_content_mismatch`; exhausted native capture fails with
+  `screenshot_capture_failed`. Both retain bounded per-attempt evidence.
 
 ## Acceptance
 

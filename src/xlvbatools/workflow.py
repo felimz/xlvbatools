@@ -318,6 +318,9 @@ class WorkflowStepResult:
                 data = InspectionOutput(
                     workbook_data=raw_data.get("workbook_data"),
                     screenshots=screenshots,
+                    screenshot_diagnostics=dict(
+                        raw_data.get("screenshot_diagnostics") or {}
+                    ),
                 )
                 artifacts.extend(
                     Artifact(

@@ -271,13 +271,19 @@ def _dispatch(
         from xlvbatools.workbook.dumper import _inspect_workbook_in_process
 
         result = _inspect_workbook_in_process(
-            **arguments, on_excel_started=reporter.excel_started,
+            **arguments,
+            on_excel_started=reporter.excel_started,
+            on_phase=reporter.phase,
         )
         workbook_data = result.get("data")
         screenshots = dict(result.pop("screenshots", {}) or {})
+        screenshot_diagnostics = dict(
+            result.pop("screenshot_diagnostics", {}) or {}
+        )
         result["data"] = {
             "workbook_data": workbook_data,
             "screenshots": screenshots,
+            "screenshot_diagnostics": screenshot_diagnostics,
         }
         return result
 

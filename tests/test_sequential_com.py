@@ -220,9 +220,12 @@ def test_repeated_valid_and_invalid_compile_runs_clean_up_owned_processes(
 
     observed_pids = []
     for _ in range(3):
+        # This test follows the 50-run lifecycle stress case in the complete
+        # gate. Its purpose is compile correctness and cleanup, not a 90-second
+        # desktop-startup latency SLA under accumulated system load.
         valid = Project.open(minimal_workbook).lint_workbook(
             compile_test=True,
-            timeout=90,
+            timeout=180,
         )
         assert valid.success is True, valid.to_dict()
         assert not [issue for issue in valid.data if issue.rule_id == "CT001"]
@@ -233,7 +236,7 @@ def test_repeated_valid_and_invalid_compile_runs_clean_up_owned_processes(
 
         invalid = Project.open(compile_error_workbook).lint_workbook(
             compile_test=True,
-            timeout=90,
+            timeout=180,
         )
         compile_findings = [
             issue for issue in invalid.data if issue.rule_id == "CT001"

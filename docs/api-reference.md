@@ -116,7 +116,9 @@ result.require_clean_shutdown()
 
 `InspectionOutput.workbook_data` contains structured workbook data and
 `InspectionOutput.screenshots` maps sheet names to render paths or status
-messages. Generated screenshots are also listed as `Artifact` records.
+messages. `InspectionOutput.screenshot_diagnostics` contains per-sheet native
+capture format, attempt, clipboard, window/viewport, and image-validation
+evidence. Generated screenshots are also listed as `Artifact` records.
 Hidden and VeryHidden sheets are excluded unless explicitly enabled.
 Partial rich-text runs are excluded by default because each populated cell
 requires additional COM inspection. With `include_rich_text=True`, each cell

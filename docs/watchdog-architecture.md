@@ -42,11 +42,13 @@ owned by another process.
 3. It starts the PID-scoped watchdog before workbook open.
 4. Each macro or compile operation records the starting event sequence and
    consumes only newer events.
-5. Worker teardown closes the workbook, requests `Application.Quit`, releases
-   COM references, and polls the exact owned Excel PID for graceful exit.
+5. Worker teardown closes the target workbook, keeps a disposable sentinel
+   workbook alive while releasing the application proxy, releases the sentinel,
+   requests `WM_CLOSE` only on the exact PID-verified Excel window, and polls
+   that owned PID for graceful exit.
 6. The watchdog remains active throughout that exit window because Excel/VBE
-   can post a final compiler dialog after `Application.Quit` returns. It stops
-   only after the graceful-exit decision and any exact-PID fallback complete.
+   can post a final compiler dialog after shutdown begins. It stops only after
+   the graceful-exit decision and any exact-PID fallback complete.
 7. Dialog events and cleanup fields are converted into `OperationResult`
    diagnostics.
 

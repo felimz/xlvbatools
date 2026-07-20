@@ -416,6 +416,7 @@ def test_inspection_primitive_reuses_existing_session(monkeypatch):
             },
         },
         "screenshots": {"Input": "Input.png"},
+        "screenshot_diagnostics": {},
     }
 
 
@@ -452,5 +453,5 @@ def test_inspection_step_preserves_render_mismatch_code(monkeypatch):
         )
 
     assert captured.value.code == "render_content_mismatch"
-    assert captured.value.phase == "render_validation"
+    assert captured.value.phase == "screenshot_capture"
     assert captured.value.details == {"sheet": "Input", "range": "$A$1:$B$2"}

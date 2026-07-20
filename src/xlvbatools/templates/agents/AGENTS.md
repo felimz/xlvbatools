@@ -44,6 +44,8 @@ and implementation subpackages are private.
   `diagnostics.attempts`; do not add a downstream automatic startup retry.
 - Never enumerate or terminate Excel globally. Cleanup may target only the
   worker and Excel PID owned by the current operation.
+- Do not alter registry or installed add-in configuration around xlvbatools
+  operations. Default startup uses the user's existing Excel configuration.
 - Keep hidden worksheets excluded from screenshots unless the task explicitly
   requests them.
 - Request rich-text cell runs only when partial formatting is relevant; the
@@ -51,6 +53,10 @@ and implementation subpackages are private.
 - Treat `render_content_mismatch` as a failed screenshot, retain its per-attempt
   pixel metrics, and never accept the overlaid PNG as evidence merely because
   a file was created.
+- Treat `screenshot_capture_failed` as a failed native capture. Retain
+  `InspectionOutput.screenshot_diagnostics` or `error.details` for its bounded
+  format, clipboard, viewport, window, and timing evidence; do not replay an
+  operation after `session_start`.
 - Use `tmp_path` or operating-system temporary directories for generated test
   artifacts; do not pollute the workspace root.
 - Treat names in `xlvbatools.__all__` as the only supported Python API.

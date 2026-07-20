@@ -6,6 +6,36 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-07-20
+
+### Added
+
+- Public `InspectionOutput.screenshot_diagnostics` records the selected native
+  picture format, bounded COM attempts, clipboard image formats before and
+  after each attempt, active workbook/sheet/range and viewport state, off-screen
+  window bounds, and native image-validation metrics.
+
+### Fixed
+
+- XL-17: headless worksheet screenshots now scroll the requested range into the
+  active viewport, request Excel's vector picture format before falling back to
+  bitmap, and use a bounded format-aware retry matrix instead of repeatedly
+  invoking the same failing `Range.CopyPicture` call.
+- Exhausted native capture failures now retain structured evidence as
+  `screenshot_capture_failed` in phase `screenshot_capture`, including through
+  one-session workflows, while preserving fail-closed rendering, invisible
+  owned Excel, and the post-`session_start` no-replay boundary.
+- Excel startup and teardown no longer read or modify COM add-in registry
+  configuration. Teardown instead releases all COM proxies while a disposable
+  sentinel workbook keeps the owned instance alive, then requests normal
+  shutdown through the exact PID-verified Excel window after every proxy has
+  been released in a safe order.
+- Exact-PID liveness checks and forced-cleanup fallback now use bounded Win32
+  process handles instead of spawning repeated `tasklist` and `taskkill`
+  subprocesses during sustained Excel workloads.
+- `CleanupReport.details` now merges explicit structured cleanup evidence with
+  unknown additive fields instead of nesting an existing `details` mapping.
+
 ## [1.2.2] - 2026-07-20
 
 ### Fixed

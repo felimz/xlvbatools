@@ -6,6 +6,7 @@ import gc
 import subprocess
 import sys
 import textwrap
+
 import pytest
 from types import SimpleNamespace
 
@@ -242,9 +243,9 @@ class TestSessionProperties:
             str(workbook), kill_on_enter=False, init_delay=0, **session_kwargs,
         ) as session:
             assert session.excel_pid == 4321
+            assert fake_excel.EnableEvents is expected_events
+            assert fake_excel.AutomationSecurity == expected_security
 
-        assert fake_excel.EnableEvents is expected_events
-        assert fake_excel.AutomationSecurity == expected_security
         assert created[0]["target_pid"] == 4321
         assert created[0]["auto_dismiss"] is True
         assert created[0]["hide_vbe_main_window"] is True
@@ -411,8 +412,6 @@ class TestSessionCOM:
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_graceful_close_target_only(self, minimal_workbook, tmp_path):
         import shutil
-        import win32com.client
-        import win32process
         from xlvbatools.core.session import ExcelSession
         from xlvbatools.core.process import is_process_running
 
@@ -423,13 +422,13 @@ class TestSessionCOM:
         unrelated_workbook = tmp_path / "unrelated.xlsm"
         shutil.copy(minimal_workbook, unrelated_workbook)
 
-        # 1. Open unrelated_workbook manually
-        excel1 = win32com.client.DispatchEx("Excel.Application")
-        excel1.Visible = False
-        wb1 = excel1.Workbooks.Open(str(unrelated_workbook))
-        _, unrelated_pid = win32process.GetWindowThreadProcessId(excel1.Hwnd)
-
-        try:
+        # Keep a second independently owned Excel session open while the target
+        # session exits. Managing both through ExcelSession prevents this test
+        # itself from retaining raw COM proxies after Application.Quit.
+        with ExcelSession(
+            str(unrelated_workbook), kill_on_enter=False, save_on_exit=False,
+        ) as unrelated_session:
+            unrelated_pid = unrelated_session.excel_pid
             # Open and close an isolated target session while an unrelated
             # workbook remains live in a separate Excel process.
             with ExcelSession(str(target_workbook), kill_on_enter=False, save_on_exit=False) as session:
@@ -437,18 +436,10 @@ class TestSessionCOM:
                 assert session.wb is not None
 
             # Verify that unrelated_workbook is still open and running.
-            assert wb1.Name == "unrelated.xlsm"
+            assert unrelated_session.wb.Name == "unrelated.xlsm"
             assert is_process_running(unrelated_pid)
-        finally:
-            # Cleanup manually opened instances
-            try:
-                wb1.Close(SaveChanges=False)
-            except Exception:
-                pass
-            try:
-                excel1.Quit()
-            except Exception:
-                pass
+
+        assert unrelated_session.cleanup_result["still_running"] is False
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_child_com_proxies_finalize_before_excel(self, minimal_workbook):

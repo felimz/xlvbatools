@@ -127,22 +127,27 @@ def test_worker_dismisses_modal_ui(runtime_error_workbook, macro_name):
 
 
 @pytest.mark.excel
-def test_timeout_preserves_unrelated_excel(runtime_error_workbook):
-    import win32com.client
-    import win32process
+def test_timeout_preserves_unrelated_excel(
+    runtime_error_workbook, minimal_workbook,
+):
     from xlvbatools.core.process import is_process_running
+    from xlvbatools.core.session import ExcelSession
     from xlvbatools.macro.runner import run_macro
 
-    unrelated_excel = win32com.client.DispatchEx("Excel.Application")
-    unrelated_excel.Visible = False
-    unrelated_wb = unrelated_excel.Workbooks.Add()
-    _, unrelated_pid = win32process.GetWindowThreadProcessId(unrelated_excel.Hwnd)
-    try:
+    # Manage the unrelated instance through the same ownership contract. Raw
+    # test-created COM proxies retained after Application.Quit can emit native
+    # pywin32 finalizer diagnostics even when the product cleanup is correct.
+    with ExcelSession(
+        minimal_workbook,
+        save_on_exit=False,
+        kill_on_enter=False,
+        read_only=True,
+    ) as unrelated_session:
+        unrelated_pid = unrelated_session.excel_pid
         result = run_macro(runtime_error_workbook, "LoopForever", timeout=6, save_on_exit=False)
         assert result["timed_out"] is True
         assert result["excel_pid"] != unrelated_pid
         assert is_process_running(unrelated_pid)
-        assert unrelated_wb.Name
-    finally:
-        unrelated_wb.Close(False)
-        unrelated_excel.Quit()
+        assert unrelated_session.wb.Name
+
+    assert unrelated_session.cleanup_result["still_running"] is False

@@ -96,11 +96,22 @@ Python.
   evidence that the rendered range contains visible content.
 - Column letters, row numbers, gridlines, cropped bounds, merged cells, and
   non-default row/column dimensions are composited from the inspected range.
-- Clipboard-sensitive copy/paste operations use bounded retries.
+- Clipboard-sensitive capture first requests Excel's vector picture format,
+  then falls back to a bitmap. Each format uses bounded retries; repeating one
+  failing COM call cannot consume the whole operation timeout.
 - Before each capture, xlvbatools temporarily enables `ScreenUpdating`, makes
   only its owned Excel window renderable (off-screen for headless calls), and
-  flushes the window paint queue. It restores the caller's original
+  scrolls the requested range into the active viewport before flushing the
+  window paint queue. It restores the caller's original
   `ScreenUpdating` and visibility state afterward.
+- `InspectionOutput.screenshot_diagnostics` records the chosen picture format,
+  bounded attempt history, clipboard image formats, active workbook/sheet,
+  selected range, viewport position, off-screen window rectangle, and native
+  image metrics. This makes intermittent Excel rendering failures diagnosable
+  without attaching to COM or replaying the operation.
+- If every native format fails, the operation fails closed in phase
+  `screenshot_capture` with `error.code == "screenshot_capture_failed"` and
+  the same structured attempt evidence.
 - The unmodified Excel bitmap is measured before headers and gridlines are
   composited. If a populated range repeatedly yields an implausibly blank
   bitmap, the operation fails with `error.code == "render_content_mismatch"`

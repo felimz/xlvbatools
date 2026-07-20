@@ -43,12 +43,18 @@ _RICH_TEXT_FONT_PROPERTIES = (
 
 
 class ScreenshotRenderError(RuntimeError):
-    """Excel exported a bitmap that contradicted the workbook content."""
+    """Excel could not produce a trustworthy native range capture."""
 
-    code = "render_content_mismatch"
-
-    def __init__(self, message: str, *, details: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "render_content_mismatch",
+        details: Mapping[str, Any],
+    ) -> None:
         super().__init__(message)
+        self.code = code
+        self.phase = "screenshot_capture"
         self.details = dict(details)
 
 # Excel cell error value mapping
@@ -389,6 +395,12 @@ def _show_owned_excel_offscreen(excel) -> None:
     user32 = ctypes.windll.user32
     swp_no_zorder = 0x0004
     swp_noactivate = 0x0010
+    # Normalize while the application is still hidden. A minimized workbook
+    # window does not have a dependable paint surface for Range.CopyPicture.
+    try:
+        excel.ActiveWindow.WindowState = -4143  # xlNormal
+    except Exception:
+        logger.debug("Could not normalize the Excel window", exc_info=True)
     # Position the hidden HWND first, because setting Application.Visible can
     # otherwise display it at its last normal desktop coordinates for a frame.
     user32.SetWindowPos(
@@ -402,7 +414,98 @@ def _show_owned_excel_offscreen(excel) -> None:
     )
 
 
-def _force_range_repaint(excel, wb, sheet, export_range, *, was_visible: bool) -> None:
+def _clipboard_formats() -> list[str]:
+    """Return the native image formats currently advertised by the clipboard."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    formats = {
+        2: "CF_BITMAP",
+        3: "CF_METAFILEPICT",
+        8: "CF_DIB",
+        14: "CF_ENHMETAFILE",
+        17: "CF_DIBV5",
+    }
+    return [
+        name for format_id, name in formats.items()
+        if bool(user32.IsClipboardFormatAvailable(format_id))
+    ]
+
+
+def _capture_window_state(excel, wb, sheet, export_range) -> dict[str, Any]:
+    """Collect bounded, JSON-safe evidence for a CopyPicture attempt."""
+    state: dict[str, Any] = {}
+    probes = {
+        "excel_visible": lambda: bool(excel.Visible),
+        "screen_updating": lambda: bool(excel.ScreenUpdating),
+        "hwnd": lambda: int(excel.Hwnd),
+        "window_state": lambda: int(excel.ActiveWindow.WindowState),
+        "scroll_row": lambda: int(excel.ActiveWindow.ScrollRow),
+        "scroll_column": lambda: int(excel.ActiveWindow.ScrollColumn),
+        "active_workbook": lambda: str(excel.ActiveWorkbook.Name),
+        "target_workbook": lambda: str(wb.Name),
+        "active_sheet": lambda: str(excel.ActiveSheet.Name),
+        "target_sheet": lambda: str(sheet.Name),
+        "selection": lambda: str(excel.Selection.Address),
+        "target_range": lambda: str(export_range.Address),
+    }
+    for name, probe in probes.items():
+        try:
+            state[name] = probe()
+        except Exception as error:
+            state[f"{name}_error"] = f"{type(error).__name__}: {error}"
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.GetWindowRect(int(excel.Hwnd), ctypes.byref(rect)):
+            state["window_rect"] = [rect.left, rect.top, rect.right, rect.bottom]
+    except Exception as error:
+        state["window_rect_error"] = f"{type(error).__name__}: {error}"
+    return state
+
+
+def _try_copy_range_picture(
+    export_range,
+    *,
+    max_com_attempts: int,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Try vector then bitmap capture and retain evidence for every COM call."""
+    attempts: list[dict[str, Any]] = []
+    for format_name, format_value in (("xlPicture", -4147), ("xlBitmap", 2)):
+        for com_attempt in range(1, max_com_attempts + 1):
+            started = time.monotonic()
+            clipboard_before = _clipboard_formats()
+            try:
+                export_range.CopyPicture(Appearance=1, Format=format_value)
+                attempts.append({
+                    "format": format_name,
+                    "com_attempt": com_attempt,
+                    "success": True,
+                    "elapsed_seconds": time.monotonic() - started,
+                    "clipboard_formats_before": clipboard_before,
+                    "clipboard_formats_after": _clipboard_formats(),
+                })
+                return format_name, attempts
+            except Exception as error:
+                attempts.append({
+                    "format": format_name,
+                    "com_attempt": com_attempt,
+                    "success": False,
+                    "elapsed_seconds": time.monotonic() - started,
+                    "error": f"{type(error).__name__}: {error}",
+                    "clipboard_formats_before": clipboard_before,
+                    "clipboard_formats_after": _clipboard_formats(),
+                })
+                if com_attempt < max_com_attempts:
+                    time.sleep(0.15)
+    return None, attempts
+
+
+def _force_range_repaint(
+    excel, wb, sheet, export_range, *, was_visible: bool,
+) -> dict[str, Any]:
     """Put the owned window in a renderable state and flush its paint queue."""
     import ctypes
     import pythoncom  # type: ignore[import-untyped]
@@ -414,6 +517,12 @@ def _force_range_repaint(excel, wb, sheet, export_range, *, was_visible: bool) -
         _show_owned_excel_offscreen(excel)
     wb.Activate()
     sheet.Activate()
+    try:
+        # Goto with Scroll=True establishes both selection and viewport. This
+        # matters for ranges far from the worksheet's current saved position.
+        excel.Goto(Reference=export_range, Scroll=True)
+    except Exception:
+        logger.debug("Could not scroll the screenshot range into view", exc_info=True)
     try:
         export_range.Select()
     except Exception:
@@ -434,6 +543,7 @@ def _force_range_repaint(excel, wb, sheet, export_range, *, was_visible: bool) -
         logger.debug("Could not force an Excel HWND repaint", exc_info=True)
     pythoncom.PumpWaitingMessages()
     time.sleep(0.15)
+    return _capture_window_state(excel, wb, sheet, export_range)
 
 
 def _native_image_metrics(image_path: str) -> dict[str, Any]:
@@ -539,8 +649,8 @@ def _capture_native_range(
     range_width: float,
     range_height: float,
     expected_visible_items: int,
-    max_render_attempts: int = 3,
-    max_com_attempts: int = 5,
+    max_render_attempts: int = 2,
+    max_com_attempts: int = 2,
 ) -> dict[str, Any]:
     """Capture, validate, and atomically publish one native Excel bitmap."""
     was_visible = bool(excel.Visible)
@@ -557,20 +667,22 @@ def _capture_native_range(
             chart = None
             shape = None
             capture_succeeded = False
+            capture_stage = "prepare"
+            copied_format = None
+            window_state: dict[str, Any] = {}
+            copy_attempts: list[dict[str, Any]] = []
             try:
                 if os.path.exists(candidate):
                     os.remove(candidate)
-                _force_range_repaint(
+                window_state = _force_range_repaint(
                     excel, wb, sheet, export_range, was_visible=was_visible,
                 )
-                for com_attempt in range(1, max_com_attempts + 1):
-                    try:
-                        export_range.CopyPicture(Appearance=1, Format=2)
-                        break
-                    except Exception:
-                        if com_attempt == max_com_attempts:
-                            raise
-                        time.sleep(0.25)
+                capture_stage = "copy_picture"
+                copied_format, copy_attempts = _try_copy_range_picture(
+                    export_range, max_com_attempts=max_com_attempts,
+                )
+                if copied_format is None:
+                    raise RuntimeError("Range.CopyPicture failed for every native format")
 
                 # Keep a user-requested visible workbook stable while the
                 # bitmap-only chart workbook receives the clipboard image.
@@ -588,6 +700,7 @@ def _capture_native_range(
                     chart_obj.Select()
                 except Exception:
                     pass
+                capture_stage = "chart_paste"
                 for com_attempt in range(1, max_com_attempts + 1):
                     try:
                         chart.Paste()
@@ -603,6 +716,7 @@ def _capture_native_range(
                     shape.Width = range_width
                     shape.Height = range_height
                 time.sleep(0.25)
+                capture_stage = "chart_export"
                 if not chart.Export(candidate, "PNG"):
                     raise RuntimeError("Excel chart export returned false")
                 capture_succeeded = True
@@ -610,7 +724,11 @@ def _capture_native_range(
                 last_error = error
                 attempt_details.append({
                     "attempt": render_attempt,
+                    "stage": capture_stage,
                     "capture_error": f"{type(error).__name__}: {error}",
+                    "window": window_state,
+                    "copy_attempts": copy_attempts,
+                    "copied_format": copied_format,
                 })
             finally:
                 shape = None
@@ -649,12 +767,19 @@ def _capture_native_range(
                 attempt_details.append({
                     "attempt": render_attempt,
                     "metrics": metrics,
+                    "window": window_state,
+                    "copy_attempts": copy_attempts,
+                    "copied_format": copied_format,
                 })
                 if not _image_is_implausibly_blank(
                     metrics, expected_visible_items,
                 ):
                     os.replace(candidate, out_path)
-                    return metrics
+                    return {
+                        "metrics": metrics,
+                        "attempts": attempt_details,
+                        "copied_format": copied_format,
+                    }
                 os.remove(candidate)
             elif os.path.exists(candidate):
                 os.remove(candidate)
@@ -690,9 +815,16 @@ def _capture_native_range(
                 "attempts": attempt_details,
             },
         )
-    raise RuntimeError(
+    raise ScreenshotRenderError(
         f"Excel could not capture {sheet.Name}!{export_range.Address} after "
-        f"{max_render_attempts} attempts: {last_error}"
+        f"{max_render_attempts} render attempt(s): {last_error}",
+        code="screenshot_capture_failed",
+        details={
+            "sheet": str(sheet.Name),
+            "range": str(export_range.Address),
+            "expected_visible_items": expected_visible_items,
+            "attempts": attempt_details,
+        },
     )
 
 
@@ -708,6 +840,7 @@ def export_screenshots(
     dpi: int = 144,
     expected_visible_content: Mapping[str, int] | None = None,
     continue_on_render_error: bool = False,
+    diagnostics: dict[str, Any] | None = None,
     _session: ExcelSession | None = None,
 ) -> dict[str, str]:
     """
@@ -832,7 +965,7 @@ def export_screenshots(
                     int(expected_visible_content.get(sheet_name, 0))
                     if expected_visible_content is not None else 0,
                 )
-                _capture_native_range(
+                capture_diagnostics = _capture_native_range(
                     excel,
                     wb,
                     sheet,
@@ -842,6 +975,8 @@ def export_screenshots(
                     range_height=range_height,
                     expected_visible_items=expected_items,
                 )
+                if diagnostics is not None:
+                    diagnostics[sheet_name] = capture_diagnostics
 
                 try:
                     _apply_headers_and_grid_overlay(
@@ -860,6 +995,13 @@ def export_screenshots(
                 results[sheet_name] = out_path
 
             except ScreenshotRenderError as error:
+                if diagnostics is not None:
+                    diagnostics[sheet_name] = {
+                        "success": False,
+                        "code": error.code,
+                        "message": str(error),
+                        "details": error.details,
+                    }
                 if not continue_on_render_error:
                     raise
                 results[sheet_name] = f"Error: {error}"
@@ -1215,12 +1357,14 @@ def _inspect_workbook_in_process(
     include_hidden_sheets: bool = False,
     include_rich_text: bool = False,
     on_excel_started=None,
+    on_phase=None,
 ) -> dict:
     """Inspect data and render ranges in one isolated, read-only Excel session."""
     result = {
         "success": True,
         "phase": "session_start",
         "screenshots": {},
+        "screenshot_diagnostics": {},
         "data": None,
         "primary_error": None,
         "error": None,
@@ -1237,6 +1381,12 @@ def _inspect_workbook_in_process(
         allow_macro_execution=False,
         on_excel_started=on_excel_started,
     )
+
+    def publish_phase(phase: str) -> None:
+        result["phase"] = phase
+        if on_phase is not None:
+            on_phase(phase)
+
     try:
         with session:
             inspection = _inspect_existing_session(
@@ -1252,8 +1402,12 @@ def _inspect_workbook_in_process(
                 continue_on_render_error=continue_on_render_error,
                 include_hidden_sheets=include_hidden_sheets,
                 include_rich_text=include_rich_text,
+                on_phase=publish_phase,
             )
             result["screenshots"] = inspection["screenshots"]
+            result["screenshot_diagnostics"] = inspection[
+                "screenshot_diagnostics"
+            ]
             result["data"] = inspection["workbook_data"]
         result["phase"] = "complete"
     except Exception as error:
@@ -1288,11 +1442,15 @@ def _inspect_existing_session(
     continue_on_render_error: bool = False,
     include_hidden_sheets: bool = False,
     include_rich_text: bool = False,
+    on_phase=None,
 ) -> dict[str, Any]:
     """Inspect workbook state through an existing workflow-owned session."""
     screenshots: dict[str, str] = {}
+    screenshot_diagnostics: dict[str, Any] = {}
     workbook_data = None
     if include_data:
+        if on_phase is not None:
+            on_phase("inspect_data")
         workbook_data = dump_sheet_data(
             workbook_path,
             sheets,
@@ -1303,6 +1461,8 @@ def _inspect_existing_session(
             _session=session,
         )
     if include_screenshots:
+        if on_phase is not None:
+            on_phase("screenshot_capture")
         expected_visible_content = (
             _structured_visible_content_counts(workbook_data)
             if workbook_data is not None else None
@@ -1316,6 +1476,7 @@ def _inspect_existing_session(
             include_hidden_sheets=include_hidden_sheets,
             expected_visible_content=expected_visible_content,
             continue_on_render_error=continue_on_render_error,
+            diagnostics=screenshot_diagnostics,
         )
         render_errors = {
             name: value for name, value in screenshots.items()
@@ -1326,6 +1487,7 @@ def _inspect_existing_session(
     return {
         "workbook_data": workbook_data,
         "screenshots": screenshots,
+        "screenshot_diagnostics": screenshot_diagnostics,
     }
 
 
