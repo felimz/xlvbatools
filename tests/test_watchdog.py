@@ -191,6 +191,119 @@ class TestDialogCapture:
         wd._scan_for_dialogs()
         assert handled == []
 
+    def test_hidden_dialog_handle_is_recaptured_if_vbe_reuses_it(
+        self, monkeypatch,
+    ):
+        from xlvbatools.core import watchdog
+
+        visible = iter((True, False, True))
+
+        class User32:
+            def EnumWindows(self, callback, lparam):
+                callback(123, 0)
+
+            def EnumChildWindows(self, hwnd, callback, lparam):
+                return None
+
+        monkeypatch.setattr(watchdog, "user32", User32())
+        monkeypatch.setattr(watchdog, "EnumWindowsProc", lambda callback: callback)
+        monkeypatch.setattr(watchdog, "EnumChildProc", lambda callback: callback)
+        monkeypatch.setattr(watchdog, "_is_window_visible", lambda hwnd: next(visible))
+        monkeypatch.setattr(watchdog, "_get_window_class", lambda hwnd: watchdog.DIALOG_CLASS)
+        monkeypatch.setattr(
+            watchdog,
+            "_get_window_text",
+            lambda hwnd: "Microsoft Visual Basic for Applications",
+        )
+
+        wd = watchdog.DialogWatchdog(auto_dismiss=False, capture_attempts=1)
+        wd._scan_for_dialogs()
+        wd._scan_for_dialogs()
+        wd._scan_for_dialogs()
+
+        assert [event.hwnd for event in wd.events] == [123, 123]
+        assert [event.sequence for event in wd.events] == [1, 2]
+
+    def test_dismissal_requires_confirmation_and_queues_a_busy_button_click(
+        self, monkeypatch,
+    ):
+        from xlvbatools.core import watchdog
+
+        actions = []
+        hidden = iter((False, True))
+        monkeypatch.setattr(
+            watchdog,
+            "_click_button",
+            lambda hwnd: actions.append(("send", hwnd)) or False,
+        )
+        monkeypatch.setattr(
+            watchdog,
+            "_post_button_click",
+            lambda hwnd: actions.append(("post", hwnd)) or True,
+        )
+        monkeypatch.setattr(
+            watchdog,
+            "_wait_for_window_to_hide",
+            lambda hwnd: next(hidden),
+        )
+
+        event = watchdog.DialogEvent(
+            timestamp=1.0,
+            hwnd=123,
+            title="Microsoft Visual Basic for Applications",
+            dialog_type="compile_error",
+        )
+        wd = watchdog.DialogWatchdog(target_pid=42)
+
+        dismissed = wd._dismiss_dialog(123, [(456, "OK")], event)
+
+        assert dismissed is True
+        assert event.button_clicked == "OK"
+        assert actions == [("send", 456), ("post", 456)]
+
+    def test_failed_dismissal_is_retried_for_same_visible_handle(
+        self, monkeypatch,
+    ):
+        from xlvbatools.core import watchdog
+
+        class User32:
+            def EnumWindows(self, callback, lparam):
+                callback(123, 0)
+
+            def EnumChildWindows(self, hwnd, callback, lparam):
+                callback(456, 0)
+
+        monkeypatch.setattr(watchdog, "user32", User32())
+        monkeypatch.setattr(watchdog, "EnumWindowsProc", lambda callback: callback)
+        monkeypatch.setattr(watchdog, "EnumChildProc", lambda callback: callback)
+        monkeypatch.setattr(watchdog, "_is_window_visible", lambda hwnd: True)
+        monkeypatch.setattr(
+            watchdog,
+            "_get_window_class",
+            lambda hwnd: watchdog.DIALOG_CLASS if hwnd == 123 else "Button",
+        )
+        monkeypatch.setattr(
+            watchdog,
+            "_get_window_text",
+            lambda hwnd: (
+                "Microsoft Visual Basic for Applications" if hwnd == 123 else "OK"
+            ),
+        )
+        monkeypatch.setattr(watchdog, "_get_control_text", lambda hwnd: "OK")
+        monkeypatch.setattr(
+            watchdog.DialogWatchdog,
+            "_dismiss_dialog",
+            lambda self, hwnd, buttons, event: False,
+        )
+
+        wd = watchdog.DialogWatchdog(target_pid=42, capture_attempts=1)
+        monkeypatch.setattr(watchdog, "_get_window_pid", lambda hwnd: (1, 42))
+        wd._scan_for_dialogs()
+        wd._scan_for_dialogs()
+
+        assert [event.sequence for event in wd.events] == [1, 2]
+        assert all(event.dismissed is False for event in wd.events)
+
     def test_owned_vbe_main_window_is_hidden_without_becoming_a_dialog(
         self, monkeypatch,
     ):

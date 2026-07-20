@@ -511,7 +511,8 @@ def test_live_lint_rejects_duplicate_declaration_and_closes_cleanly(
     assert "CT001" in rule_ids
     assert result.error.code == "lint_failed"
     assert result.metadata["baseline_written"] == str(baseline.resolve())
-    assert result.require_clean_shutdown().still_running is False
+    cleanup = result.require_clean_shutdown()
+    assert cleanup.exited_gracefully is True
 
     new_only = Project.open(duplicate_declaration_workbook).lint_workbook(
         compile_test=True,
@@ -522,7 +523,8 @@ def test_live_lint_rejects_duplicate_declaration_and_closes_cleanly(
     assert new_only.success is True, new_only.to_dict()
     assert new_only.data == ()
     assert new_only.metadata["known_issue_count"] == len(result.data)
-    assert new_only.require_clean_shutdown().still_running is False
+    new_cleanup = new_only.require_clean_shutdown()
+    assert new_cleanup.exited_gracefully is True
 
 
 @pytest.mark.excel

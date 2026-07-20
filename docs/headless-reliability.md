@@ -29,6 +29,11 @@ through `Project`; implementation subpackages are not an alternate public API.
 - Cross-process window text and click operations are bounded by
   `SendMessageTimeoutW`.
 - Captured events preserve multiline text and child-control diagnostics.
+- A dismissal is successful only after the dialog is confirmed hidden or
+  destroyed. Failed clicks are retried on a later bounded poll, including when
+  VBE reuses the same window handle for a shutdown-time compiler prompt.
+- The PID-scoped watchdog remains active after `Application.Quit` returns and
+  throughout graceful-exit polling so late VBE prompts cannot strand Excel.
 - Live compile resolves the VBE Compile command specifically as an Office
   command-bar button (`Type=1`, `ID=578`). Searching by ID alone is forbidden
   because it can resolve a popup control and expose the File menu.
@@ -98,7 +103,7 @@ For an Excel-backed result:
 ```python
 result.require_success()
 cleanup = result.require_clean_shutdown()
-assert cleanup.still_running is False
+assert cleanup.is_clean
 ```
 
 Operation success and clean shutdown are independent conditions. The result

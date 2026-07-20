@@ -6,6 +6,18 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-07-20
+
+### Fixed
+
+- XL-16: compiler dialogs are now considered dismissed only after their Win32
+  window is confirmed hidden or destroyed. Busy VBE dialogs receive a bounded
+  queued-click fallback, reused dialog handles remain eligible for dismissal,
+  and the PID-scoped watchdog stays active through the complete graceful-exit
+  window. Canonical invalid-workbook lint therefore preserves compiler
+  evidence while requiring clean Excel shutdown instead of exact-PID force
+  termination.
+
 ## [1.2.1] - 2026-07-20
 
 ### Fixed

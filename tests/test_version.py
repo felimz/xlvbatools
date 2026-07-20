@@ -28,7 +28,7 @@ def test_version_info_reads_git_commit_from_direct_url():
     with patch("xlvbatools.version.metadata.distribution", return_value=Distribution()):
         info = get_version_info()
 
-    assert info.version == "1.2.1"
+    assert info.version == "1.2.2"
     assert info.distribution_version == "1.2.3"
     assert info.version_mismatch is True
     assert info.source_url == "https://github.com/example/xlvbatools.git"

@@ -323,17 +323,6 @@ class ExcelSession:
             self.excel = None
             gc.collect()
 
-        # Keep dialog protection active through Workbook.Close and
-        # Application.Quit. Excel/VBE can create a final modal prompt only
-        # while it is shutting down; stopping the watchdog before Quit would
-        # leave that owned prompt unobserved and potentially block process exit.
-        if self.watchdog is not None:
-            events = self.watchdog.stop()
-            if events:
-                logger.info(f"Watchdog captured {len(events)} dialog(s) during session:")
-                for event in events:
-                    logger.info(f"  {event}")
-
         self.cleanup_result.update({"pid": self.excel_pid, "quit_requested": quit_requested})
 
         # Release this session's COM apartment before waiting for the out-of-
@@ -368,6 +357,18 @@ class ExcelSession:
             self.cleanup_result["still_running"] = is_process_running(self.excel_pid)
             if self.cleanup_result["still_running"]:
                 logger.error(f"Cleanup failed: owned Excel PID {self.excel_pid} is still running")
+
+        # Application.Quit can return before Excel/VBE posts its final modal
+        # shutdown prompt. Keep the PID-scoped watchdog alive throughout the
+        # graceful-exit window (and any exact-PID fallback) so that late
+        # compiler prompts are captured and dismissed instead of pinning the
+        # process until forced termination.
+        if self.watchdog is not None:
+            events = self.watchdog.stop()
+            if events:
+                logger.info(f"Watchdog captured {len(events)} dialog(s) during session:")
+                for event in events:
+                    logger.info(f"  {event}")
         if close_error:
             self.cleanup_result["workbook_close_error"] = str(close_error)
         if save_error:

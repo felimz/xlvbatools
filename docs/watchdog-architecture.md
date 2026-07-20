@@ -26,10 +26,14 @@ capture-only scan may omit the PID only when `auto_dismiss=False`.
 
 ## Bounded dismissal
 
-All cross-process queries and button clicks use `SendMessageTimeoutW` with
-`SMTO_ABORTIFHUNG`. Preferred buttons depend on the configured strategy; if
-no safe button is found, the watchdog uses a bounded window-close request.
-The watchdog never interacts with a window owned by another process.
+Cross-process text queries and the first button click use
+`SendMessageTimeoutW` with `SMTO_ABORTIFHUNG`. If the VBE modal loop is busy,
+the watchdog queues the same button click and then uses a bounded window-close
+request as its final fallback. A dialog is marked dismissed only after its
+window is confirmed hidden or destroyed. Failed attempts remain eligible for
+the next bounded poll, and a handle that disappears can be captured again if
+VBE reuses it for a later prompt. The watchdog never interacts with a window
+owned by another process.
 
 ## Lifecycle
 
@@ -38,8 +42,12 @@ The watchdog never interacts with a window owned by another process.
 3. It starts the PID-scoped watchdog before workbook open.
 4. Each macro or compile operation records the starting event sequence and
    consumes only newer events.
-5. Worker teardown stops and joins the watchdog before releasing Excel.
-6. Dialog events and cleanup fields are converted into `OperationResult`
+5. Worker teardown closes the workbook, requests `Application.Quit`, releases
+   COM references, and polls the exact owned Excel PID for graceful exit.
+6. The watchdog remains active throughout that exit window because Excel/VBE
+   can post a final compiler dialog after `Application.Quit` returns. It stops
+   only after the graceful-exit decision and any exact-PID fallback complete.
+7. Dialog events and cleanup fields are converted into `OperationResult`
    diagnostics.
 
 ## Parent deadline

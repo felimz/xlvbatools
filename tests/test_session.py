@@ -122,8 +122,10 @@ class TestSessionProperties:
         assert calls[:2] == ["release_com", "check_pid"]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-    def test_exit_keeps_dialog_watchdog_active_through_excel_quit(self):
-        from xlvbatools.core.session import ExcelSession
+    def test_exit_keeps_dialog_watchdog_active_until_owned_process_exits(
+        self, monkeypatch,
+    ):
+        from xlvbatools.core import session as session_module
 
         calls = []
 
@@ -132,14 +134,28 @@ class TestSessionProperties:
                 calls.append("watchdog_stop")
                 return []
 
-        session = ExcelSession("dummy.xlsm")
+        def process_running(pid):
+            calls.append("check_pid")
+            return False
+
+        monkeypatch.setattr(session_module, "is_process_running", process_running)
+
+        session = session_module.ExcelSession("dummy.xlsm", save_on_exit=False)
+        session.excel_pid = 4242
         session.watchdog = Watchdog()
         session.wb = SimpleNamespace(Close=lambda value: calls.append("workbook_close"))
         session.excel = SimpleNamespace(Quit=lambda: calls.append("excel_quit"))
 
         session.__exit__(None, None, None)
 
-        assert calls == ["workbook_close", "excel_quit", "watchdog_stop"]
+        assert calls == [
+            "workbook_close",
+            "excel_quit",
+            "check_pid",
+            "check_pid",
+            "check_pid",
+            "watchdog_stop",
+        ]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_sequential_macro_runs_use_event_sequences(self):

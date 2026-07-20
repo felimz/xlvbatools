@@ -201,6 +201,22 @@ The `v1.2.1` patch release completed with:
   validation with no `CT001` finding in 22.62 seconds; and
 - zero Excel or xlvbatools worker processes after final validation.
 
+## v1.2.2 release validation record
+
+The `v1.2.2` patch release completed with:
+
+- clean Ruff, CI-scoped mypy, documentation/template parity, and diff checks;
+- 356 passing fast tests in 7.29 seconds with 69.32% coverage;
+- the build-isolated wheel contract passing in a fresh consumer environment in
+  14.63 seconds;
+- all 30 single-pass live Excel acceptance tests passing in 279.76 seconds;
+- five fresh-process undeclared-variable compile runs and three fresh-process
+  duplicate-declaration runs preserving compiler evidence with graceful Excel
+  cleanup;
+- the six-operation alternating valid/invalid compile stress test passing in
+  49.65 seconds; and
+- zero Excel or xlvbatools worker processes after final validation.
+
 This is upstream release evidence only. Re-run each consumer repository's
 domain-specific screenshot and broken-startup acceptance cases after installing
 the released wheel. Those cases remain owned by the consumer project.

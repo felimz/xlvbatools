@@ -99,6 +99,19 @@ if IS_WINDOWS:
     user32.SendMessageTimeoutW.restype = ctypes.wintypes.LPARAM
     user32.ShowWindow.argtypes = [HWND, ctypes.c_int]
     user32.ShowWindow.restype = BOOL
+    user32.IsWindowVisible.argtypes = [HWND]
+    user32.IsWindowVisible.restype = BOOL
+    user32.IsWindow.argtypes = [HWND]
+    user32.IsWindow.restype = BOOL
+    user32.PostMessageW.argtypes = [
+        HWND, ctypes.wintypes.UINT, ctypes.wintypes.WPARAM,
+        ctypes.wintypes.LPARAM,
+    ]
+    user32.PostMessageW.restype = BOOL
+    user32.GetWindowThreadProcessId.argtypes = [
+        HWND, ctypes.POINTER(ctypes.wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = ctypes.wintypes.DWORD
 else:
     user32 = None
     HWND = BOOL = LPARAM = None
@@ -157,11 +170,11 @@ def _normalize_text(text: str) -> str:
     return (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
 
 
-def _click_button(hwnd: int):
-    """Click a button control by sending BM_CLICK with timeout protection."""
+def _click_button(hwnd: int) -> bool:
+    """Click a button control with bounded synchronous message handling."""
     import ctypes
     result = ctypes.c_size_t(0)
-    user32.SendMessageTimeoutW(
+    sent = user32.SendMessageTimeoutW(
         hwnd,
         BM_CLICK,
         0,
@@ -170,6 +183,12 @@ def _click_button(hwnd: int):
         250,     # 250ms timeout
         ctypes.byref(result),
     )
+    return bool(sent)
+
+
+def _post_button_click(hwnd: int) -> bool:
+    """Queue a button click when the modal UI thread is temporarily busy."""
+    return bool(user32.PostMessageW(hwnd, BM_CLICK, 0, 0))
 
 
 def _is_window_visible(hwnd: int) -> bool:
@@ -190,6 +209,16 @@ def _close_window(hwnd: int):
 def _hide_window(hwnd: int) -> None:
     """Hide one owned top-level window without activating another window."""
     user32.ShowWindow(hwnd, SW_HIDE)
+
+
+def _wait_for_window_to_hide(hwnd: int, timeout: float = 0.5) -> bool:
+    """Confirm that a dismissed window became hidden or was destroyed."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _is_window(hwnd) or not _is_window_visible(hwnd):
+            return True
+        time.sleep(0.025)
+    return not _is_window(hwnd) or not _is_window_visible(hwnd)
 
 
 def _get_window_pid(hwnd: int) -> tuple:
@@ -437,12 +466,14 @@ def _close_vbe_environment(excel, vbe) -> None:
 
 
 def _wait_for_dialog_destruction(events: list, timeout: float = 0.75) -> None:
-    """Let dismissed compiler dialogs finish their VBE state transition."""
+    """Let dismissed compiler dialogs become hidden or be destroyed."""
     handles = {int(event.hwnd) for event in events if event.hwnd}
     if not handles:
         return
     deadline = time.time() + timeout
-    while time.time() < deadline and any(_is_window(hwnd) for hwnd in handles):
+    while time.time() < deadline and any(
+        _is_window(hwnd) and _is_window_visible(hwnd) for hwnd in handles
+    ):
         time.sleep(0.025)
 
 
@@ -688,6 +719,7 @@ class DialogWatchdog:
     def _scan_for_dialogs(self):
         """Scan all top-level windows for dialog class (#32770)."""
         dialog_hwnds = []
+        visible_dialog_hwnds = set()
         vbe_hwnds = []
 
         def _enum_callback(hwnd, _lparam):
@@ -703,9 +735,9 @@ class DialogWatchdog:
                 if self.hide_vbe_main_window and _is_vbe_main_window(title, cls):
                     vbe_hwnds.append(hwnd)
                     return True
-                if cls == DIALOG_CLASS and hwnd not in self._seen_hwnds:
-                    # Filter for Excel/VB related dialogs
-                    if self._is_excel_dialog(title):
+                if cls == DIALOG_CLASS and self._is_excel_dialog(title):
+                    visible_dialog_hwnds.add(hwnd)
+                    if hwnd not in self._seen_hwnds:
                         dialog_hwnds.append(hwnd)
             except Exception:
                 pass
@@ -713,6 +745,12 @@ class DialogWatchdog:
 
         callback = EnumWindowsProc(_enum_callback)
         user32.EnumWindows(callback, 0)
+
+        # VBE can hide a compiler dialog after the first dismissal and reuse
+        # the exact same HWND for a final shutdown prompt. Retain de-duplication
+        # only while the dialog stays continuously visible; once it disappears,
+        # a later appearance is a new event that must be captured and dismissed.
+        self._seen_hwnds.intersection_update(visible_dialog_hwnds)
 
         for hwnd in vbe_hwnds:
             _hide_window(hwnd)
@@ -789,6 +827,10 @@ class DialogWatchdog:
         # Dismiss if requested
         if self.auto_dismiss:
             event.dismissed = self._dismiss_dialog(hwnd, buttons, event)
+            # A successful dismissal may be followed by VBE reusing the same
+            # HWND; a failed dismissal must be retried on the next poll. In
+            # both cases, permanent handle de-duplication would strand Excel.
+            self._seen_hwnds.discard(hwnd)
 
         # Store event
         with self._lock:
@@ -802,38 +844,64 @@ class DialogWatchdog:
                 logger.debug(f"on_dialog callback error: {e}")
 
     def _dismiss_dialog(self, hwnd: int, buttons: list, event: DialogEvent) -> bool:
-        """Attempt to dismiss a dialog window. Returns True if successful."""
+        """Dismiss a dialog and confirm that it actually left the screen."""
+        attempted_buttons = set()
+
+        def dismiss_with_button(btn_hwnd: int, btn_text: str) -> bool:
+            key = (int(btn_hwnd), _normalize_button_text(btn_text))
+            if key in attempted_buttons:
+                return False
+            attempted_buttons.add(key)
+
+            event.button_clicked = btn_text
+            try:
+                _click_button(btn_hwnd)
+            except Exception as error:
+                logger.debug(f"Synchronous click failed for '{btn_text}': {error}")
+            if _wait_for_window_to_hide(hwnd):
+                logger.info(f"Clicked '{btn_text}' on dialog: {event.title}")
+                return True
+
+            # VBE can be busy inside the compiler's modal loop and reject a
+            # bounded SendMessageTimeout call. Queue the same click and verify
+            # the window state instead of treating message dispatch as proof.
+            try:
+                _post_button_click(btn_hwnd)
+            except Exception as error:
+                logger.debug(f"Queued click failed for '{btn_text}': {error}")
+            if _wait_for_window_to_hide(hwnd):
+                logger.info(f"Queued '{btn_text}' on dialog: {event.title}")
+                return True
+            return False
+
         # Strategy 1: Click a known dismiss button
         preferred_order = self._get_button_priority()
         for preferred in preferred_order:
             for btn_hwnd, btn_text in buttons:
                 if _normalize_button_text(btn_text) in preferred:
-                    try:
-                        _click_button(btn_hwnd)
-                        event.button_clicked = btn_text
-                        logger.info(f"Clicked '{btn_text}' on dialog: {event.title}")
+                    if dismiss_with_button(btn_hwnd, btn_text):
                         return True
-                    except Exception as e:
-                        logger.debug(f"Failed to click '{btn_text}': {e}")
 
         # Strategy 2: Click ANY button we recognize
         for btn_hwnd, btn_text in buttons:
             if _normalize_button_text(btn_text) in DISMISS_BUTTONS:
-                try:
-                    _click_button(btn_hwnd)
-                    event.button_clicked = btn_text
-                    logger.info(f"Clicked fallback '{btn_text}' on dialog: {event.title}")
+                if dismiss_with_button(btn_hwnd, btn_text):
                     return True
-                except Exception as e:
-                    logger.debug(f"Failed to click fallback '{btn_text}': {e}")
 
         # Strategy 3: Send WM_CLOSE
         try:
             if _close_window(hwnd):
                 event.button_clicked = "[WM_CLOSE]"
-                logger.info(f"Sent WM_CLOSE to dialog: {event.title}")
-                return True
-            logger.debug(f"PostMessageW rejected WM_CLOSE for dialog: {event.title}")
+                if _wait_for_window_to_hide(hwnd):
+                    logger.info(f"Sent WM_CLOSE to dialog: {event.title}")
+                    return True
+                logger.debug(
+                    f"WM_CLOSE did not dismiss dialog: {event.title}"
+                )
+            else:
+                logger.debug(
+                    f"PostMessageW rejected WM_CLOSE for dialog: {event.title}"
+                )
             return False
         except Exception as e:
             logger.debug(f"Failed to send WM_CLOSE: {e}")
