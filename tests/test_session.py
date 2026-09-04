@@ -53,6 +53,64 @@ class TestSessionProperties:
     """Test session property defaults before context entry."""
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_exit_requests_application_quit_with_sentinel(self, monkeypatch):
+        """Closing an SDI workbook window is not quitting the automation server."""
+        from xlvbatools.core import session as session_module
+
+        calls = []
+        sentinel = SimpleNamespace(Saved=False)
+        session = session_module.ExcelSession("dummy.xlsm", save_on_exit=False)
+        session.excel_pid = 4242
+        session.wb = SimpleNamespace(Close=lambda save: calls.append("close_target"))
+        session.excel = SimpleNamespace(
+            Workbooks=SimpleNamespace(Add=lambda: sentinel),
+            Hwnd=0,  # Shutdown must not depend on a surviving workbook HWND.
+            Quit=lambda: calls.append("quit_application"),
+        )
+        monkeypatch.setattr(session_module, "is_process_running", lambda pid: False)
+
+        session.__exit__(None, None, None)
+
+        assert calls == ["close_target", "quit_application"]
+        assert sentinel.Saved is True
+        assert session.excel is None
+        assert session.cleanup_result["quit_requested"] is True
+        assert session.cleanup_result["exited_gracefully"] is True
+        assert session.cleanup_result["force_terminated"] is False
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_quit_failure_is_reported_and_owned_cleanup_still_runs(self, monkeypatch):
+        from xlvbatools.core import session as session_module
+
+        killed = []
+        session = session_module.ExcelSession("dummy.xlsm", exit_grace_period=0)
+        session.excel_pid = 4242
+
+        def fail_quit():
+            raise RuntimeError("quit rejected")
+
+        session.excel = SimpleNamespace(
+            Workbooks=SimpleNamespace(Add=lambda: SimpleNamespace(Saved=True)),
+            Quit=fail_quit,
+        )
+        monkeypatch.setattr(session_module, "is_process_running", lambda pid: not killed)
+        monkeypatch.setattr(
+            session_module, "kill_process_by_pid", lambda pid: killed.append(pid) or True,
+        )
+
+        session.__exit__(None, None, None)
+
+        assert killed == [4242]
+        assert session.excel is None
+        assert session.cleanup_result["quit_requested"] is False
+        assert session.cleanup_result["exited_gracefully"] is False
+        assert session.cleanup_result["force_terminated"] is True
+        assert session.cleanup_result["still_running"] is False
+        assert session.cleanup_result["details"]["shutdown_quit_error"] == (
+            "RuntimeError: quit rejected"
+        )
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_initial_state(self):
         from xlvbatools.core.session import ExcelSession
         session = ExcelSession("dummy.xlsm")

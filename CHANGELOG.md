@@ -6,6 +6,14 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Request `Application.Quit()` after releasing child COM proxies during owned
+  Excel cleanup. The previous sentinel path posted window/thread messages
+  without calling Quit, intermittently leaving the automation server alive
+  after successful downstream workflows (WA-OCEAN XL-18). Preserve the
+  PID-scoped watchdog, cleanup deadline, and strict forced-termination failure.
+
 ### Changed
 
 - Reclassified the complete test suite by Lowest Feasible Layer, removed eight
