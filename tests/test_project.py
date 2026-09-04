@@ -337,32 +337,6 @@ def test_public_api_is_small_and_does_not_import_win32com():
 
 
 @pytest.mark.excel
-@pytest.mark.smoke
-def test_project_inspection_reports_clean_owned_process(minimal_workbook):
-    result = Project.open(minimal_workbook).inspect(
-        ["Sheet1"], include_data=True, include_screenshots=False, timeout=60,
-    )
-
-    assert result.success is True, result.to_dict()
-    assert result.schema_version == "1.3"
-    assert result.data.workbook_data["sheets"]["Sheet1"]
-    assert result.diagnostics.cleanup.is_clean, result.to_dict()
-    assert result.require_clean_shutdown().still_running is False
-
-
-@pytest.mark.excel
-@pytest.mark.smoke
-def test_project_macro_reports_clean_owned_process(runtime_error_workbook):
-    result = Project.open(runtime_error_workbook).run(
-        "CompleteNormally", timeout=60, save=False,
-    )
-
-    assert result.success is True, json.dumps(result.to_dict(), indent=2)
-    assert result.data.macro == "CompleteNormally"
-    assert result.require_clean_shutdown().still_running is False
-
-
-@pytest.mark.excel
 def test_project_vba_round_trip_uses_clean_sequential_workers(
     runtime_error_workbook, tmp_path,
 ):
@@ -392,47 +366,7 @@ def test_project_vba_round_trip_uses_clean_sequential_workers(
 
 
 @pytest.mark.excel
-def test_live_diff_classifies_vba_case_and_spacing_as_equivalent(
-    runtime_error_workbook, tmp_path,
-):
-    source = tmp_path / "case_source"
-    project = Project.open(runtime_error_workbook, source=source)
-    extracted = project.extract(timeout=90)
-    assert extracted.success is True, extracted.to_dict()
-    component = next(
-        item for item in extracted.data.components
-        if item.name == "modReliabilityTest"
-    )
-    component_path = source / component.file
-    original = component_path.read_text(encoding="utf-8")
-    changed = original.replace(
-        "Public Sub CompleteNormally()",
-        "PUBLIC  SUB  completenormally ( )",
-    )
-    assert changed != original
-    component_path.write_text(changed, encoding="utf-8")
-
-    semantic = project.diff(comparison="vba", timeout=90)
-    semantic_component = next(
-        item for item in semantic.data if item.name == "modReliabilityTest"
-    )
-    assert semantic.success is True, semantic.to_dict()
-    assert semantic_component.status == "equivalent"
-    assert semantic_component.equivalence == "vba_token_equivalent"
-    assert semantic.require_clean_shutdown().still_running is False
-
-    raw = project.diff(comparison="text", timeout=90)
-    raw_component = next(
-        item for item in raw.data if item.name == "modReliabilityTest"
-    )
-    assert raw.success is True, raw.to_dict()
-    assert raw_component.status == "modified"
-    assert raw_component.lines_added > 0
-    assert raw_component.lines_removed > 0
-    assert raw.require_clean_shutdown().still_running is False
-
-
-@pytest.mark.excel
+@pytest.mark.smoke
 def test_live_lint_conclusively_compiles_valid_minimal_workbook(minimal_workbook):
     result = Project.open(minimal_workbook).lint_workbook(
         compile_test=True,
@@ -525,18 +459,3 @@ def test_live_lint_rejects_duplicate_declaration_and_closes_cleanly(
     assert new_only.metadata["known_issue_count"] == len(result.data)
     new_cleanup = new_only.require_clean_shutdown()
     assert new_cleanup.exited_gracefully is True
-
-
-@pytest.mark.excel
-def test_project_modify_then_inspect_across_isolated_workers(minimal_workbook):
-    project = Project.open(minimal_workbook)
-    modified = project.modify(sheet="Sheet1", cell="B2", value=73, timeout=90)
-    assert modified.success is True, modified.to_dict()
-    assert modified.require_clean_shutdown().still_running is False
-
-    inspected = project.inspect(
-        ["Sheet1"], cell_range="B2", include_screenshots=False, timeout=90,
-    )
-    assert inspected.success is True, inspected.to_dict()
-    cell = inspected.data.workbook_data["sheets"]["Sheet1"]["cells"]["B2"]
-    assert cell["value"] == 73

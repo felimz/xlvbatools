@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Reclassified the complete test suite by Lowest Feasible Layer, removed eight
+  redundant live Excel executions, consolidated repeated unit permutations,
+  and added a stale-test-import gate.
+- Pull requests now run a three-case minimal-workbook Excel smoke suite; full
+  Excel acceptance runs nightly or on manual dispatch, with stress remaining
+  an explicit manual reliability gate.
+- Feature-branch pushes no longer duplicate the complete offline workflow that
+  the pull-request event already runs; direct `main` pushes remain covered.
+- Automatic native Excel checks require the explicit
+  `XLVBA_EXCEL_CI_ENABLED=true` repository variable, preventing PRs from
+  waiting indefinitely when no matching self-hosted runner is registered.
+
 ## [1.2.3] - 2026-07-20
 
 ### Added

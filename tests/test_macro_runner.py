@@ -81,15 +81,6 @@ def test_targeted_timeout_cleanup(monkeypatch):
 
 
 @pytest.mark.excel
-def test_worker_macro_completes(runtime_error_workbook):
-    from xlvbatools.macro.runner import run_macro
-
-    result = run_macro(runtime_error_workbook, "CompleteNormally", timeout=20, save_on_exit=False)
-    assert result["success"] is True
-    assert result["cleanup"]["still_running"] is False
-
-
-@pytest.mark.excel
 def test_worker_returns_multiline_runtime_error(runtime_error_workbook):
     from xlvbatools.macro.runner import run_macro
 
@@ -98,18 +89,6 @@ def test_worker_returns_multiline_runtime_error(runtime_error_workbook):
     assert result["phase"] == "macro_execution"
     assert "Diagnostic line one." in result["primary_error"]
     assert "Diagnostic line two." in result["primary_error"]
-    assert result["cleanup"]["still_running"] is False
-
-
-@pytest.mark.excel
-def test_worker_enforces_infinite_loop_timeout(runtime_error_workbook):
-    from xlvbatools.macro.runner import run_macro
-
-    result = run_macro(runtime_error_workbook, "LoopForever", timeout=6, save_on_exit=False)
-    assert result["success"] is False
-    assert result["timed_out"] is True
-    assert result["phase"] == "macro_execution"
-    assert result["excel_pid"] is not None
     assert result["cleanup"]["still_running"] is False
 
 

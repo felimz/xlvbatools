@@ -249,6 +249,7 @@ Documentation:
 - [Versioning and releases](docs/versioning.md)
 - [Machine-first CLI output](docs/cli-output.md)
 - [Testing](docs/testing.md)
+- [Test suite inventory and LFL audit](docs/test-suite-audit.md)
 - [Release validation](docs/release-validation.md)
 
 ## License

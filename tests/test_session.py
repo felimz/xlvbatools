@@ -291,6 +291,7 @@ class TestSessionCOM:
     """Integration tests requiring Excel COM. Skipped unless Excel is installed."""
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    @pytest.mark.smoke
     def test_open_close_minimal_workbook(self, minimal_workbook):
         from xlvbatools.core.session import ExcelSession
         with ExcelSession(minimal_workbook, save_on_exit=False) as session:

@@ -1,6 +1,11 @@
 name: Excel acceptance
 
 on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * *"
   workflow_dispatch:
     inputs:
       run_stress:
@@ -14,6 +19,7 @@ permissions:
 
 jobs:
   live-excel:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.XLVBA_EXCEL_CI_ENABLED == 'true' }}
     runs-on: [self-hosted, Windows, Excel]
     steps:
       - uses: actions/checkout@v6
@@ -23,6 +29,12 @@ jobs:
           cache: pip
       - run: python -m venv .venv
       - run: .venv\Scripts\python.exe -m pip install -e ".[dev]"
-      - run: .venv\Scripts\python.exe scripts/test.py excel
-      - if: ${{ inputs.run_stress }}
+      - name: Targeted Excel PR smoke
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+        run: .venv\Scripts\python.exe scripts/test.py excel-smoke
+      - name: Full scheduled or manual Excel acceptance
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: .venv\Scripts\python.exe scripts/test.py excel
+      - name: Optional lifecycle stress
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_stress }}
         run: .venv\Scripts\python.exe scripts/test.py stress

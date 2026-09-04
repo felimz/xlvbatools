@@ -24,18 +24,30 @@ class TestConfigSchema:
         errors = cfg.validate()
         assert errors == []
 
-    def test_validation_fails_bad_ext(self):
-        from xlvbatools.config.schema import XlvbaConfig
-        cfg = XlvbaConfig(workbook="file.xlsx")
-        errors = cfg.validate()
-        assert len(errors) == 1
-        assert ".xlsm" in errors[0]
-
-    def test_validation_fails_bad_limit(self):
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"workbook": "file.xlsx"}, ".xlsm"),
+            ({"rolling_limit": 0}, "Rolling limit"),
+        ],
+        ids=("workbook-extension", "snapshot-limit"),
+    )
+    def test_validation_rejects_invalid_boundaries(self, overrides, message):
         from xlvbatools.config.schema import XlvbaConfig, SnapshotConfig
-        cfg = XlvbaConfig(snapshots=SnapshotConfig(rolling_limit=0))
+
+        rolling_limit = overrides.get("rolling_limit")
+        config_values = {
+            name: value for name, value in overrides.items()
+            if name != "rolling_limit"
+        }
+        cfg = XlvbaConfig(
+            **config_values,
+            **({"snapshots": SnapshotConfig(rolling_limit=rolling_limit)}
+               if rolling_limit is not None else {}),
+        )
         errors = cfg.validate()
         assert len(errors) == 1
+        assert message in errors[0]
 
 
 @pytest.mark.unit

@@ -534,46 +534,6 @@ def test_cli_run_rejects_invalid_named_range_inputs(options, tmp_path, capsys):
     patch.stopall()
 
 
-@pytest.mark.excel
-@pytest.mark.smoke
-def test_cli_run_named_range_and_no_save_reach_live_worker(
-    runtime_error_workbook, tmp_path, capsys,
-):
-    import xml.etree.ElementTree as ET
-    import zipfile
-
-    from xlvbatools.config.schema import XlvbaConfig
-
-    config = XlvbaConfig(
-        workbook=runtime_error_workbook,
-        vba_source=str(tmp_path / "vba_source"),
-        log_dir=str(tmp_path / "logs"),
-        log_name="cli_live_run",
-    )
-    with patch("xlvbatools.config.loader.load_config", return_value=config), \
-         patch("xlvbatools.logging.setup_logging"):
-        with pytest.raises(SystemExit) as exc_info:
-            main([
-                "run", "VerifyNamedRange",
-                "--named-range", "TestInput=42",
-                "--no-save",
-                "--timeout", "90",
-            ])
-
-    assert exc_info.value.code == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["success"] is True, payload
-    assert payload["data"]["macro"] == "VerifyNamedRange"
-    assert payload["diagnostics"]["cleanup"]["still_running"] is False
-
-    with zipfile.ZipFile(runtime_error_workbook) as workbook_zip:
-        sheet_xml = ET.fromstring(workbook_zip.read("xl/worksheets/sheet1.xml"))
-    namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-    saved_value = sheet_xml.find(".//x:c[@r='C1']/x:v", namespace)
-    assert saved_value is not None
-    assert saved_value.text == "0"
-
-
 @pytest.mark.unit
 def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, capsys):
     """Dump owns its timeout/hidden defaults and emits machine-readable results."""

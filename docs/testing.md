@@ -40,6 +40,30 @@ The `stress` and `smoke` markers are secondary scheduling labels. Every test
 must have exactly one primary marker: `unit`, `integration`, `excel`,
 `distribution`, or `external`. Collection fails if the taxonomy is missing or
 ambiguous. A test using a live Excel fixture must belong to `excel`.
+Collection also rejects a smoke test that uses a heavyweight runtime, compile
+error, duplicate-declaration, or startup-event fixture, and rejects any test
+marked as both smoke and stress. This keeps the PR gate fast by construction.
+
+The maintained test-by-test inventory, Lowest Feasible Layer decisions, and
+migration record are in [test-suite-audit.md](test-suite-audit.md). The fast
+suite also resolves every `xlvbatools` symbol imported by tests, catching stale
+or orphaned imports without starting Excel.
+
+## CI scheduling
+
+Pull requests and pushes to `main` run the three-case Excel smoke tier when the
+repository has a registered `[self-hosted, Windows, Excel]` runner and the
+repository variable `XLVBA_EXCEL_CI_ENABLED` is set to `true`. Without that
+explicit opt-in, the native job is skipped instead of leaving every PR queued
+indefinitely. Manual dispatch remains available for an intentionally started
+runner. Offline CI uses the same PR/main event split, preventing every feature
+branch commit from launching duplicate push and pull-request jobs.
+
+The smoke cases use only the lightweight minimal workbook and cover session
+lifecycle, conclusive compilation, and screenshot/data inspection. Full Excel
+acceptance runs nightly when native CI is enabled, or on manual dispatch.
+Stress remains an explicit manual option. This keeps feedback targeted while
+preserving the complete native lifecycle gate on a predictable schedule.
 
 ## Downstream project separation
 

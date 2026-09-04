@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +31,7 @@ def _calculation_steps(*, screenshots: bool = False, output_dir: str = "screensh
     from xlvbatools import InspectStep, MacroStep, ModifyStep
 
     return [
+        MacroStep("named-range", "VerifyNamedRange", {"TestInput": 42}),
         MacroStep("retrieve", "WorkflowRetrieve"),
         ModifyStep("inputs", "Sheet1", {"A2": 5}, calculate=False),
         MacroStep("calculate", "WorkflowCalculate"),
@@ -46,7 +46,6 @@ def _calculation_steps(*, screenshots: bool = False, output_dir: str = "screensh
     ]
 
 
-@pytest.mark.smoke
 def test_live_workflow_shares_one_excel_session_and_discards_without_save(
     runtime_error_workbook, tmp_path,
 ):
@@ -64,7 +63,7 @@ def test_live_workflow_shares_one_excel_session_and_discards_without_save(
     workflow = result.require_success()
     cleanup = result.require_clean_shutdown()
     assert cleanup.still_running is False
-    assert [step.status for step in workflow.steps] == ["succeeded"] * 4
+    assert [step.status for step in workflow.steps] == ["succeeded"] * 5
     retrieve = workflow.step("retrieve").data
     calculate = workflow.step("calculate").data
     assert isinstance(retrieve, MacroOutput)
@@ -76,6 +75,7 @@ def test_live_workflow_shares_one_excel_session_and_discards_without_save(
     assert screenshot.is_file()
     assert result.artifacts[0].path == str(screenshot)
     assert _saved_cell_value(runtime_error_workbook, "A3") is None
+    assert _saved_cell_value(runtime_error_workbook, "C1") == 0
 
 
 def test_screenshot_repaints_after_macro_and_restores_screen_updating(
@@ -185,55 +185,6 @@ def test_live_workflow_timeout_retains_step_progress_and_does_not_replay(
     cleanup = result.diagnostics.cleanup
     assert cleanup is not None
     assert cleanup.still_running is False
-
-
-def test_live_workflow_cli_emits_one_machine_result_envelope(
-    runtime_error_workbook, tmp_path,
-):
-    workflow_file = tmp_path / "workflow.json"
-    workflow_file.write_text(
-        json.dumps({
-            "workflow_schema_version": "1.0",
-            "steps": [
-                {"id": "retrieve", "kind": "macro", "macro": "WorkflowRetrieve"},
-                {
-                    "id": "inputs", "kind": "modify", "sheet": "Sheet1",
-                    "values": {"A2": 5},
-                },
-                {
-                    "id": "calculate", "kind": "macro",
-                    "macro": "WorkflowCalculate",
-                },
-                {
-                    "id": "results", "kind": "inspect", "sheets": ["Sheet1"],
-                    "cell_range": "A1:A3", "include_screenshots": False,
-                },
-            ],
-        }),
-        encoding="utf-8",
-    )
-    completed = subprocess.run(
-        [
-            sys.executable, "-m", "xlvbatools.cli.main", "workflow",
-            "--workbook", runtime_error_workbook,
-            "--file", str(workflow_file),
-            "--no-save", "--timeout", "90",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    payload = json.loads(completed.stdout)
-    assert payload["operation"] == "workflow"
-    assert payload["success"] is True
-    assert len(payload["data"]["steps"]) == 4
-    cells = payload["data"]["steps"][3]["data"]["workbook_data"]["sheets"][
-        "Sheet1"
-    ]["cells"]
-    assert cells["A3"]["value"] == 15
-    assert payload["diagnostics"]["cleanup"]["still_running"] is False
 
 
 @pytest.mark.stress
