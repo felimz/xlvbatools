@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ast
+import importlib
+import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,13 +21,17 @@ def _require_git_checkout() -> None:
         pytest.skip("repository hygiene checks require a Git checkout")
 
 
-def _is_ignored(path: str) -> bool:
+def _ignored_paths(paths: tuple[str, ...]) -> set[str]:
     completed = subprocess.run(
-        ["git", "check-ignore", "--no-index", "--quiet", path],
+        ["git", "check-ignore", "--no-index", "--stdin", "-z"],
         cwd=ROOT,
+        input="\0".join(paths) + "\0",
+        capture_output=True,
+        text=True,
         check=False,
     )
-    return completed.returncode == 0
+    assert completed.returncode in {0, 1}, completed.stderr
+    return {path for path in completed.stdout.split("\0") if path}
 
 
 def test_gitignore_covers_generated_local_and_binary_state():
@@ -51,7 +58,7 @@ def test_gitignore_covers_generated_local_and_binary_state():
         "~$Consumer.xlsm",
         "Consumer.xlsm",
     )
-    assert [path for path in ignored if not _is_ignored(path)] == []
+    assert set(ignored) - _ignored_paths(ignored) == set()
 
 
 def test_gitignore_preserves_reviewable_source_config_and_fixtures():
@@ -71,7 +78,7 @@ def test_gitignore_preserves_reviewable_source_config_and_fixtures():
         "tests/fixtures/tiny.xlsb",
         "tests/fixtures/nested/tiny.xlsm",
     )
-    assert [path for path in reviewable if _is_ignored(path)] == []
+    assert _ignored_paths(reviewable) == set()
 
 
 def test_no_tracked_file_is_now_classified_as_generated():
@@ -114,3 +121,32 @@ def test_runtime_package_has_no_registry_dependency_or_mutation():
                 matches.append(f"{path.relative_to(ROOT)}: {token}")
 
     assert matches == []
+
+
+def test_all_xlvbatools_symbols_imported_by_tests_still_resolve():
+    """Catch stale test imports during the fast suite instead of at runtime."""
+    missing = []
+    for path in sorted((ROOT / "tests").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            module_name = node.module or ""
+            if not module_name.startswith("xlvbatools"):
+                continue
+            module = importlib.import_module(module_name)
+            for alias in node.names:
+                if alias.name == "*" or hasattr(module, alias.name):
+                    continue
+                submodule = f"{module_name}.{alias.name}"
+                try:
+                    found = importlib.util.find_spec(submodule) is not None
+                except (AttributeError, ModuleNotFoundError, ValueError):
+                    found = False
+                if not found:
+                    missing.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: "
+                        f"from {module_name} import {alias.name}"
+                    )
+
+    assert missing == []

@@ -26,6 +26,7 @@ LIVE_EXCEL_FIXTURES = frozenset({
     "duplicate_declaration_workbook",
     "startup_event_workbook",
 })
+SMOKE_EXCEL_FIXTURES = frozenset({"minimal_workbook"})
 
 
 def pytest_addoption(parser):
@@ -57,6 +58,20 @@ def pytest_collection_modifyitems(items):
         tier = tiers[0]
         if item.get_closest_marker("stress") is not None and tier != "excel":
             errors.append(f"{item.nodeid}: stress tests must belong to the excel tier")
+        if item.get_closest_marker("smoke") is not None:
+            if tier != "excel":
+                errors.append(f"{item.nodeid}: smoke tests must belong to the excel tier")
+            if item.get_closest_marker("stress") is not None:
+                errors.append(f"{item.nodeid}: smoke and stress are mutually exclusive")
+            expensive_fixtures = (
+                LIVE_EXCEL_FIXTURES.difference(SMOKE_EXCEL_FIXTURES)
+                .intersection(item.fixturenames)
+            )
+            if expensive_fixtures:
+                errors.append(
+                    f"{item.nodeid}: smoke test uses heavyweight fixtures "
+                    f"{sorted(expensive_fixtures)}"
+                )
         if LIVE_EXCEL_FIXTURES.intersection(item.fixturenames) and tier != "excel":
             errors.append(
                 f"{item.nodeid}: live Excel fixture is not isolated in the excel tier"

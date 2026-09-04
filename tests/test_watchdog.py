@@ -62,30 +62,22 @@ class TestDialogEvent:
 class TestDialogClassifier:
     """Unit tests for dialog type classification."""
 
+    @pytest.mark.parametrize(
+        ("title", "texts", "expected"),
+        [
+            ("Microsoft Visual Basic", ["Compile error: Expected"], "compile_error"),
+            ("Microsoft Visual Basic", ["Run-time error '1004'"], "runtime_error"),
+            ("Microsoft Excel", ["Something happened"], "excel_alert"),
+            ("Microsoft Excel", ["Do you want to save changes?"], "save_dialog"),
+            ("Some Other App", ["random text"], "unknown"),
+        ],
+        ids=("compile", "runtime", "excel-alert", "save", "unknown"),
+    )
     @pytest.mark.skipif(sys.platform != "win32", reason="watchdog requires Windows")
-    def test_classify_compile_error(self):
+    def test_classifies_dialog(self, title, texts, expected):
         from xlvbatools.core.watchdog import _classify_dialog
-        assert _classify_dialog("Microsoft Visual Basic", ["Compile error: Expected"]) == "compile_error"
 
-    @pytest.mark.skipif(sys.platform != "win32", reason="watchdog requires Windows")
-    def test_classify_runtime_error(self):
-        from xlvbatools.core.watchdog import _classify_dialog
-        assert _classify_dialog("Microsoft Visual Basic", ["Run-time error '1004'"]) == "runtime_error"
-
-    @pytest.mark.skipif(sys.platform != "win32", reason="watchdog requires Windows")
-    def test_classify_excel_alert(self):
-        from xlvbatools.core.watchdog import _classify_dialog
-        assert _classify_dialog("Microsoft Excel", ["Something happened"]) == "excel_alert"
-
-    @pytest.mark.skipif(sys.platform != "win32", reason="watchdog requires Windows")
-    def test_classify_save_dialog(self):
-        from xlvbatools.core.watchdog import _classify_dialog
-        assert _classify_dialog("Microsoft Excel", ["Do you want to save changes?"]) == "save_dialog"
-
-    @pytest.mark.skipif(sys.platform != "win32", reason="watchdog requires Windows")
-    def test_classify_unknown(self):
-        from xlvbatools.core.watchdog import _classify_dialog
-        assert _classify_dialog("Some Other App", ["random text"]) == "unknown"
+        assert _classify_dialog(title, texts) == expected
 
 
 @pytest.mark.unit

@@ -409,6 +409,7 @@ def test_live_dump_reports_partial_rich_text_runs(minimal_workbook):
 
 
 @pytest.mark.excel
+@pytest.mark.smoke
 def test_combined_range_data_and_screenshot_share_one_clean_session(
     minimal_workbook, tmp_path,
 ):
