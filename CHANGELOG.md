@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-09-04
+
 ### Fixed
 
 - Require a signaled process handle before certifying owned-process exit.

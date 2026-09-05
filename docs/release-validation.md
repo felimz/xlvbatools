@@ -241,3 +241,28 @@ The `v1.2.3` patch release completed with:
 This is upstream release evidence only. Re-run each consumer repository's
 domain-specific screenshot and broken-startup acceptance cases after installing
 the released wheel. Those cases remain owned by the consumer project.
+
+## v1.2.4 source validation record
+
+The merged XL-18 runtime and v1.2.4 metadata completed with:
+
+- 367 passing offline tests in 10.29 seconds with 69.23% coverage;
+- clean Ruff, CI-scoped mypy (18 source files), and dependency checks;
+- 395 passing tests in the complete upstream suite in 865.44 seconds,
+  including distribution, native Excel, and all five stress cases;
+- no native COM finalizer signatures in the complete-suite transcript; and
+- 15 passing documentation and repository-hygiene checks after integration of
+  the retained validation evidence and its narrow log-file ignore exception.
+
+The unchanged XL-18 runtime also passed three complete downstream Excel
+profiles (41 tests each) and two downstream release profiles (289 tests each).
+Their independent cleanup audit verified 130 public operations with graceful
+shutdown, no forced termination, and no residual owned process. These runs
+overlapped other PID-isolated testing on the same host; they are not
+exclusive-host timing measurements. See [XL-18 qualification](xl18-shutdown.md)
+for the exact candidate, environment, exclusions, and retained evidence.
+
+Candidate qualification does not replace adoption checks against the published
+wheel. Exact-artifact installation and production-workbook compile results are
+reported in the GitHub release notes; downstream projects must pin and validate
+that artifact rather than treating the candidate's version metadata as a release.

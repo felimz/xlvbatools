@@ -68,6 +68,9 @@ Desktop.ini
 logs/
 *.log
 
+# Reviewed XL-18 release evidence, not disposable runtime logs.
+!docs/validation/xl18/*.log
+
 # Workbook backups and snapshots (user-generated, not tracked)
 backups/
 snapshots/
