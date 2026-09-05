@@ -130,14 +130,14 @@ def is_process_running(pid: int) -> bool:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, wintypes.LPDWORD]
-    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
 
-    process_query_limited_information = 0x1000
+    synchronize = 0x00100000
     handle = kernel32.OpenProcess(
-        process_query_limited_information, False, pid,
+        synchronize, False, pid,
     )
     if not handle:
         # Access denied proves that a process currently owns the PID even when
@@ -145,10 +145,10 @@ def is_process_running(pid: int) -> bool:
         # cannot be established as live.
         return ctypes.get_last_error() == 5
     try:
-        exit_code = wintypes.DWORD()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-            return False
-        return int(exit_code.value) == 259  # STILL_ACTIVE
+        # ExitProcess sets the exit code before signaling the process object.
+        # Only a signaled handle proves termination is complete. An unknown
+        # wait result must not certify clean shutdown either.
+        return kernel32.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0
     finally:
         kernel32.CloseHandle(handle)
 
