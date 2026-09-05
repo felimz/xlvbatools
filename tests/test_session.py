@@ -11,6 +11,17 @@ import pytest
 from types import SimpleNamespace
 
 
+def _fake_excel(*, Quit, **attributes):
+    """Model the raw IDispatch shutdown boundary without starting Excel."""
+    return SimpleNamespace(
+        _oleobj_=SimpleNamespace(
+            GetIDsOfNames=lambda name: 302,
+            Invoke=lambda dispid, lcid, flags, result: Quit(),
+        ),
+        **attributes,
+    )
+
+
 def _vbe_is_visible(excel) -> bool:
     """Read VBE visibility without retaining a nested COM proxy."""
     vbe = None
@@ -62,10 +73,16 @@ class TestSessionProperties:
         session = session_module.ExcelSession("dummy.xlsm", save_on_exit=False)
         session.excel_pid = 4242
         session.wb = SimpleNamespace(Close=lambda save: calls.append("close_target"))
-        session.excel = SimpleNamespace(
+
+        def quit_application():
+            assert session.wb is None
+            assert session.excel is None  # Type-info wrapper finalized before Quit.
+            calls.append("quit_application")
+
+        session.excel = _fake_excel(
             Workbooks=SimpleNamespace(Add=lambda: sentinel),
             Hwnd=0,  # Shutdown must not depend on a surviving workbook HWND.
-            Quit=lambda: calls.append("quit_application"),
+            Quit=quit_application,
         )
         monkeypatch.setattr(session_module, "is_process_running", lambda pid: False)
 
@@ -89,7 +106,7 @@ class TestSessionProperties:
         def fail_quit():
             raise RuntimeError("quit rejected")
 
-        session.excel = SimpleNamespace(
+        session.excel = _fake_excel(
             Workbooks=SimpleNamespace(Add=lambda: SimpleNamespace(Saved=True)),
             Quit=fail_quit,
         )
@@ -143,7 +160,7 @@ class TestSessionProperties:
             "dummy.xlsm", exit_grace_period=0, terminate_owned_process=True
         )
         session.excel_pid = owned_pid
-        session.excel = SimpleNamespace(Quit=lambda: None)
+        session.excel = _fake_excel(Quit=lambda: None)
         session.wb = SimpleNamespace(Close=lambda value: None)
         session.__exit__(None, None, None)
 
@@ -160,7 +177,7 @@ class TestSessionProperties:
         calls = []
         session = session_module.ExcelSession("dummy.xlsm")
         session.excel_pid = 4242
-        session.excel = SimpleNamespace(Quit=lambda: None)
+        session.excel = _fake_excel(Quit=lambda: None)
         session.wb = SimpleNamespace(Close=lambda value: None)
         session._com_initialized = True
         session._com_thread_id = 1
@@ -203,7 +220,7 @@ class TestSessionProperties:
         session.excel_pid = 4242
         session.watchdog = Watchdog()
         session.wb = SimpleNamespace(Close=lambda value: calls.append("workbook_close"))
-        session.excel = SimpleNamespace(Quit=lambda: calls.append("excel_quit"))
+        session.excel = _fake_excel(Quit=lambda: calls.append("excel_quit"))
 
         session.__exit__(None, None, None)
 
@@ -284,7 +301,7 @@ class TestSessionProperties:
                 return []
 
         fake_wb = SimpleNamespace(Close=lambda value: None)
-        fake_excel = SimpleNamespace(
+        fake_excel = _fake_excel(
             Hwnd=99,
             Visible=False,
             DisplayAlerts=True,
@@ -530,5 +547,7 @@ class TestSessionCOM:
         combined = completed.stdout + completed.stderr
         assert completed.returncode == 0, combined
         assert '"still_running": false' in completed.stdout.lower()
+        assert '"exited_gracefully": true' in completed.stdout.lower()
+        assert '"force_terminated": false' in completed.stdout.lower()
         for signature in ("Windows fatal exception", "0x800706ba", "0x80010108"):
             assert signature not in combined, combined

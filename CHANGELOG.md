@@ -8,8 +8,10 @@ All notable changes are documented here. This project follows
 
 ### Fixed
 
-- Request `Application.Quit()` after releasing child COM proxies during owned
-  Excel cleanup. The previous sentinel path posted window/thread messages
+- Request `Application.Quit()` after releasing child and application-wrapper
+  COM proxies, retaining only the raw dispatch interface for the final call.
+  This prevents native type-info finalizer errors after Excel disconnects.
+  The previous sentinel path posted window/thread messages during owned Excel cleanup
   without calling Quit, intermittently leaving the automation server alive
   after successful downstream workflows (WA-OCEAN XL-18). Preserve the
   PID-scoped watchdog, cleanup deadline, and strict forced-termination failure.

@@ -333,21 +333,32 @@ class ExcelSession:
         # WM_QUIT to its thread bypasses Excel's application shutdown path.
         # Release child proxies while the sentinel keeps the server alive,
         # then explicitly quit the owned Application before releasing COM.
-        shutdown_workbook = None
-        gc.collect()
-        gc.collect()
+        quit_dispatch = None
         if self.excel is not None:
             try:
-                self.excel.Quit()
+                # Retain only IDispatch for the final call. The dynamic wrapper
+                # also owns type-info proxies that can raise native RPC errors
+                # if finalized after Quit has disconnected the Excel server.
+                quit_dispatch = self.excel._oleobj_
+                quit_dispid = quit_dispatch.GetIDsOfNames("Quit")
+                self.excel = None
+                gc.collect()
+                gc.collect()
+                shutdown_workbook = None
+                gc.collect()
+                gc.collect()
+                quit_dispatch.Invoke(quit_dispid, 0, 1, 0)  # DISPATCH_METHOD, no result
                 quit_requested = True
-                shutdown_method = "application_quit_after_child_release"
+                shutdown_method = "application_quit_after_ordered_com_release"
             except Exception as error:
                 self.cleanup_result.setdefault("details", {})["shutdown_quit_error"] = (
                     f"{type(error).__name__}: {error}"
                 )
                 logger.warning(f"Error quitting Excel: {error}")
             finally:
+                shutdown_workbook = None
                 self.excel = None
+                quit_dispatch = None
                 gc.collect()
                 gc.collect()
 
