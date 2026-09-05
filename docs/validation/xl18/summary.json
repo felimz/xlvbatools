@@ -1,0 +1,120 @@
+{
+  "environment": {
+    "xlvbatools_source_commit": "6ecc57579f3ca4446f00ae2986eece75eefc19e7",
+    "wa_ocean_commit": "c10565b2175bf20fc3d4666679dcff30267617e8",
+    "python": "3.14.4",
+    "xlvbatools_version": "1.2.3",
+    "pywin32_version": "312",
+    "pytest_version": "9.1.1",
+    "installed_session_matches_candidate_source": true,
+    "candidate_is_published_release": false,
+    "installed_source": {
+      "url": "https://github.com/felimz/xlvbatools.git",
+      "vcs_info": {
+        "commit_id": "6ecc57579f3ca4446f00ae2986eece75eefc19e7",
+        "requested_revision": "6ecc57579f3ca4446f00ae2986eece75eefc19e7",
+        "vcs": "git"
+      }
+    },
+    "initial_candidate_wheel_sha256": "bb55daac0b3ade397bc0413ff8c6e5941c869817acab6a4bfaa212e7c9a7d84c",
+    "qualification_install": "git commit pinned by pyproject.toml, built and installed by pip with PEP 517 isolation",
+    "qualification_audit_sha256": "92a1670a5073a54cc2b687725eac8fa0df33fcd838cab9f8a5582299a5817b27",
+    "qualification_wheel_sha256": "68f248f45d37ee6fbeddcaa45a1ea0384deb565a7bd9ada9b046c1a0bbc362c4",
+    "host_concurrency_caveat": "The coordinated upstream task reported an old-main all-tier suite overlapping these Excel profiles (390 passed, 886.08s) and a runtime 6ecc575 plus v1.2.4 metadata all-tier suite overlapping the release profiles. This runner executes its own profiles sequentially, but the host was not exclusively running this qualification. All cleanup remains operation-owned PID scoped."
+  },
+  "suites": [
+    {
+      "name": "xl18-complete-upstream-fast",
+      "passed": 367,
+      "seconds": 7.931,
+      "junit_sha256": "a5f33a2566403f0eb14d5b0f4087ad5b90d3b073e6341007b7096ecc96126a70",
+      "log_sha256": "2ff3eb4b7e373e98de068d6aa5c2ac418d8d0431376c708d7927daab797ec5c3"
+    },
+    {
+      "name": "xl18-complete-upstream-distribution",
+      "passed": 1,
+      "seconds": 16.64,
+      "junit_sha256": "615ab75bb2c9de45ed3545c0a8aceceb47c52e5c616a1c0c4a13785bd3e1a724",
+      "log_sha256": "943babdc3522184d5850e83542c2b38dc6d5f727df0445cc090d0341961daa63"
+    },
+    {
+      "name": "xl18-complete-upstream-excel",
+      "passed": 22,
+      "seconds": 319.349,
+      "junit_sha256": "5329153183fcc777db5729a522517e66e6cc6e09e45fbe8ee66a1a25632e3790",
+      "log_sha256": "b787bb0be4e3f67f5c9dc48412a74539502dae5f0ee198210680706d49114dc1"
+    },
+    {
+      "name": "xl18-complete-upstream-stress",
+      "passed": 5,
+      "seconds": 636.267,
+      "junit_sha256": "193b76b69358595d6f27f1bc07649b4091d8a3d510b03aa11686867f38158a24",
+      "log_sha256": "cf08f3fe47282755325393df90830d2ff42d02f7f92484a186753e03fadb19f7"
+    },
+    {
+      "name": "xl18-complete-excel-1",
+      "passed": 41,
+      "seconds": 330.582,
+      "junit_sha256": "61fe0bb289a1421b2c8cd74ed158b6b20f7158c9a6d4a197050c15a773ef6529",
+      "log_sha256": "3f78fea423568db37f4efb07c5f6c9d181b5bcf702c31490250933329c5339a7",
+      "audited_public_operations": 26,
+      "cleanup_reports_all_clean": true,
+      "expected_error_fixture_dialogs": 4,
+      "unexpected_dialogs": 0,
+      "residual_owned_pids": 0,
+      "audit_sha256": "6df2937629431f472e9803c55e6f4b864235ec9efca326a32bfab46c4a2efd40"
+    },
+    {
+      "name": "xl18-complete-excel-2",
+      "passed": 41,
+      "seconds": 335.513,
+      "junit_sha256": "0b3b0eae2bcccd6b30307ba7ce8be36cf5fcba2bfa4ef08c04b02f32674f9219",
+      "log_sha256": "ad0328dbe131d7e8db9fbfbb693b94bd2c0c24ef9bc3eb888d819cd3358886ff",
+      "audited_public_operations": 26,
+      "cleanup_reports_all_clean": true,
+      "expected_error_fixture_dialogs": 4,
+      "unexpected_dialogs": 0,
+      "residual_owned_pids": 0,
+      "audit_sha256": "90a468c8d90323fd156432a44b77ca012782185244e78c1ca45408852462f781"
+    },
+    {
+      "name": "xl18-complete-excel-3",
+      "passed": 41,
+      "seconds": 337.968,
+      "junit_sha256": "b8ae468df6626fb6d645df80320beebca3dc891fd86f127a16e24814df4b1f22",
+      "log_sha256": "9bc2e149c1e13bf6558867be5f09171be0ded81cbd4727ce273cb63750cfd600",
+      "audited_public_operations": 26,
+      "cleanup_reports_all_clean": true,
+      "expected_error_fixture_dialogs": 4,
+      "unexpected_dialogs": 0,
+      "residual_owned_pids": 0,
+      "audit_sha256": "fcb241104ceb9c60aeefbef7c4bac298bc7c1f3cc9f5b224dd1f515eddb12212"
+    },
+    {
+      "name": "xl18-complete-release-1",
+      "passed": 289,
+      "seconds": 358.69,
+      "junit_sha256": "55c60a364394ff8a0c9ca698a12cbde0ae928233fbee4bf539ad0683bc03a9d9",
+      "log_sha256": "b2256ecf644a9ecf10f0ee8f075a865408bab8a00a2435a482e19df4d9b64635",
+      "audited_public_operations": 26,
+      "cleanup_reports_all_clean": true,
+      "expected_error_fixture_dialogs": 4,
+      "unexpected_dialogs": 0,
+      "residual_owned_pids": 0,
+      "audit_sha256": "b58070f81745dae94ac8e4d5ce01f717e8f2c38063e8e3f170012367b6923585"
+    },
+    {
+      "name": "xl18-complete-release-2",
+      "passed": 289,
+      "seconds": 331.301,
+      "junit_sha256": "3e074f01c50d6bb397e6e8f46e55d76b4635636989a2cc66d5c7db9b30615492",
+      "log_sha256": "979b9d85ce1d24ce164d6e02da97bfd274857c00cd30a8f16a0a885451d31bca",
+      "audited_public_operations": 26,
+      "cleanup_reports_all_clean": true,
+      "expected_error_fixture_dialogs": 4,
+      "unexpected_dialogs": 0,
+      "residual_owned_pids": 0,
+      "audit_sha256": "44ed2e6e8c23a47fbe05e20547de552df1f590439969fc27685647119af3639f"
+    }
+  ]
+}

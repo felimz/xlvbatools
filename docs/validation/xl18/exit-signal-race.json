@@ -1,0 +1,166 @@
+{
+  "request_id": "6762a4f6-a61e-417c-8c1e-e0fc587882f1",
+  "operation": "workflow",
+  "success": false,
+  "diagnostics": {
+    "dialog_events": [
+      {
+        "timestamp": 1788570872.7740731,
+        "hwnd": 12061324,
+        "title": "Microsoft Visual Basic",
+        "type": "runtime_error",
+        "text": "Run-time error '-2147220739 (800402fd)':\r\n\r\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written.",
+        "texts": [
+          "Run-time error '-2147220739 (800402fd)':\r\n\r\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written."
+        ],
+        "controls": [
+          {
+            "hwnd": 32178564,
+            "class_name": "Static",
+            "text": "Run-time error '-2147220739 (800402fd)':\r\n\r\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written."
+          },
+          {
+            "hwnd": 10161370,
+            "class_name": "Button",
+            "text": "&Continue"
+          },
+          {
+            "hwnd": 10226654,
+            "class_name": "Button",
+            "text": "&End"
+          },
+          {
+            "hwnd": 8719836,
+            "class_name": "Button",
+            "text": "&Debug"
+          },
+          {
+            "hwnd": 4983938,
+            "class_name": "Button",
+            "text": "&Help"
+          }
+        ],
+        "sequence": 1,
+        "button_clicked": "&End",
+        "dismissed": true
+      }
+    ],
+    "cleanup": {
+      "pid": 53912,
+      "quit_requested": true,
+      "exited_gracefully": true,
+      "force_terminated": false,
+      "still_running": false,
+      "worker_terminated": false,
+      "workbook_close_error": null,
+      "workbook_save_error": null,
+      "details": {
+        "shutdown_method": "application_quit_after_ordered_com_release"
+      }
+    },
+    "com_error": null,
+    "worker_pid": 28204,
+    "excel_pid": 53912,
+    "worker_exit": {
+      "pid": 28204,
+      "exit_code": 1,
+      "exited": true,
+      "reaped": true,
+      "force_terminated": false,
+      "still_running": false
+    },
+    "attempts": [
+      {
+        "attempt": 1,
+        "phase": "macro_execution",
+        "request_id": "6762a4f6-a61e-417c-8c1e-e0fc587882f1",
+        "error_code": "workflow_step_failed",
+        "error_message": "Run-time error '-2147220739 (800402fd)':\r\n\r\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written.",
+        "error_details": {
+          "step_id": "calculate",
+          "step_kind": "macro",
+          "step_index": 1,
+          "step_error": {
+            "message": "Run-time error '-2147220739 (800402fd)':\r\n\r\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written.",
+            "code": "macro_failed",
+            "error_type": "_StepFailure",
+            "details": {
+              "com_error": {
+                "hresult": -2147352567,
+                "message": "Exception occurred."
+              }
+            }
+          },
+          "worker_output": "Dialog detected: [CAPTURED] [runtime_error] Microsoft Visual Basic: Run-time error '-2147220739 (800402fd)':\n\n\n\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written.\nOnCalculate failed after 0.16s: (-2147352567, 'Exception occurred.', (0, None, None, None, 0, -2146788248), None) | Dialogs captured: [runtime_error] Run-time error '-2147220739 (800402fd)':\n\n\n\nCG shift solve failed rank or residual acceptance (condition=-1.000E+00, max relative residual=1.729E-02); no output loads were written.\n",
+          "progress": {
+            "protocol_version": "2.2",
+            "request_id": "6762a4f6-a61e-417c-8c1e-e0fc587882f1",
+            "operation": "workflow",
+            "worker_pid": 28204,
+            "phase": "workflow_step",
+            "excel_pid": 53912,
+            "step_id": "calculate",
+            "step_kind": "macro",
+            "step_index": 1,
+            "step_count": 2,
+            "step_phase": "macro_execution"
+          }
+        },
+        "worker": {
+          "pid": 28204,
+          "exit_code": 1,
+          "exited": true,
+          "reaped": true,
+          "force_terminated": false,
+          "still_running": false
+        },
+        "excel_pid": 53912,
+        "cleanup": {
+          "pid": 53912,
+          "quit_requested": true,
+          "exited_gracefully": true,
+          "force_terminated": false,
+          "still_running": false,
+          "worker_terminated": false,
+          "workbook_close_error": null,
+          "workbook_save_error": null,
+          "details": {
+            "shutdown_method": "application_quit_after_ordered_com_release"
+          }
+        },
+        "dialog_count": 1,
+        "elapsed_seconds": 5.731597200036049,
+        "retryable": false,
+        "retry_reason": null
+      }
+    ],
+    "progress": {
+      "protocol_version": "2.2",
+      "request_id": "6762a4f6-a61e-417c-8c1e-e0fc587882f1",
+      "operation": "workflow",
+      "worker_pid": 28204,
+      "phase": "workflow_step",
+      "excel_pid": 53912,
+      "step_id": "calculate",
+      "step_kind": "macro",
+      "step_index": 1,
+      "step_count": 2,
+      "step_phase": "macro_execution"
+    }
+  },
+  "owned_pids_still_running": {
+    "53912": true,
+    "28204": false
+  },
+  "live_pid_details": {
+    "53912": {
+      "image": null,
+      "expected_image": "EXCEL.EXE",
+      "pid_reused_for_other_image": false,
+      "exit_code": 0,
+      "creation_filetime": 134330444694964808,
+      "exit_filetime": 134330444751861671,
+      "wait_after_50ms": 0
+    }
+  }
+}

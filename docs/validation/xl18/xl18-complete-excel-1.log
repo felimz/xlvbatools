@@ -1,0 +1,46 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0
+WA-OCEAN profile: excel (com or e2e)
+rootdir: C:\Users\felim\AntigravityProjects\wa_ocean
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0
+collected 289 items / 248 deselected / 41 selected
+
+tests\test_ccr1510_mixed_units.py .                                      [  2%]
+tests\test_cg_shift_methods.py .                                         [  4%]
+tests\test_clc_label_consistency.py .                                    [  7%]
+tests\test_cog_shift_options.py ....                                     [ 17%]
+tests\test_cor_kinematics.py .                                           [ 19%]
+tests\test_deck_position_options.py ....                                 [ 29%]
+tests\test_default_criteria.py .....                                     [ 41%]
+tests\test_e2e_pipeline.py .                                             [ 43%]
+tests\test_e2e_unit_equivalence.py .......                               [ 60%]
+tests\test_input_control_responsiveness.py ..                            [ 65%]
+tests\test_physics_probe.py .                                            [ 68%]
+tests\test_physics_validation.py ....                                    [ 78%]
+tests\test_r3d_missing_sections_e2e.py .                                 [ 80%]
+tests\test_run_macros_cli.py .                                           [ 82%]
+tests\test_status_lifecycle.py .                                         [ 85%]
+tests\test_travel_orientation.py ..                                      [ 90%]
+tests\test_workbook_portable_paths.py ..                                 [ 95%]
+tests\test_xlvba_project_integration.py ..                               [100%]
+
+- generated xml file: C:\Users\felim\AntigravityProjects\wa_ocean\logs\xl18-complete-excel-1.xml -
+============================ slowest 15 durations =============================
+38.54s call     tests/test_status_lifecycle.py::test_status_lifecycle_in_one_owned_excel_session_and_reopen
+23.05s setup    tests/test_default_criteria.py::test_active_metric_defaults_and_note
+20.56s setup    tests/test_deck_position_options.py::test_positioning_envelope_values_cover_manual_and_corner_modes
+19.45s setup    tests/test_cg_shift_methods.py::test_cg_shift_method_comparison
+17.66s setup    tests/test_e2e_unit_equivalence.py::test_reachable_imperial_target_completes_end_to_end
+16.54s call     tests/test_xlvba_project_integration.py::test_compile_error_fails_closed_and_shuts_down_cleanly
+14.94s call     tests/test_default_criteria.py::test_auto_units_round_trip_release_inputs_through_metric_and_imperial_models
+14.75s call     tests/test_cog_shift_options.py::test_cg_control_sync_uses_stored_state_without_toggling
+14.04s call     tests/test_ccr1510_mixed_units.py::test_ccr_workbook_retrieve_matches_risa_and_finds_unsuffixed_nominal_blcs
+13.80s call     tests/test_clc_label_consistency.py::test_calculate_writes_force_direction_shifts_and_shared_format
+13.24s call     tests/test_run_macros_cli.py::test_run_macros_full_pipeline_json
+12.49s call     tests/test_deck_position_options.py::test_derived_positioning_option_completes_full_pipeline
+11.94s call     tests/test_travel_orientation.py::test_travel_orientation_z_aligned
+10.65s setup    tests/test_cog_shift_options.py::test_parameter_envelope_uses_release_shift
+10.24s call     tests/test_xlvba_project_integration.py::test_production_workbook_live_preflight_passes
+=============== 41 passed, 248 deselected in 330.62s (0:05:30) ================

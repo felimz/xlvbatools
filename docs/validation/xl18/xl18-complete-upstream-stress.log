@@ -1,0 +1,19 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\felim\AntigravityProjects\xlvbatools-xl18\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\felim\AntigravityProjects\xlvbatools-xl18
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0
+collecting ... collected 396 items / 391 deselected / 5 selected
+
+tests/test_sequential_com.py::test_session_com_cases_finish_in_one_interpreter PASSED [ 20%]
+tests/test_sequential_com.py::test_repeated_formula_formatting_and_macro_sessions PASSED [ 40%]
+tests/test_sequential_com.py::test_fifty_project_runs_retain_progress_and_cleanup PASSED [ 60%]
+tests/test_sequential_com.py::test_repeated_valid_and_invalid_compile_runs_clean_up_owned_processes PASSED [ 80%]
+tests/test_workflow_live.py::test_twenty_five_live_workflows_leave_no_process_or_finalizer_diagnostics PASSED [100%]
+
+- generated xml file: C:\Users\felim\AntigravityProjects\wa_ocean\logs\xl18-complete-upstream-stress.xml -
+================ 5 passed, 391 deselected in 636.31s (0:10:36) ================
+
+TEST_RUNNER_EXIT_CODE=0

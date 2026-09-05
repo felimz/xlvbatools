@@ -1,0 +1,20 @@
+[
+  {
+    "evidence": "excluded-standby-stress.xml",
+    "result": "4 passed, 1 failed",
+    "classification": "host Modern Standby interruption",
+    "details": "Windows Kernel-Power events 506/507 place standby at 2026-09-04 19:27:21 to 19:32:57 America/Chicago. The timed-out operation reported no Excel PID. The unchanged complete stress suite was subsequently rerun successfully with a temporary keep-awake request."
+  },
+  {
+    "evidence": "excluded-pid-only-audit.xml",
+    "result": "40 passed, 1 failed",
+    "classification": "unresolved transient PID observation in additional diagnostic collector",
+    "details": "The library reported graceful Excel shutdown and a reaped worker. The added integer-PID-only probe found PID 14156 live, but it was absent on follow-up. The initial probe did not capture image identity, so this does not establish either a persistent Excel leak or proven PID reuse. The collector now retains process identity/exit-state evidence, rejects a live matching image, and identifies a nonmatching image as another process. Qualification restarted from run 1; this run is excluded."
+  },
+  {
+    "evidence": "excluded-exit-signal-race.xml",
+    "result": "40 passed, 1 failed",
+    "classification": "premature process-exit certification",
+    "details": "Exact handle was initially unsignaled despite exit code 0 and recorded exit FILETIME; signaled after diagnostic 50 ms. Audit rejected initial state. Fixed runtime to require signaled process handle; qualification restarted."
+  }
+]

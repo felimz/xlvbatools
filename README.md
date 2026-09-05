@@ -251,6 +251,7 @@ Documentation:
 - [Testing](docs/testing.md)
 - [Test suite inventory and LFL audit](docs/test-suite-audit.md)
 - [Release validation](docs/release-validation.md)
+- [XL-18 shutdown investigation](docs/xl18-shutdown.md)
 
 ## License
 

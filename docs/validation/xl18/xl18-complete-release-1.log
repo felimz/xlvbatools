@@ -1,0 +1,59 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0
+WA-OCEAN profile: release (fast or slow or com or e2e)
+rootdir: C:\Users\felim\AntigravityProjects\wa_ocean
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0
+collected 289 items
+
+tests\test_area_load_calculator.py ..............                        [  4%]
+tests\test_ccr1510_mixed_units.py ....                                   [  6%]
+tests\test_cg_shift_methods.py .                                         [  6%]
+tests\test_clc_label_consistency.py ..                                   [  7%]
+tests\test_cog_shift_options.py ....                                     [  8%]
+tests\test_cor_kinematics.py ..                                          [  9%]
+tests\test_deck_position_options.py ......                               [ 11%]
+tests\test_default_criteria.py ........                                  [ 14%]
+tests\test_e2e_pipeline.py .                                             [ 14%]
+tests\test_e2e_unit_equivalence.py .......                               [ 16%]
+tests\test_input_control_responsiveness.py ........                      [ 19%]
+tests\test_macro_runner_workflow.py .....                                [ 21%]
+tests\test_ocean_math_contracts.py ..................................    [ 33%]
+tests\test_physics_probe.py ..........                                   [ 36%]
+tests\test_physics_validation.py ....                                    [ 38%]
+tests\test_query_r3d.py ................................................ [ 54%]
+........................                                                 [ 62%]
+tests\test_r3d_missing_sections_e2e.py .                                 [ 63%]
+tests\test_r3d_multi_model.py .............                              [ 67%]
+tests\test_r3d_parser.py .........                                       [ 70%]
+tests\test_r3d_serialization_validation.py .......                       [ 73%]
+tests\test_r3d_units.py .....................                            [ 80%]
+tests\test_run_macros_cli.py ....................                        [ 87%]
+tests\test_snapshot_integration.py .                                     [ 87%]
+tests\test_status_lifecycle.py ......                                    [ 89%]
+tests\test_travel_orientation.py ..                                      [ 90%]
+tests\test_vba_preflight.py .......                                      [ 93%]
+tests\test_workbook_calculation_mode.py ...                              [ 94%]
+tests\test_workbook_portable_paths.py ..                                 [ 94%]
+tests\test_xlvba_project_integration.py ........                         [ 97%]
+tests\test_xlvba_wrapper_clis.py .......                                 [100%]
+
+- generated xml file: C:\Users\felim\AntigravityProjects\wa_ocean\logs\xl18-complete-release-1.xml -
+============================ slowest 15 durations =============================
+37.20s call     tests/test_status_lifecycle.py::test_status_lifecycle_in_one_owned_excel_session_and_reopen
+23.92s setup    tests/test_default_criteria.py::test_active_metric_defaults_and_note
+22.84s setup    tests/test_cg_shift_methods.py::test_cg_shift_method_comparison
+22.17s setup    tests/test_deck_position_options.py::test_positioning_envelope_values_cover_manual_and_corner_modes
+18.76s call     tests/test_default_criteria.py::test_auto_units_round_trip_release_inputs_through_metric_and_imperial_models
+17.76s setup    tests/test_e2e_unit_equivalence.py::test_reachable_imperial_target_completes_end_to_end
+15.59s call     tests/test_xlvba_project_integration.py::test_compile_error_fails_closed_and_shuts_down_cleanly
+15.38s call     tests/test_ccr1510_mixed_units.py::test_ccr_workbook_retrieve_matches_risa_and_finds_unsuffixed_nominal_blcs
+15.33s call     tests/test_clc_label_consistency.py::test_calculate_writes_force_direction_shifts_and_shared_format
+14.44s call     tests/test_run_macros_cli.py::test_run_macros_full_pipeline_json
+12.98s call     tests/test_deck_position_options.py::test_derived_positioning_option_completes_full_pipeline
+12.40s setup    tests/test_cog_shift_options.py::test_parameter_envelope_uses_release_shift
+12.02s call     tests/test_cog_shift_options.py::test_cg_control_sync_uses_stored_state_without_toggling
+11.38s call     tests/test_input_control_responsiveness.py::test_quick_controls_complete_in_one_headless_owned_session
+9.97s call     tests/test_xlvba_project_integration.py::test_production_workbook_live_preflight_passes
+======================= 289 passed in 358.70s (0:05:58) =======================

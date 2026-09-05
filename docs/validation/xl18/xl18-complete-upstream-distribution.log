@@ -1,0 +1,15 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\felim\AntigravityProjects\xlvbatools-xl18\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\felim\AntigravityProjects\xlvbatools-xl18
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0
+collecting ... collected 396 items / 395 deselected / 1 selected
+
+tests/test_distribution.py::test_built_wheel_exposes_public_wrapper_api PASSED [100%]
+
+- generated xml file: C:\Users\felim\AntigravityProjects\wa_ocean\logs\xl18-complete-upstream-distribution.xml -
+===================== 1 passed, 395 deselected in 16.68s ======================
+
+TEST_RUNNER_EXIT_CODE=0

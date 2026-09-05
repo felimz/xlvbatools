@@ -8,6 +8,10 @@ All notable changes are documented here. This project follows
 
 ### Fixed
 
+- Require a signaled process handle before certifying owned-process exit.
+  Windows can expose an exit code before process termination is complete;
+  unknown wait results remain unclean instead of accepting premature cleanup.
+
 - Request `Application.Quit()` after releasing child and application-wrapper
   COM proxies, retaining only the raw dispatch interface for the final call.
   This prevents native type-info finalizer errors after Excel disconnects.

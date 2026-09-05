@@ -1,0 +1,36 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\felim\AntigravityProjects\xlvbatools-xl18\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\felim\AntigravityProjects\xlvbatools-xl18
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0
+collecting ... collected 396 items / 374 deselected / 22 selected
+
+tests/test_dumper.py::test_live_dump_reports_partial_rich_text_runs PASSED [  4%]
+tests/test_dumper.py::test_combined_range_data_and_screenshot_share_one_clean_session PASSED [  9%]
+tests/test_macro_runner.py::test_worker_returns_multiline_runtime_error PASSED [ 13%]
+tests/test_macro_runner.py::test_worker_dismisses_modal_ui[ShowMessage] PASSED [ 18%]
+tests/test_macro_runner.py::test_worker_dismisses_modal_ui[ShowFilePicker] PASSED [ 22%]
+tests/test_macro_runner.py::test_timeout_preserves_unrelated_excel PASSED [ 27%]
+tests/test_project.py::test_project_vba_round_trip_uses_clean_sequential_workers PASSED [ 31%]
+tests/test_project.py::test_live_lint_conclusively_compiles_valid_minimal_workbook PASSED [ 36%]
+tests/test_project.py::test_live_lint_reports_compile_error_location_and_closes_cleanly PASSED [ 40%]
+tests/test_project.py::test_source_operations_never_execute_workbook_startup_code PASSED [ 45%]
+tests/test_project.py::test_live_lint_rejects_duplicate_declaration_and_closes_cleanly PASSED [ 50%]
+tests/test_session.py::TestSessionCOM::test_open_close_minimal_workbook PASSED [ 54%]
+tests/test_session.py::TestSessionCOM::test_multiline_runtime_error_is_captured PASSED [ 59%]
+tests/test_session.py::TestSessionCOM::test_valid_compile_targets_requested_project_and_stays_headless PASSED [ 63%]
+tests/test_session.py::TestSessionCOM::test_compile_error_location_is_headless PASSED [ 68%]
+tests/test_session.py::TestSessionCOM::test_graceful_close_target_only PASSED [ 72%]
+tests/test_session.py::TestSessionCOM::test_child_com_proxies_finalize_before_excel PASSED [ 77%]
+tests/test_workflow_live.py::test_live_workflow_shares_one_excel_session_and_discards_without_save PASSED [ 81%]
+tests/test_workflow_live.py::test_screenshot_repaints_after_macro_and_restores_screen_updating PASSED [ 86%]
+tests/test_workflow_live.py::test_live_workflow_saves_once_only_after_complete_success PASSED [ 90%]
+tests/test_workflow_live.py::test_live_workflow_is_fail_fast_and_does_not_save_failed_state PASSED [ 95%]
+tests/test_workflow_live.py::test_live_workflow_timeout_retains_step_progress_and_does_not_replay PASSED [100%]
+
+- generated xml file: C:\Users\felim\AntigravityProjects\wa_ocean\logs\xl18-complete-upstream-excel.xml -
+=============== 22 passed, 374 deselected in 319.40s (0:05:19) ================
+
+TEST_RUNNER_EXIT_CODE=0
