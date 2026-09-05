@@ -1,5 +1,6 @@
 # Preserve captured evidence bytes so published SHA-256 hashes remain valid.
-*.xml -text
-*.jsonl -text
-cleanup_audit.py -text
-*.log -text
+# Diagnostic transcripts can contain source whitespace; do not lint captures.
+*.xml -text -whitespace
+*.jsonl -text -whitespace
+cleanup_audit.py -text whitespace=cr-at-eol
+*.log -text -whitespace
