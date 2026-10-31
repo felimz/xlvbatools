@@ -6,6 +6,20 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Security
+
+- Require Pillow 13.0.0 or newer at runtime and setuptools 84.2.1 or newer for
+  builds. Add security constraints for the development toolchain
+  and its transitive dependencies.
+- Add daily vulnerability audits on Windows and Linux, also run for pull
+  requests and pushes to `main`, and weekly Dependabot updates for Python
+  requirements and GitHub Actions. Pin workflow actions to full commit IDs.
+
+### Changed
+
+- Require Python 3.11 or newer because patched Pillow releases no longer
+  support Python 3.10. Update the CI matrix and installation documentation.
+
 ## [1.2.4] - 2026-09-04
 
 ### Fixed

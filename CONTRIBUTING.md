@@ -9,7 +9,7 @@ This guide covers development and release validation for the v1 architecture.
 ### 1. Prerequisites
 * **OS:** Microsoft Windows (Excel COM automation APIs require Windows).
 * **Excel:** Microsoft Excel installed locally with VBA macros enabled.
-* **Python:** Python 3.10 or higher.
+* **Python:** Python 3.11 or higher.
 
 ### 2. Environment Setup
 Clone the repository and create a virtual environment:
@@ -24,8 +24,37 @@ python -m venv .venv
 Install development dependencies:
 
 ```bash
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m pip install --upgrade --constraint requirements/security-constraints.txt pip setuptools wheel
+.venv\Scripts\python.exe -m pip install --requirement requirements-dev.txt
 ```
+
+---
+
+## Dependency security
+
+Development and CI installs use `requirements/security-constraints.txt` to
+exclude known vulnerable versions. Runtime and isolated-build security floors
+are also declared in `pyproject.toml`. Python 3.11 is the minimum because the
+patched Pillow 13 release does not support Python 3.10.
+
+The Dependency security workflow audits Windows and Linux on Python 3.11 and
+3.14 daily, on pull requests, and on pushes to `main`. It freezes all installed
+third-party packages, including packaging and audit tools, then runs
+`pip-audit` against current advisories. The local editable xlvbatools package
+is excluded because its source is covered by repository checks. Each job
+fails on a vulnerability or audit error and uploads its JSON report.
+
+Run the same audit locally after installing the development requirements:
+
+```powershell
+.venv\Scripts\python.exe -m pip check
+.venv\Scripts\python.exe -m pip freeze --all --exclude-editable | Set-Content -Encoding utf8 $env:TEMP/xlvbatools-installed.txt
+.venv\Scripts\python.exe -m pip_audit --requirement $env:TEMP/xlvbatools-installed.txt --no-deps --disable-pip --strict
+```
+
+Dependabot checks Python requirements and GitHub Actions weekly. GitHub's
+Dependabot alerts and security updates must also be enabled in the repository
+settings; the YAML configuration alone does not enable those settings.
 
 ---
 

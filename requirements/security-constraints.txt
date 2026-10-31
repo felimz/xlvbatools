@@ -1,0 +1,8 @@
+# Security floors for development, CI, and their transitive dependencies.
+# Runtime and isolated-build requirements also belong in pyproject.toml.
+Pillow>=13.0.0
+certifi>=2026.10.23
+cryptography>=50.0.2
+pip>=26.2.2
+setuptools>=84.2.1
+urllib3>=2.8.0

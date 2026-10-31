@@ -14,7 +14,7 @@ caller.
 python -m pip install xlvbatools
 ```
 
-Python 3.10 or newer is supported. Excel-backed operations require Microsoft
+Python 3.11 or newer is supported. Excel-backed operations require Microsoft
 Excel on Windows. Source linting and source-code utilities do not require
 Excel.
 
@@ -210,7 +210,8 @@ Version 1.0.0 establishes the intentional public API. See
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m pip install --upgrade --constraint requirements/security-constraints.txt pip setuptools wheel
+.venv\Scripts\python.exe -m pip install --requirement requirements-dev.txt
 .venv\Scripts\ruff.exe check src tests scripts
 .venv\Scripts\mypy.exe --follow-imports=skip `
   src/xlvbatools/project.py `

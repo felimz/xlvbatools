@@ -13,7 +13,7 @@ implementation subpackages.
 
 ## Requirements
 
-- Python 3.10 or newer;
+- Python 3.11 or newer;
 - Microsoft Excel on Windows for workbook, macro, and live-VBA operations;
 - no Excel installation for extracted-source lint, search, format, or graph
   operations.

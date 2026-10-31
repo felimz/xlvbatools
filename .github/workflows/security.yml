@@ -1,0 +1,54 @@
+name: Dependency security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "43 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-dev.txt
+            requirements/security-constraints.txt
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade --constraint requirements/security-constraints.txt pip setuptools wheel
+      - name: Install development and optional dependencies
+        run: python -m pip install --requirement requirements-dev.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Record exact installed dependencies
+        run: python -m pip freeze --all --exclude-editable > installed-requirements.txt
+      - name: Audit installed third-party packages
+        run: >-
+          python -m pip_audit --requirement installed-requirements.txt
+          --no-deps --disable-pip --strict
+          --format json --output vulnerability-report.json
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vulnerability-report-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: vulnerability-report.json
+          if-no-files-found: warn
+          retention-days: 30
