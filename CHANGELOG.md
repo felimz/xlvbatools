@@ -6,6 +6,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-30
+
 ### Security
 
 - Require Pillow 13.0.0 or newer at runtime and setuptools 84.2.1 or newer for
