@@ -6,6 +6,17 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-30
+
+### Fixed
+
+- Service pending STA messages while waiting for Excel to exit, allowing COM
+  callbacks to complete within the existing cleanup deadline. Preserve the
+  caller's COM apartment and quit message, and bound each message batch.
+- Record a natural process exit observed at the grace deadline as graceful
+  instead of returning a contradictory cleanup report. Forced termination
+  remains unclean, and cleanup exceptions now include the actual state flags.
+
 ## [1.3.0] - 2026-10-30
 
 ### Security

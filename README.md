@@ -170,6 +170,9 @@ worker. Timeouts and cleanup never terminate Excel by image name and never
 select an unrelated desktop instance. A single automatic replay is possible
 only for a proven pre-Excel worker-start failure; callers must not add another.
 
+Graceful shutdown services pending COM callbacks within the cleanup deadline
+and verifies process termination. Forced termination remains an unclean result.
+
 Related macro, range-write, and inspection steps can use `Project.workflow()`
 to share one workbook open and one owned Excel PID. A workflow is fail-fast,
 uses one overall timeout, saves only once after complete success when requested,

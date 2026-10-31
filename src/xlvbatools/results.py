@@ -331,7 +331,14 @@ class OperationResult(Generic[T]):
         if not cleanup.is_clean:
             raise HeadlessCleanupError(
                 self,
-                f"Owned Excel PID {cleanup.pid!r} did not exit cleanly",
+                f"Owned Excel PID {cleanup.pid!r} did not exit cleanly "
+                f"(quit_requested={cleanup.quit_requested}, "
+                f"exited_gracefully={cleanup.exited_gracefully}, "
+                f"force_terminated={cleanup.force_terminated}, "
+                f"worker_terminated={cleanup.worker_terminated}, "
+                f"still_running={cleanup.still_running}, "
+                f"workbook_close_error={cleanup.workbook_close_error!r}, "
+                f"workbook_save_error={cleanup.workbook_save_error!r})",
             )
         return cleanup
 

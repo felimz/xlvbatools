@@ -23,11 +23,16 @@ through `Project`; implementation subpackages are not an alternate public API.
   COM add-ins load according to the user's existing Excel configuration.
 - Teardown closes the target workbook, releases all COM proxies while a blank
   sentinel workbook keeps the owned instance alive, releases the application
-  proxy before the sentinel proxy, and only then requests normal `WM_CLOSE`
-  shutdown through the exact PID-verified Excel window. A bounded `WM_QUIT`
-  request may be sent only to that verified UI thread before exact-PID force
-  termination is considered.
+  proxy before the sentinel proxy, and then invokes `Application.Quit` through
+  the retained raw `IDispatch` interface before releasing it.
 - Teardown waits for graceful Excel/VBE exit before targeted termination.
+- Graceful-exit waiting dispatches pending messages on the calling STA thread
+  so COM callbacks can finish. Message batches are bounded, and a caller's
+  `WM_QUIT` message is reposted with its original exit code. Caller-owned COM
+  initialization is preserved.
+- A natural exit observed at the grace deadline is retained in the cleanup
+  report. The existing grace period and forced-termination rejection remain
+  unchanged.
 - Liveness polling and the final exact-PID fallback use Win32 process handles;
   cleanup does not spawn `tasklist` or `taskkill` commands on every poll.
 - Sequential tests inspect stdout and stderr for native finalizer diagnostics;
@@ -121,4 +126,11 @@ assert cleanup.is_clean
 Operation success and clean shutdown are independent conditions. The result
 preserves phase, error, request timing, dialog events, worker PID, Excel PID,
 cleanup fields, and per-attempt retry evidence so wrappers never need private
-process inspection.
+process inspection. `HeadlessCleanupError` also includes the cleanup flags in
+its message so a short traceback distinguishes a missed quit request, forced
+termination, and workbook close/save failures.
+
+The message-pump requirement follows the Windows
+[single-threaded apartment contract](https://learn.microsoft.com/en-us/windows/win32/com/single-threaded-apartments).
+Regressions cover deadline-boundary exit and a real child process whose exit
+depends on a callback delivered to the waiting thread's message-only window.

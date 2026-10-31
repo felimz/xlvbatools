@@ -141,14 +141,14 @@ class ExcelSession:
         self.excel = None
         self.wb = None
         self.watchdog = None
-        self.excel_pid = None
-        self.cleanup_result = {
+        self.excel_pid: Optional[int] = None
+        self.cleanup_result: dict[str, Any] = {
             "pid": None, "quit_requested": False, "exited_gracefully": False,
             "force_terminated": False, "still_running": False,
         }
         self.phase = "session_start"
         self._com_initialized = False
-        self._com_thread_id = None
+        self._com_thread_id: Optional[int] = None
 
     @staticmethod
     def _thread_has_com_apartment() -> bool:
@@ -202,6 +202,47 @@ class ExcelSession:
         finally:
             self._com_initialized = False
             self._com_thread_id = None
+
+    @staticmethod
+    def _pump_shutdown_messages() -> None:
+        """Service the current STA without consuming the caller's quit message."""
+        import win32con
+        import win32gui
+
+        # Limit each batch so a busy queue cannot starve the exit deadline.
+        for _ in range(64):
+            available, message = win32gui.PeekMessage(0, 0, 0, win32con.PM_REMOVE)
+            if not available:
+                return
+            if message[1] == win32con.WM_QUIT:
+                win32gui.PostQuitMessage(message[2])
+                return
+            win32gui.TranslateMessage(message)
+            win32gui.DispatchMessage(message)
+
+    def _wait_for_excel_exit(self, timeout: float) -> bool:
+        """Observe process exit while allowing pending STA callbacks to finish."""
+        if self.excel_pid is None:
+            return False
+        deadline = time.monotonic() + timeout
+        pump_messages = True
+        while is_process_running(self.excel_pid):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Exit may race the deadline. Keep this final observation in
+                # the return value instead of losing it to a later PID probe.
+                return not is_process_running(self.excel_pid)
+            if pump_messages:
+                try:
+                    self._pump_shutdown_messages()
+                except Exception as error:
+                    self.cleanup_result.setdefault("details", {})[
+                        "shutdown_message_pump_error"
+                    ] = f"{type(error).__name__}: {error}"
+                    logger.warning(f"Error pumping shutdown messages: {error}")
+                    pump_messages = False
+            time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+        return True
 
     def __enter__(self):
         import win32com.client
@@ -390,18 +431,12 @@ class ExcelSession:
                 pass
 
         if self.excel_pid is not None:
-            deadline = time.monotonic() + self.exit_grace_period
-            while time.monotonic() < deadline:
-                if not is_process_running(self.excel_pid):
-                    self.cleanup_result["exited_gracefully"] = True
-                    break
-                time.sleep(0.1)
-            if is_process_running(self.excel_pid) and self.terminate_owned_process:
+            exited_gracefully = self._wait_for_excel_exit(self.exit_grace_period)
+            self.cleanup_result["exited_gracefully"] = exited_gracefully
+            if not exited_gracefully and self.terminate_owned_process:
                 logger.warning(f"Excel PID {self.excel_pid} did not exit; terminating the owned process")
                 self.cleanup_result["force_terminated"] = kill_process_by_pid(self.excel_pid)
-                deadline = time.monotonic() + max(1.0, self.exit_grace_period)
-                while time.monotonic() < deadline and is_process_running(self.excel_pid):
-                    time.sleep(0.1)
+                self._wait_for_excel_exit(max(1.0, self.exit_grace_period))
             self.cleanup_result["still_running"] = is_process_running(self.excel_pid)
             if self.cleanup_result["still_running"]:
                 logger.error(f"Cleanup failed: owned Excel PID {self.excel_pid} is still running")

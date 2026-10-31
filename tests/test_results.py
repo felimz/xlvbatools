@@ -74,8 +74,11 @@ def test_forced_cleanup_is_not_reported_as_clean():
         ),
     )
 
-    with pytest.raises(HeadlessCleanupError, match="did not exit cleanly"):
+    with pytest.raises(HeadlessCleanupError, match="did not exit cleanly") as raised:
         result.require_clean_shutdown()
+    assert raised.value.result is result
+    assert "exited_gracefully=False" in str(raised.value)
+    assert "force_terminated=True" in str(raised.value)
 
 
 @pytest.mark.unit

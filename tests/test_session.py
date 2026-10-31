@@ -128,6 +128,166 @@ class TestSessionProperties:
         )
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    @pytest.mark.parametrize("states", [(False,), (True, False)])
+    def test_exit_at_grace_deadline_is_reported_as_graceful(self, monkeypatch, states):
+        """Natural exit at the final probe must not leave an unclean report."""
+        from xlvbatools.core import session as session_module
+        from xlvbatools import CleanupReport
+
+        session = session_module.ExcelSession(
+            "dummy.xlsm", save_on_exit=False, exit_grace_period=1,
+        )
+        session.excel_pid = 4242
+        session.excel = _fake_excel(
+            Quit=lambda: None,
+            Workbooks=SimpleNamespace(Add=lambda: SimpleNamespace(Saved=True)),
+        )
+        session.wb = SimpleNamespace(Close=lambda value: None)
+        clock = iter([0, 1])
+        monkeypatch.setattr(
+            session_module, "time",
+            SimpleNamespace(monotonic=lambda: next(clock, 1), sleep=lambda seconds: None),
+        )
+        observations = iter(states)
+        monkeypatch.setattr(
+            session_module, "is_process_running", lambda pid: next(observations, False),
+        )
+        monkeypatch.setattr(
+            session_module, "kill_process_by_pid",
+            lambda pid: pytest.fail("an exited process must not be terminated"),
+        )
+
+        session.__exit__(None, None, None)
+
+        assert CleanupReport.from_mapping(session.cleanup_result).is_clean
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_exit_services_sta_messages_without_uninitializing_caller(self, monkeypatch):
+        """A pending COM callback must run before the server can finish exit."""
+        import win32gui
+        from xlvbatools.core import session as session_module
+        from xlvbatools import CleanupReport
+
+        state = {"time": 0.0, "exited": False}
+        message = (99, 0x8000, 0, 0, 0, (0, 0))
+        queue = iter([(1, message), (0, message)])
+
+        def dispatch(_message):
+            state["exited"] = True
+
+        def sleep(seconds):
+            state["time"] += seconds
+
+        monkeypatch.setattr(win32gui, "PeekMessage", lambda *args: next(queue, (0, message)))
+        monkeypatch.setattr(win32gui, "TranslateMessage", lambda message: None)
+        monkeypatch.setattr(win32gui, "DispatchMessage", dispatch)
+        monkeypatch.setattr(
+            session_module, "time",
+            SimpleNamespace(monotonic=lambda: state["time"], sleep=sleep),
+        )
+        monkeypatch.setattr(session_module, "is_process_running", lambda pid: not state["exited"])
+        monkeypatch.setattr(
+            session_module, "kill_process_by_pid",
+            lambda pid: pytest.fail("a queued COM callback must not lead to forced termination"),
+        )
+        session = session_module.ExcelSession(
+            "dummy.xlsm", save_on_exit=False, exit_grace_period=1,
+        )
+        session.excel_pid = 4242
+        session.excel = _fake_excel(
+            Quit=lambda: None,
+            Workbooks=SimpleNamespace(Add=lambda: SimpleNamespace(Saved=True)),
+        )
+        session.wb = SimpleNamespace(Close=lambda value: None)
+        monkeypatch.setattr(
+            session, "_uninitialize_com",
+            lambda: pytest.fail("caller-owned COM must remain initialized"),
+        )
+
+        session.__exit__(None, None, None)
+
+        assert state["exited"]
+        assert CleanupReport.from_mapping(session.cleanup_result).is_clean
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_shutdown_pump_preserves_caller_quit_code(self, monkeypatch):
+        import win32con
+        import win32gui
+        from xlvbatools.core.session import ExcelSession
+
+        posted = []
+        message = (0, win32con.WM_QUIT, 17, 0, 0, (0, 0))
+        monkeypatch.setattr(win32gui, "PeekMessage", lambda *args: (1, message))
+        monkeypatch.setattr(win32gui, "PostQuitMessage", posted.append)
+        monkeypatch.setattr(
+            win32gui, "DispatchMessage",
+            lambda message: pytest.fail("WM_QUIT must stay with the caller's message loop"),
+        )
+
+        ExcelSession._pump_shutdown_messages()
+
+        assert posted == [17]
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_shutdown_pump_yields_with_a_continuously_busy_queue(self, monkeypatch):
+        import win32gui
+        from xlvbatools.core.session import ExcelSession
+
+        dispatched = []
+        message = (99, 0x8000, 0, 0, 0, (0, 0))
+        monkeypatch.setattr(win32gui, "PeekMessage", lambda *args: (1, message))
+        monkeypatch.setattr(win32gui, "TranslateMessage", lambda message: None)
+        monkeypatch.setattr(win32gui, "DispatchMessage", dispatched.append)
+
+        ExcelSession._pump_shutdown_messages()
+
+        assert 0 < len(dispatched) <= 64
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_pump_error_preserves_owned_fallback_and_unclean_verdict(self, monkeypatch):
+        from xlvbatools import CleanupReport
+        from xlvbatools.core import session as session_module
+
+        state = {"time": 0.0}
+        killed = []
+        pump_calls = []
+
+        def sleep(seconds):
+            state["time"] += seconds
+
+        def fail_pump():
+            pump_calls.append(True)
+            raise RuntimeError("message queue unavailable")
+
+        monkeypatch.setattr(
+            session_module, "time",
+            SimpleNamespace(monotonic=lambda: state["time"], sleep=sleep),
+        )
+        monkeypatch.setattr(session_module, "is_process_running", lambda pid: not killed)
+        monkeypatch.setattr(
+            session_module, "kill_process_by_pid", lambda pid: killed.append(pid) or True,
+        )
+        session = session_module.ExcelSession(
+            "dummy.xlsm", save_on_exit=False, exit_grace_period=1,
+        )
+        session.excel_pid = 4242
+        session.excel = _fake_excel(
+            Quit=lambda: None,
+            Workbooks=SimpleNamespace(Add=lambda: SimpleNamespace(Saved=True)),
+        )
+        session.wb = SimpleNamespace(Close=lambda value: None)
+        monkeypatch.setattr(session, "_pump_shutdown_messages", fail_pump)
+
+        session.__exit__(None, None, None)
+
+        assert killed == [4242]
+        assert len(pump_calls) == 1
+        assert session.cleanup_result["details"]["shutdown_message_pump_error"] == (
+            "RuntimeError: message queue unavailable"
+        )
+        assert not CleanupReport.from_mapping(session.cleanup_result).is_clean
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_initial_state(self):
         from xlvbatools.core.session import ExcelSession
         session = ExcelSession("dummy.xlsm")
@@ -224,14 +384,9 @@ class TestSessionProperties:
 
         session.__exit__(None, None, None)
 
-        assert calls == [
-            "workbook_close",
-            "excel_quit",
-            "check_pid",
-            "check_pid",
-            "check_pid",
-            "watchdog_stop",
-        ]
+        assert calls[:2] == ["workbook_close", "excel_quit"]
+        assert calls[-1] == "watchdog_stop"
+        assert calls[2:-1] and set(calls[2:-1]) == {"check_pid"}
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_sequential_macro_runs_use_event_sequences(self):
