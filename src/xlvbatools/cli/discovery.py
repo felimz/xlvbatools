@@ -82,6 +82,8 @@ COMMAND_SPECS = (
             "xlvba dump --sheets Input --data",
             "xlvba dump --sheets Input --data --rich-text",
             "xlvba dump --sheets Input --screenshot",
+            "xlvba dump --sheets Input --screenshot --gridlines off",
+            "xlvba dump --sheets Input --screenshot --gridlines custom --gridline-opacity 0.3",
         ),
         True,
     ),
@@ -174,11 +176,22 @@ def _output_contract() -> dict[str, Any]:
 
 
 def _workflow_input_schema() -> dict[str, Any]:
+    from xlvbatools.rendering import GRIDLINE_MODES, GRIDLINE_STYLES, GridlineOptions
     from xlvbatools.workflow import WORKFLOW_SCHEMA_VERSION
 
     return {
         "workflow_schema_version": WORKFLOW_SCHEMA_VERSION,
         "required_top_level_fields": ["workflow_schema_version", "steps"],
+        "gridlines": {
+            "default": "native",
+            "modes": list(GRIDLINE_MODES),
+            "value": "mode name or object; styling fields require mode custom",
+            "custom_defaults": GridlineOptions(mode="custom").to_dict(),
+            "styles": list(GRIDLINE_STYLES),
+            "opacity": "0 (invisible) through 1 (opaque)",
+            "width": "positive integer in output pixels",
+            "automatic_style": "null color/width use Excel's measured native automatic grid",
+        },
         "limits": {
             "minimum_steps": 1,
             "maximum_steps": 100,
@@ -207,6 +220,7 @@ def _workflow_input_schema() -> dict[str, Any]:
                     "include_screenshots", "output_json", "output_markdown",
                     "continue_on_render_error", "include_hidden_sheets",
                     "include_rich_text",
+                    "gridlines", "include_headers",
                 ],
             },
         },

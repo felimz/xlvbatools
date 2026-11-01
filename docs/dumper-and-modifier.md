@@ -84,32 +84,81 @@ Python.
 
 ### Screenshot rendering
 
+`Project.inspect(..., gridlines="native")` preserves the workbook's appearance
+by default. Gridline mode and row/column headings are independent:
+
+| Mode | Screenshot behavior |
+|:---|:---|
+| `native` (default) | Use Excel's saved/current visibility and gridline color. Fills and merged cells suppress gridlines as they do in Excel. No grid is added. |
+| `forced` | Hide Excel's gridlines, then overlay a solid, opaque grid at every native cell boundary, including across fills and merged ranges. Color and pixel width are sampled from Excel's actual automatic UI grid. Explicit cell borders take precedence. |
+| `off` | Hide Excel's gridlines and add no overlay. Explicitly formatted cell borders remain visible. |
+| `custom` | Overlay every cell boundary using the requested color, opacity, width, and line style. Excel's native grid is hidden to avoid duplicate lines. |
+
+```python
+from xlvbatools import GridlineOptions, Project
+
+project = Project.open("workbook/Model.xlsm")
+result = project.inspect(
+    ["Input"], cell_range="A1:K100", include_screenshots=True,
+    gridlines=GridlineOptions(
+        mode="custom", color="#808080", opacity=0.3, width=1, style="dashed",
+    ),
+    include_headers=True,
+)
+result.require_success()
+result.require_clean_shutdown()
+```
+
+`color` is a six-digit `#RRGGBB` value, or `None` to use Excel's measured native
+automatic grid color. `opacity` is 0 (invisible) through 1
+(opaque), blended over the actual cell content and fill. `width` is a positive
+integer in output pixels, or `None` to use Excel's measured native stroke width.
+`style` is `solid`, `dashed`, or `dotted`. Styling
+fields require `mode="custom"`; invalid options fail before Excel starts.
+Set `include_headers=False` to omit column letters and row numbers.
+
+```powershell
+xlvba dump --sheets Input --screenshot --gridlines off
+xlvba dump --sheets Input --screenshot --gridlines forced
+xlvba dump --sheets Input --screenshot --gridlines custom `
+  --gridline-color "#808080" --gridline-opacity 0.3 `
+  --gridline-width 1 --gridline-style dashed --no-headers
+```
+
+These controls affect the captured image. Cell fills, merges, and borders are
+not edited. Temporary native-gridline overrides are restored after success or
+failure, including within a workflow that later saves the workbook.
+
+Worksheet content and heading boxes/text are copied from Excel's own window
+pixels at its native DPI and workbook zoom. No Arial substitute, fixed heading
+font size, interpolated grid coordinates, or chart frame is added. A blank
+temporary workbook mirrors exact row/column dimensions to measure grid edges
+even where the source has fills, merges, or shapes. Long ranges are assembled
+from unscaled native tiles. Custom strokes land on those measured cell edges;
+displayed cell borders retain their native pixels.
+
 - The workbook is opened read-only with macros, events, and link updates
   disabled.
 - Only visible worksheets are rendered by default.
 - Hidden and VeryHidden sheets require `include_hidden_sheets=True` or
   `--include-hidden-sheets`.
-- Excel renders the requested range; only the resulting bitmap is moved through
-  a blank temporary chart workbook. Worksheet VBA is not copied or compiled.
+- Only the owned Excel window is captured. The geometry reference is a blank
+  workbook; source worksheets and VBA are not copied or compiled.
 - Data and screenshots requested together share one worker and one owned Excel
   lifecycle. Structured data is collected first and supplies independent
   evidence that the rendered range contains visible content.
-- Column letters, row numbers, gridlines, cropped bounds, merged cells, and
-  non-default row/column dimensions are composited from the inspected range.
-- Clipboard-sensitive capture first requests Excel's vector picture format,
-  then falls back to a bitmap. Each format uses bounded retries; repeating one
-  failing COM call cannot consume the whole operation timeout.
+- Excel renders cell formatting, merges, borders, and optional headings.
+  Forced/custom grids use measured native pixel edges without rounding drift.
+- Native capture uses bounded attempts and does not depend on the clipboard.
 - Before each capture, xlvbatools temporarily enables `ScreenUpdating`, makes
   only its owned Excel window renderable (off-screen for headless calls), and
-  scrolls the requested range into the active viewport before flushing the
-  window paint queue. It restores the caller's original
-  `ScreenUpdating` and visibility state afterward.
-- `InspectionOutput.screenshot_diagnostics` records the chosen picture format,
-  bounded attempt history, clipboard image formats, active workbook/sheet,
-  selected range, viewport position, off-screen window rectangle, and native
-  image metrics. This makes intermittent Excel rendering failures diagnosable
+  scrolls each tile into the active viewport before flushing the window paint
+  queue. It restores the caller's view, `ScreenUpdating`, and visibility state.
+- `InspectionOutput.screenshot_diagnostics` records native DPI/zoom, exact pixel
+  boundaries, tile source rectangles, sampled grid color/width, bounded attempt
+  history, window state, and native image metrics. This makes rendering failures diagnosable
   without attaching to COM or replaying the operation.
-- If every native format fails, the operation fails closed in phase
+- If native capture fails, the operation fails closed in phase
   `screenshot_capture` with `error.code == "screenshot_capture_failed"` and
   the same structured attempt evidence.
 - The unmodified Excel bitmap is measured before headers and gridlines are

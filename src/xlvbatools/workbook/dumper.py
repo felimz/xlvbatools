@@ -11,7 +11,7 @@ Features:
 - Named range extraction with scope (workbook vs. sheet-level)
 - Interactive shapes/controls inventory
 - Rich Markdown report with row/column headers, formula annotations
-- Screenshot export with Pillow-composited headers and gridlines
+- Native Excel screenshot pixels with optional custom gridlines
 
 Usage:
     from xlvbatools import Project
@@ -27,10 +27,11 @@ import gc
 import logging
 import os
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import Any, Mapping
 
 from xlvbatools.core.session import ExcelSession
+from xlvbatools.rendering import GridlineOptions, _coerce_gridlines
 
 logger = logging.getLogger(__name__)
 
@@ -265,171 +266,9 @@ def dump_sheet_shapes(sheet) -> list:
     return shapes_info
 
 
-def _scaled_boundaries(sizes: list[float], pixel_extent: int) -> list[int]:
-    """Map Excel point sizes to stable pixel boundaries without rounding drift."""
-    if pixel_extent <= 0 or not sizes:
-        raise ValueError("Overlay geometry requires a positive extent and sizes")
-    normalized = []
-    for size in sizes:
-        try:
-            normalized.append(max(0.0, float(size)))
-        except (TypeError, ValueError):
-            normalized.append(0.0)
-    total = sum(normalized)
-    if total <= 0:
-        raise ValueError("Overlay geometry contains no visible rows or columns")
-    boundaries = [0]
-    cumulative = 0.0
-    for size in normalized:
-        cumulative += size
-        boundaries.append(round(pixel_extent * cumulative / total))
-    boundaries[-1] = pixel_extent
-    return [max(0, min(pixel_extent, value)) for value in boundaries]
-
-
 def _worksheet_is_renderable(sheet, include_hidden_sheets: bool) -> bool:
     """Return whether a worksheet may be screenshotted under the policy."""
     return include_hidden_sheets or int(sheet.Visible) == -1
-
-
-def _apply_headers_and_grid_overlay(
-    image_path: str,
-    column_widths: list[float],
-    row_heights: list[float],
-    first_column: int,
-    first_row: int,
-    include_headers: bool = True,
-    include_grid_overlay: bool = True,
-) -> None:
-    """Add geometry-accurate headers/grid around an Excel-rendered PNG."""
-    if not include_headers and not include_grid_overlay:
-        return
-    from PIL import Image, ImageDraw, ImageFont
-
-    with Image.open(image_path) as source:
-        source.load()
-        image = source.convert("RGBA")
-    x_bounds = _scaled_boundaries(column_widths, image.width)
-    y_bounds = _scaled_boundaries(row_heights, image.height)
-
-    try:
-        font = ImageFont.truetype("arial.ttf", 12)
-    except OSError:
-        font = ImageFont.load_default()
-    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-
-    def text_size(value: str) -> tuple[int, int]:
-        box = measure.textbbox((0, 0), value, font=font)
-        return box[2] - box[0], box[3] - box[1]
-
-    max_row_label = str(first_row + len(row_heights) - 1)
-    row_label_width, font_height = text_size(max_row_label)
-    pad_left = max(32, row_label_width + 14) if include_headers else 0
-    pad_top = max(20, font_height + 8) if include_headers else 0
-    canvas = Image.new(
-        "RGBA", (image.width + pad_left, image.height + pad_top),
-        (255, 255, 255, 255),
-    )
-    canvas.paste(image, (pad_left, pad_top))
-    draw = ImageDraw.Draw(canvas)
-    header_fill = (240, 240, 240, 255)
-    header_line = (180, 180, 180, 255)
-    grid_line = (210, 210, 210, 255)
-
-    if include_headers:
-        draw.rectangle((0, 0, canvas.width - 1, pad_top - 1), fill=header_fill)
-        draw.rectangle((0, 0, pad_left - 1, canvas.height - 1), fill=header_fill)
-        draw.line((pad_left, 0, pad_left, canvas.height - 1), fill=header_line)
-        draw.line((0, pad_top, canvas.width - 1, pad_top), fill=header_line)
-
-    for index in range(len(column_widths)):
-        left, right = x_bounds[index], x_bounds[index + 1]
-        x = pad_left + right
-        if include_grid_overlay and 0 < right < image.width:
-            draw.line((x, pad_top, x, canvas.height - 1), fill=grid_line)
-        if include_headers and right > left:
-            label = get_column_letter(first_column + index)
-            width, height = text_size(label)
-            if width + 4 <= right - left:
-                draw.text(
-                    (pad_left + left + (right - left - width) // 2,
-                     max(0, (pad_top - height) // 2)),
-                    label, fill=(50, 50, 50, 255), font=font,
-                )
-
-    for index in range(len(row_heights)):
-        top, bottom = y_bounds[index], y_bounds[index + 1]
-        y = pad_top + bottom
-        if include_grid_overlay and 0 < bottom < image.height:
-            draw.line((pad_left, y, canvas.width - 1, y), fill=grid_line)
-        if include_headers and bottom > top:
-            label = str(first_row + index)
-            width, height = text_size(label)
-            if height + 2 <= bottom - top:
-                draw.text(
-                    (max(0, (pad_left - width) // 2),
-                     pad_top + top + (bottom - top - height) // 2),
-                    label, fill=(50, 50, 50, 255), font=font,
-                )
-
-    draw.rectangle(
-        (0, 0, canvas.width - 1, canvas.height - 1),
-        outline=header_line, width=1,
-    )
-    temporary_path = image_path + ".overlay.tmp"
-    try:
-        canvas.convert("RGB").save(temporary_path, "PNG")
-        os.replace(temporary_path, image_path)
-    finally:
-        if os.path.exists(temporary_path):
-            os.remove(temporary_path)
-        image.close()
-        canvas.close()
-
-
-def _show_owned_excel_offscreen(excel) -> None:
-    """Make only the owned Excel HWND renderable without activating onscreen."""
-    import ctypes
-
-    hwnd = int(excel.Hwnd)
-    user32 = ctypes.windll.user32
-    swp_no_zorder = 0x0004
-    swp_noactivate = 0x0010
-    # Normalize while the application is still hidden. A minimized workbook
-    # window does not have a dependable paint surface for Range.CopyPicture.
-    try:
-        excel.ActiveWindow.WindowState = -4143  # xlNormal
-    except Exception:
-        logger.debug("Could not normalize the Excel window", exc_info=True)
-    # Position the hidden HWND first, because setting Application.Visible can
-    # otherwise display it at its last normal desktop coordinates for a frame.
-    user32.SetWindowPos(
-        hwnd, 0, -30000, -30000, 1600, 1000,
-        swp_no_zorder | swp_noactivate,
-    )
-    excel.Visible = True
-    user32.SetWindowPos(
-        hwnd, 0, -30000, -30000, 1600, 1000,
-        swp_no_zorder | swp_noactivate,
-    )
-
-
-def _clipboard_formats() -> list[str]:
-    """Return the native image formats currently advertised by the clipboard."""
-    import ctypes
-
-    user32 = ctypes.windll.user32
-    formats = {
-        2: "CF_BITMAP",
-        3: "CF_METAFILEPICT",
-        8: "CF_DIB",
-        14: "CF_ENHMETAFILE",
-        17: "CF_DIBV5",
-    }
-    return [
-        name for format_id, name in formats.items()
-        if bool(user32.IsClipboardFormatAvailable(format_id))
-    ]
 
 
 def _capture_window_state(excel, wb, sheet, export_range) -> dict[str, Any]:
@@ -438,6 +277,7 @@ def _capture_window_state(excel, wb, sheet, export_range) -> dict[str, Any]:
     probes = {
         "excel_visible": lambda: bool(excel.Visible),
         "screen_updating": lambda: bool(excel.ScreenUpdating),
+        "display_gridlines": lambda: bool(excel.ActiveWindow.DisplayGridlines),
         "hwnd": lambda: int(excel.Hwnd),
         "window_state": lambda: int(excel.ActiveWindow.WindowState),
         "scroll_row": lambda: int(excel.ActiveWindow.ScrollRow),
@@ -466,84 +306,30 @@ def _capture_window_state(excel, wb, sheet, export_range) -> dict[str, Any]:
     return state
 
 
-def _try_copy_range_picture(
-    export_range,
-    *,
-    max_com_attempts: int,
-) -> tuple[str | None, list[dict[str, Any]]]:
-    """Try vector then bitmap capture and retain evidence for every COM call."""
-    attempts: list[dict[str, Any]] = []
-    for format_name, format_value in (("xlPicture", -4147), ("xlBitmap", 2)):
-        for com_attempt in range(1, max_com_attempts + 1):
-            started = time.monotonic()
-            clipboard_before = _clipboard_formats()
-            try:
-                export_range.CopyPicture(Appearance=1, Format=format_value)
-                attempts.append({
-                    "format": format_name,
-                    "com_attempt": com_attempt,
-                    "success": True,
-                    "elapsed_seconds": time.monotonic() - started,
-                    "clipboard_formats_before": clipboard_before,
-                    "clipboard_formats_after": _clipboard_formats(),
-                })
-                return format_name, attempts
-            except Exception as error:
-                attempts.append({
-                    "format": format_name,
-                    "com_attempt": com_attempt,
-                    "success": False,
-                    "elapsed_seconds": time.monotonic() - started,
-                    "error": f"{type(error).__name__}: {error}",
-                    "clipboard_formats_before": clipboard_before,
-                    "clipboard_formats_after": _clipboard_formats(),
-                })
-                if com_attempt < max_com_attempts:
-                    time.sleep(0.15)
-    return None, attempts
-
-
-def _force_range_repaint(
-    excel, wb, sheet, export_range, *, was_visible: bool,
-) -> dict[str, Any]:
-    """Put the owned window in a renderable state and flush its paint queue."""
-    import ctypes
-    import pythoncom  # type: ignore[import-untyped]
-
-    excel.ScreenUpdating = True
-    if was_visible:
-        excel.Visible = True
-    else:
-        _show_owned_excel_offscreen(excel)
-    wb.Activate()
-    sheet.Activate()
+@contextmanager
+def _screenshot_gridlines(excel, wb, sheet, options: GridlineOptions):
+    """Override only the target sheet's native grid, then restore its view."""
     try:
-        # Goto with Scroll=True establishes both selection and viewport. This
-        # matters for ranges far from the worksheet's current saved position.
-        excel.Goto(Reference=export_range, Scroll=True)
-    except Exception:
-        logger.debug("Could not scroll the screenshot range into view", exc_info=True)
+        active_book = str(excel.ActiveWorkbook.Name) == str(wb.Name)
+        active_sheet = active_book and str(excel.ActiveSheet.Name) == str(sheet.Name)
+    except AttributeError:
+        active_book = active_sheet = False
+    if not active_book:
+        wb.Activate()
+    if not active_sheet:
+        sheet.Activate()
+    window = excel.ActiveWindow
+    original = bool(window.DisplayGridlines)
     try:
-        export_range.Select()
-    except Exception:
-        pass
-
-    try:
-        hwnd = int(excel.Hwnd)
-        rdw_invalidate = 0x0001
-        rdw_allchildren = 0x0080
-        rdw_updatenow = 0x0100
-        user32 = ctypes.windll.user32
-        user32.RedrawWindow(
-            hwnd, 0, 0,
-            rdw_invalidate | rdw_allchildren | rdw_updatenow,
-        )
-        user32.UpdateWindow(hwnd)
-    except Exception:
-        logger.debug("Could not force an Excel HWND repaint", exc_info=True)
-    pythoncom.PumpWaitingMessages()
-    time.sleep(0.15)
-    return _capture_window_state(excel, wb, sheet, export_range)
+        if options.mode != "native":
+            window.DisplayGridlines = False
+        yield original
+    finally:
+        try:
+            if options.mode != "native":
+                window.DisplayGridlines = original
+        finally:
+            window = None  # A retained exception traceback must not pin this COM proxy.
 
 
 def _native_image_metrics(image_path: str) -> dict[str, Any]:
@@ -640,190 +426,74 @@ def _structured_visible_content_counts(workbook_data: Mapping[str, Any]) -> dict
 
 
 def _capture_native_range(
-    excel,
-    wb,
-    sheet,
-    export_range,
-    out_path: str,
-    *,
-    range_width: float,
-    range_height: float,
-    expected_visible_items: int,
+    excel, wb, sheet, export_range, out_path: str, *,
+    range_width: float, range_height: float, expected_visible_items: int,
+    gridlines: GridlineOptions, include_headers: bool,
     max_render_attempts: int = 2,
-    max_com_attempts: int = 2,
 ) -> dict[str, Any]:
-    """Capture, validate, and atomically publish one native Excel bitmap."""
-    was_visible = bool(excel.Visible)
-    was_screen_updating = bool(excel.ScreenUpdating)
-    attempt_details: list[dict[str, Any]] = []
-    last_error: Exception | None = None
+    """Validate real worksheet pixels before adding a requested grid overlay."""
+    from xlvbatools.workbook._native_capture import capture_native_sheet
 
-    try:
-        for render_attempt in range(1, max_render_attempts + 1):
-            candidate = f"{out_path}.capture-{render_attempt}.png"
-            wb_temp = None
-            ws_temp = None
-            chart_obj = None
-            chart = None
-            shape = None
-            capture_succeeded = False
-            capture_stage = "prepare"
-            copied_format = None
-            window_state: dict[str, Any] = {}
-            copy_attempts: list[dict[str, Any]] = []
-            try:
-                if os.path.exists(candidate):
-                    os.remove(candidate)
-                window_state = _force_range_repaint(
-                    excel, wb, sheet, export_range, was_visible=was_visible,
-                )
-                capture_stage = "copy_picture"
-                copied_format, copy_attempts = _try_copy_range_picture(
-                    export_range, max_com_attempts=max_com_attempts,
-                )
-                if copied_format is None:
-                    raise RuntimeError("Range.CopyPicture failed for every native format")
-
-                # Keep a user-requested visible workbook stable while the
-                # bitmap-only chart workbook receives the clipboard image.
-                if was_visible:
-                    excel.ScreenUpdating = False
-                else:
-                    excel.Visible = False
-                wb_temp = excel.Workbooks.Add()
-                ws_temp = wb_temp.Worksheets(1)
-                chart_obj = ws_temp.ChartObjects().Add(
-                    0, 0, range_width, range_height,
-                )
-                chart = chart_obj.Chart
-                try:
-                    chart_obj.Select()
-                except Exception:
-                    pass
-                capture_stage = "chart_paste"
-                for com_attempt in range(1, max_com_attempts + 1):
-                    try:
-                        chart.Paste()
-                        break
-                    except Exception:
-                        if com_attempt == max_com_attempts:
-                            raise
-                        time.sleep(0.25)
-                if chart.Shapes.Count > 0:
-                    shape = chart.Shapes.Item(1)
-                    shape.Left = 0
-                    shape.Top = 0
-                    shape.Width = range_width
-                    shape.Height = range_height
-                time.sleep(0.25)
-                capture_stage = "chart_export"
-                if not chart.Export(candidate, "PNG"):
-                    raise RuntimeError("Excel chart export returned false")
-                capture_succeeded = True
-            except Exception as error:
-                last_error = error
-                attempt_details.append({
-                    "attempt": render_attempt,
-                    "stage": capture_stage,
-                    "capture_error": f"{type(error).__name__}: {error}",
-                    "window": window_state,
-                    "copy_attempts": copy_attempts,
-                    "copied_format": copied_format,
-                })
-            finally:
-                shape = None
-                chart = None
-                if chart_obj is not None:
-                    try:
-                        chart_obj.Delete()
-                    except Exception:
-                        pass
-                chart_obj = None
-                ws_temp = None
-                if wb_temp is not None:
-                    try:
-                        wb_temp.Close(False)
-                    except Exception:
-                        pass
-                wb_temp = None
-                try:
-                    excel.CutCopyMode = False
-                except Exception:
-                    pass
-
-            if capture_succeeded and os.path.isfile(candidate):
-                try:
-                    metrics = _native_image_metrics(candidate)
-                except Exception as error:
-                    last_error = error
-                    attempt_details.append({
-                        "attempt": render_attempt,
-                        "validation_error": f"{type(error).__name__}: {error}",
-                    })
-                    os.remove(candidate)
-                    if render_attempt < max_render_attempts:
-                        time.sleep(0.25 * render_attempt)
-                    continue
-                attempt_details.append({
-                    "attempt": render_attempt,
-                    "metrics": metrics,
-                    "window": window_state,
-                    "copy_attempts": copy_attempts,
-                    "copied_format": copied_format,
-                })
-                if not _image_is_implausibly_blank(
-                    metrics, expected_visible_items,
-                ):
-                    os.replace(candidate, out_path)
-                    return {
-                        "metrics": metrics,
-                        "attempts": attempt_details,
-                        "copied_format": copied_format,
-                    }
+    attempts: list[dict[str, Any]] = []
+    captured = None
+    for attempt in range(1, max_render_attempts + 1):
+        candidate = f"{out_path}.capture-{attempt}.png"
+        try:
+            captured = capture_native_sheet(
+                excel, wb, sheet, export_range,
+                preserve_borders=gridlines.mode in ("forced", "custom"),
+            )
+            captured.body.save(candidate, "PNG")
+            metrics = _native_image_metrics(candidate)
+            window = _capture_window_state(excel, wb, sheet, export_range)
+            details = {
+                "attempt": attempt, "metrics": metrics, "window": window,
+                **captured.details,
+            }
+            attempts.append(details)
+            if _image_is_implausibly_blank(metrics, expected_visible_items):
+                continue
+            with captured.render(gridlines, include_headers) as rendered:
+                if rendered.width * rendered.height > 80_000_000:
+                    raise ValueError("Screenshot with headings exceeds the output pixel limit")
+                rendered.save(candidate, "PNG")
+            os.replace(candidate, out_path)
+            return {
+                "metrics": metrics, "attempts": attempts,
+                **captured.details,
+            }
+        except Exception as error:
+            attempts.append({
+                "attempt": attempt,
+                "capture_error": f"{type(error).__name__}: {error}",
+            })
+            # Discard backend tracebacks before the session closes. They can
+            # otherwise retain live COM proxies after an unsuccessful capture.
+            error.__traceback__ = None
+            error.__context__ = None
+            error.__cause__ = None
+        finally:
+            if captured is not None:
+                captured.close()
+            captured = None
+            if os.path.exists(candidate):
                 os.remove(candidate)
-            elif os.path.exists(candidate):
-                os.remove(candidate)
-            if render_attempt < max_render_attempts:
-                time.sleep(0.25 * render_attempt)
-    finally:
-        try:
-            wb.Activate()
-        except Exception:
-            pass
-        try:
-            excel.Visible = was_visible
-        except Exception:
-            pass
-        try:
-            excel.ScreenUpdating = was_screen_updating
-        except Exception:
-            pass
-        try:
-            excel.CutCopyMode = False
-        except Exception:
-            pass
-
-    metric_attempts = [item for item in attempt_details if "metrics" in item]
-    if metric_attempts:
-        raise ScreenshotRenderError(
-            "Excel repeatedly exported an implausibly blank bitmap for a range "
-            f"containing {expected_visible_items} visible item(s)",
-            details={
-                "sheet": str(sheet.Name),
-                "range": str(export_range.Address),
-                "expected_visible_items": expected_visible_items,
-                "attempts": attempt_details,
-            },
-        )
+        if attempt < max_render_attempts:
+            time.sleep(0.2 * attempt)
+    has_metrics = any("metrics" in item for item in attempts)
+    sheet_name, range_address = str(sheet.Name), str(export_range.Address)
+    excel = wb = sheet = export_range = None
+    gc.collect()
+    reason = next(
+        (item["capture_error"] for item in reversed(attempts) if "capture_error" in item),
+        "the rendered body was implausibly blank",
+    )
     raise ScreenshotRenderError(
-        f"Excel could not capture {sheet.Name}!{export_range.Address} after "
-        f"{max_render_attempts} render attempt(s): {last_error}",
-        code="screenshot_capture_failed",
+        f"Excel could not produce a faithful native worksheet capture: {reason}",
+        code="render_content_mismatch" if has_metrics else "screenshot_capture_failed",
         details={
-            "sheet": str(sheet.Name),
-            "range": str(export_range.Address),
-            "expected_visible_items": expected_visible_items,
-            "attempts": attempt_details,
+            "sheet": sheet_name, "range": range_address,
+            "expected_visible_items": expected_visible_items, "attempts": attempts,
         },
     )
 
@@ -835,7 +505,7 @@ def export_screenshots(
     custom_range: str | None = None,
     render_mode: str = "excel_native",
     include_headers: bool = True,
-    include_grid_overlay: bool = True,
+    gridlines: GridlineOptions | str = "native",
     include_hidden_sheets: bool = False,
     dpi: int = 144,
     expected_visible_content: Mapping[str, int] | None = None,
@@ -844,14 +514,16 @@ def export_screenshots(
     _session: ExcelSession | None = None,
 ) -> dict[str, str]:
     """
-    Export worksheet screenshots with column/row headers composited via Pillow.
+    Export native Excel pixels and optional native row/column headings.
 
-    Includes a retry loop for CopyPicture (common COM flake), proper Pillow
-    header composition with column letters and row numbers, gridline overlay,
-    and graceful custom_range fallback.
+    Captures use bounded attempts and exact native cell boundaries; custom
+    gridlines are composited without resizing the worksheet or its headings.
 
     Returns dict mapping sheet name -> output file path (or error message).
     """
+    options = _coerce_gridlines(gridlines)
+    if not isinstance(include_headers, bool):
+        raise TypeError("include_headers must be boolean")
     os.makedirs(output_dir, exist_ok=True)
     if render_mode != "excel_native":
         raise NotImplementedError(
@@ -934,16 +606,6 @@ def export_screenshots(
                         "request a smaller range"
                     )
 
-                # Get column widths and row heights in points (for Pillow scaling)
-                widths = [sheet.Cells(r_start, c).Width for c in range(c_start, c_end + 1)]
-                heights = [sheet.Cells(r, c_start).Height for r in range(r_start, r_end + 1)]
-
-                # Enable gridlines
-                try:
-                    excel.ActiveWindow.DisplayGridlines = True
-                except Exception:
-                    pass
-
                 export_range = sheet.Range(
                     sheet.Cells(r_start, c_start),
                     sheet.Cells(r_end, c_end),
@@ -965,31 +627,23 @@ def export_screenshots(
                     int(expected_visible_content.get(sheet_name, 0))
                     if expected_visible_content is not None else 0,
                 )
-                capture_diagnostics = _capture_native_range(
-                    excel,
-                    wb,
-                    sheet,
-                    export_range,
-                    out_path,
-                    range_width=range_width,
-                    range_height=range_height,
-                    expected_visible_items=expected_items,
-                )
+                with _screenshot_gridlines(excel, wb, sheet, options) as original_gridlines:
+                    capture_diagnostics = _capture_native_range(
+                        excel,
+                        wb,
+                        sheet,
+                        export_range,
+                        out_path,
+                        range_width=range_width,
+                        range_height=range_height,
+                        expected_visible_items=expected_items,
+                        gridlines=options, include_headers=include_headers,
+                    )
+                capture_diagnostics["gridlines"] = options.to_dict()
+                capture_diagnostics["native_gridlines_original"] = original_gridlines
+                capture_diagnostics["include_headers"] = include_headers
                 if diagnostics is not None:
                     diagnostics[sheet_name] = capture_diagnostics
-
-                try:
-                    _apply_headers_and_grid_overlay(
-                        out_path, widths, heights, c_start, r_start,
-                        include_headers=include_headers,
-                        include_grid_overlay=include_grid_overlay,
-                    )
-                    logger.info(f"Applied headers/grid overlay to screenshot: {out_path}")
-
-                except ImportError:
-                    logger.info("Pillow not available, screenshot saved without headers")
-                except Exception as e:
-                    logger.warning(f"Failed to apply Pillow headers: {e}")
 
                 logger.info(f"Saved sheet '{sheet_name}' screenshot to {out_path}")
                 results[sheet_name] = out_path
@@ -1003,6 +657,8 @@ def export_screenshots(
                         "details": error.details,
                     }
                 if not continue_on_render_error:
+                    excel = wb = sheet = ur = export_range = None
+                    gc.collect()
                     raise
                 results[sheet_name] = f"Error: {error}"
                 logger.error(f"Screenshot failed for {sheet_name}: {error}")
@@ -1356,10 +1012,15 @@ def _inspect_workbook_in_process(
     continue_on_render_error: bool = False,
     include_hidden_sheets: bool = False,
     include_rich_text: bool = False,
+    gridlines: GridlineOptions | str = "native",
+    include_headers: bool = True,
     on_excel_started=None,
     on_phase=None,
 ) -> dict:
     """Inspect data and render ranges in one isolated, read-only Excel session."""
+    gridline_options = _coerce_gridlines(gridlines)
+    if not isinstance(include_headers, bool):
+        raise TypeError("include_headers must be boolean")
     result = {
         "success": True,
         "phase": "session_start",
@@ -1402,6 +1063,8 @@ def _inspect_workbook_in_process(
                 continue_on_render_error=continue_on_render_error,
                 include_hidden_sheets=include_hidden_sheets,
                 include_rich_text=include_rich_text,
+                gridlines=gridline_options,
+                include_headers=include_headers,
                 on_phase=publish_phase,
             )
             result["screenshots"] = inspection["screenshots"]
@@ -1442,9 +1105,14 @@ def _inspect_existing_session(
     continue_on_render_error: bool = False,
     include_hidden_sheets: bool = False,
     include_rich_text: bool = False,
+    gridlines: GridlineOptions | str = "native",
+    include_headers: bool = True,
     on_phase=None,
 ) -> dict[str, Any]:
     """Inspect workbook state through an existing workflow-owned session."""
+    gridline_options = _coerce_gridlines(gridlines)
+    if not isinstance(include_headers, bool):
+        raise TypeError("include_headers must be boolean")
     screenshots: dict[str, str] = {}
     screenshot_diagnostics: dict[str, Any] = {}
     workbook_data = None
@@ -1477,6 +1145,8 @@ def _inspect_existing_session(
             expected_visible_content=expected_visible_content,
             continue_on_render_error=continue_on_render_error,
             diagnostics=screenshot_diagnostics,
+            gridlines=gridline_options,
+            include_headers=include_headers,
         )
         render_errors = {
             name: value for name, value in screenshots.items()
@@ -1504,6 +1174,8 @@ def inspect_workbook(
     include_hidden_sheets: bool = False,
     include_rich_text: bool = False,
     timeout_seconds: float = 60,
+    gridlines: GridlineOptions | str = "native",
+    include_headers: bool = True,
 ) -> dict:
     """Run combined workbook inspection in a timeout-controlled worker."""
     from xlvbatools.core.worker import execute_worker_request
@@ -1517,6 +1189,8 @@ def inspect_workbook(
         "continue_on_render_error": continue_on_render_error,
         "include_hidden_sheets": include_hidden_sheets,
         "include_rich_text": include_rich_text,
+        "gridlines": _coerce_gridlines(gridlines).to_dict(),
+        "include_headers": include_headers,
     }
     return execute_worker_request("inspect", request, timeout=timeout_seconds)
 

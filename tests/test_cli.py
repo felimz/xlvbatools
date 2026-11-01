@@ -537,6 +537,7 @@ def test_cli_run_rejects_invalid_named_range_inputs(options, tmp_path, capsys):
 @pytest.mark.unit
 def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, capsys):
     """Dump owns its timeout/hidden defaults and emits machine-readable results."""
+    from xlvbatools import GridlineOptions
     from xlvbatools.results import InspectionOutput
     expected = _result(
         "inspect",
@@ -561,6 +562,8 @@ def test_cli_dump_forwards_parser_defaults_and_prints_structured_json(tmp_path, 
         output_json=None, output_markdown=None, timeout=60.0,
         include_hidden_sheets=False,
         include_rich_text=False,
+        gridlines=GridlineOptions(),
+        include_headers=True,
     )
     patch.stopall()
 

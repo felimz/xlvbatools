@@ -28,6 +28,7 @@ from xlvbatools.outputs import (
     VBAComponent,
 )
 from xlvbatools.project import Project, ProjectSettings
+from xlvbatools.rendering import GridlineOptions
 from xlvbatools.results import (
     Artifact,
     AttemptDiagnostic,
@@ -64,6 +65,7 @@ __all__ = [
     "ErrorInfo",
     "Executor",
     "ExtractionOutput",
+    "GridlineOptions",
     "HeadlessCleanupError",
     "InspectionOutput",
     "InspectStep",

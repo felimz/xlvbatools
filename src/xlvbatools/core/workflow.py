@@ -148,6 +148,8 @@ def _inspect_step(
             continue_on_render_error=bool(step.get("continue_on_render_error", False)),
             include_hidden_sheets=bool(step.get("include_hidden_sheets", False)),
             include_rich_text=bool(step.get("include_rich_text", False)),
+            gridlines=step.get("gridlines", "native"),
+            include_headers=step.get("include_headers", True),
             on_phase=lambda phase: reporter.workflow_step(
                 step, index=index, count=count, step_phase=phase,
             ),

@@ -65,6 +65,32 @@ same bounded run model as `Project.inspect()` without opening another session.
 
 ## CLI
 
+Inspection steps accept the same `gridlines` and `include_headers` options as
+`Project.inspect`. Use `gridlines="native"` (default), `"forced"`, `"off"`,
+or a `GridlineOptions(mode="custom", ...)` object in Python. In JSON, use a
+mode string or an object such as:
+
+```json
+{
+  "id": "capture",
+  "kind": "inspect",
+  "sheets": ["Input"],
+  "include_screenshots": true,
+  "include_headers": false,
+  "gridlines": {
+    "mode": "custom",
+    "color": "#808080",
+    "opacity": 0.3,
+    "width": 1,
+    "style": "dashed"
+  }
+}
+```
+
+The worksheet's original gridline visibility is restored before the next step
+and before any final save. Forced/custom overlays intentionally cross fills
+and merged ranges; use `native` to preserve Excel's appearance.
+
 The CLI reads the same versioned typed request from a JSON file:
 
 ```json

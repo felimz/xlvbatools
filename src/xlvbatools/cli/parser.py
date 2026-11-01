@@ -298,10 +298,24 @@ def _register_snapshot(subparsers: Any) -> None:
 
 
 def _register_dump(subparsers: Any) -> None:
+    from xlvbatools.rendering import GRIDLINE_MODES, GRIDLINE_STYLES
+
     parser = _command_parser(subparsers, "dump")
     _worker_options(parser, timeout=60.0)
     parser.add_argument("--sheets", "-s", help="Comma-separated worksheet names")
     parser.add_argument("--screenshot", action="store_true", help="Render worksheet screenshots")
+    parser.add_argument(
+        "--gridlines", choices=GRIDLINE_MODES, default="native",
+        help="Screenshot grid: native workbook appearance (default), forced overlay, off, or custom",
+    )
+    parser.add_argument("--gridline-color", help="Custom #RRGGBB grid color; default uses Excel's native UI")
+    parser.add_argument("--gridline-opacity", type=float, help="Custom grid opacity from 0 to 1")
+    parser.add_argument("--gridline-width", type=int, help="Custom pixel width; default uses Excel's native UI")
+    parser.add_argument("--gridline-style", choices=GRIDLINE_STYLES, help="Custom grid line style")
+    parser.add_argument(
+        "--no-headers", action="store_true",
+        help="Omit screenshot row numbers and column letters",
+    )
     parser.add_argument("--data", action="store_true", help="Include worksheet cell data")
     parser.add_argument(
         "--rich-text",

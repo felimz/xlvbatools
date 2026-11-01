@@ -25,6 +25,7 @@ The following names are the complete supported import surface:
 | Result envelope | `OperationResult`, `RESULT_SCHEMA_VERSION` |
 | Result evidence | `ErrorInfo`, `Diagnostics`, `CleanupReport`, `WorkerExitReport`, `AttemptDiagnostic`, `Artifact` |
 | Inspection data | `InspectionOutput` |
+| Screenshot appearance | `GridlineOptions` |
 | VBA component data | `VBAComponent`, `ExtractionOutput`, `InjectionChange`, `InjectionOutput` |
 | VBA action data | `ComponentDiff`, `MacroOutput`, `ModificationOutput` |
 | Workflow request | `WorkflowStep`, `MacroStep`, `ModifyStep`, `InspectStep`, `WORKFLOW_SCHEMA_VERSION` |
@@ -106,6 +107,8 @@ result = project.inspect(
     include_data=True,
     include_screenshots=True,
     include_rich_text=True,
+    gridlines="native",
+    include_headers=True,
     output_json="artifacts/workbook.json",
     include_hidden_sheets=False,
     timeout=90,
@@ -117,8 +120,16 @@ result.require_clean_shutdown()
 `InspectionOutput.workbook_data` contains structured workbook data and
 `InspectionOutput.screenshots` maps sheet names to render paths or status
 messages. `InspectionOutput.screenshot_diagnostics` contains per-sheet native
-capture format, attempt, clipboard, window/viewport, and image-validation
+capture backend, native DPI/zoom, exact tile geometry, attempt, window, and image-validation
 evidence. Generated screenshots are also listed as `Artifact` records.
+`gridlines` accepts `"native"` (default), `"forced"`, `"off"`, or a
+`GridlineOptions(mode="custom", color="#808080", opacity=0.3, width=1,
+style="dashed")` object. The `"custom"` shorthand uses the standard overlay
+defaults. Custom styles are screenshot-only; cell formatting is retained.
+Omitted/`None` color and width use the native Excel automatic grid appearance.
+Headings use Excel's actual rendered pixels, including its theme and font.
+`include_headers` independently controls column letters and row numbers.
+See [gridline modes and examples](dumper-and-modifier.md#screenshot-rendering).
 Hidden and VeryHidden sheets are excluded unless explicitly enabled.
 Partial rich-text runs are excluded by default because each populated cell
 requires additional COM inspection. With `include_rich_text=True`, each cell

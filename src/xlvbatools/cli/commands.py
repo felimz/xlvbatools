@@ -578,6 +578,25 @@ def _cmd_snapshot(args):
 
 def _cmd_dump(args):
     """Dump sheet data and screenshots."""
+    from xlvbatools.rendering import GridlineOptions
+
+    styling = {
+        name: getattr(args, "gridline_" + name)
+        for name in ("color", "opacity", "width", "style")
+        if getattr(args, "gridline_" + name) is not None
+    }
+    try:
+        if styling and args.gridlines != "custom":
+            raise ValueError("--gridline-* styling options require --gridlines custom")
+        if (styling or args.gridlines != "native" or args.no_headers) and not args.screenshot:
+            raise ValueError("screenshot appearance options require --screenshot")
+        gridline_options = GridlineOptions(mode=args.gridlines, **styling)
+    except (TypeError, ValueError) as error:
+        result = _local_result(
+            "inspect", success=False, error=str(error), code="invalid_arguments",
+        )
+        _fail_result(args, result, "Invalid screenshot appearance", exit_code=2)
+
     from xlvbatools.config.loader import load_config
     from xlvbatools.logging import setup_logging
     cfg = load_config()
@@ -610,6 +629,8 @@ def _cmd_dump(args):
         output_json=out_json, output_markdown=out_md, timeout=args.timeout,
         include_hidden_sheets=args.include_hidden_sheets,
         include_rich_text=args.rich_text,
+        gridlines=gridline_options,
+        include_headers=not args.no_headers,
     )
     if not result.success:
         _fail_result(args, result, "Workbook inspection failed")

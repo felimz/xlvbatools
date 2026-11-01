@@ -4,7 +4,25 @@ All notable changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the
 [Keep a Changelog](https://keepachangelog.com/) format.
 
-## [Unreleased]
+## [1.4.0] - 2026-10-31
+
+### Added
+
+- Add screenshot gridline modes `native`, `forced`, `off`, and `custom` to
+  `Project.inspect`, `InspectStep`, workflow JSON, and `xlvba dump --gridlines`.
+  `GridlineOptions` configures custom hex color, opacity, pixel width, and
+  solid/dashed/dotted lines. Screenshot headings can be disabled independently.
+- Capture real Excel heading boxes, fonts, and worksheet pixels at native DPI
+  and zoom. Measure grid positions from a geometry reference and compose
+  unscaled tiles. Default overlay color/width follow Excel's actual UI, and
+  explicitly formatted borders retain priority over added gridlines.
+
+### Changed
+
+- Default screenshots to the workbook's native gridline visibility and
+  formatting. Select `forced` to retain the former full-grid overlay, including
+  lines over filled cells and merged ranges. Other modes temporarily hide
+  Excel's native gridlines and restore the target worksheet view after capture.
 
 ## [1.3.1] - 2026-10-30
 

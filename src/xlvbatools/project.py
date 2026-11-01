@@ -23,6 +23,7 @@ from xlvbatools.outputs import (
     VBAComponent,
 )
 from xlvbatools.results import Artifact, ErrorInfo, InspectionOutput, OperationResult
+from xlvbatools.rendering import GridlineOptions, _coerce_gridlines
 from xlvbatools.snapshots import SnapshotService
 from xlvbatools.workflow import (
     InspectStep,
@@ -176,6 +177,8 @@ class Project:
         continue_on_render_error: bool = False,
         include_hidden_sheets: bool = False,
         include_rich_text: bool = False,
+        gridlines: GridlineOptions | str = "native",
+        include_headers: bool = True,
         timeout: float = 60.0,
     ) -> OperationResult[InspectionOutput]:
         requested_sheets = tuple(str(sheet) for sheet in sheets)
@@ -183,6 +186,9 @@ class Project:
             raise ValueError("at least one sheet is required")
         if include_rich_text and not include_data:
             raise ValueError("include_rich_text requires include_data=True")
+        gridline_options = _coerce_gridlines(gridlines)
+        if not isinstance(include_headers, bool):
+            raise TypeError("include_headers must be boolean")
         result = self.execute(
             Operation.INSPECT,
             {
@@ -197,6 +203,8 @@ class Project:
                 "continue_on_render_error": continue_on_render_error,
                 "include_hidden_sheets": include_hidden_sheets,
                 "include_rich_text": include_rich_text,
+                "gridlines": gridline_options.to_dict(),
+                "include_headers": include_headers,
             },
             timeout=timeout,
         )
@@ -231,6 +239,8 @@ class Project:
                 "sheets": requested_sheets,
                 "cell_range": cell_range,
                 "include_rich_text": include_rich_text,
+                "gridlines": gridline_options.to_dict(),
+                "include_headers": include_headers,
             },
         )
 

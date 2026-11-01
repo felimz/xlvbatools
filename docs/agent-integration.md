@@ -148,11 +148,17 @@ or expose COM objects in downstream wrappers.
 ```powershell
 xlvba dump --sheets "Input,Results" --data
 xlvba dump --sheets Input --screenshot --range B91:K99
+xlvba dump --sheets Input --screenshot --gridlines off
 ```
 
 Only visible worksheets are rendered by default. Add
 `--include-hidden-sheets` only when Hidden or VeryHidden content is explicitly
 required.
+
+Screenshots default to `gridlines="native"`, preserving workbook appearance.
+Use `forced` for a full overlay, `off` for no gridlines, or `GridlineOptions`
+with `mode="custom"` for color, opacity, width, and style. Row/column headings
+are controlled separately by `include_headers` / `--no-headers`.
 
 ```python
 inspection = project.inspect(

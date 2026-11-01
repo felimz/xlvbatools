@@ -138,10 +138,19 @@ Hidden and VeryHidden worksheets are excluded from inspection by default. Use
 `--include-hidden-sheets` only when hidden sheets are intentionally required.
 Partial rich-text font runs are opt-in through `--rich-text` or
 `include_rich_text=True`; collection is bounded per cell.
-Headless screenshots scroll the requested visible range into Excel's active
-viewport and use bounded vector-then-bitmap capture. Python callers can inspect
-`InspectionOutput.screenshot_diagnostics`; CLI JSON includes the same native
-format, clipboard, window, attempt, and image-validation evidence.
+Headless screenshots copy Excel's own worksheet and heading pixels without
+chart transfer, image resizing, or font recreation. Larger ranges are tiled
+using native pixel boundaries. Python callers can inspect
+`InspectionOutput.screenshot_diagnostics`; CLI JSON includes native DPI, zoom,
+tile geometry, sampled grid style, capture attempts, and image validation.
+
+Screenshots preserve the workbook's native gridlines by default. Choose
+`gridlines="forced"` to overlay every cell boundary, `"off"` to hide gridlines,
+or `GridlineOptions(mode="custom", color="#808080", opacity=0.3,
+style="dashed")` to style the overlay. The CLI equivalents are
+`--gridlines native|forced|off|custom` and the `--gridline-*` styling flags.
+`include_headers=False` / `--no-headers` hides row/column headings independently.
+See [screenshot rendering](docs/dumper-and-modifier.md#screenshot-rendering).
 
 VBA differencing is token-aware by default: code identifier case and
 insignificant token spacing are equivalent, while literals and comments remain

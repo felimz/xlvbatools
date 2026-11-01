@@ -103,15 +103,19 @@ attempts. Callers do not enable or reproduce these policies themselves.
 - Strict named-range setup failures stop before macro invocation.
 - Workflows stop after the first failed step, mark remaining steps `not_run`,
   and perform an explicit save only after every step succeeds.
-- Screenshot rendering transfers a bitmap through a blank chart workbook; it
-  does not copy worksheet VBA.
+- Screenshot rendering copies native Excel pixels with DPI-aware coordinates.
+  A blank geometry reference measures exact cell edges; source VBA is not copied.
 - Screenshot rendering makes only the owned Excel window renderable, forces a
-  viewport scroll and range repaint, requests vector picture capture before
-  bitmap fallback, validates native pixels before adding headers or grid
-  overlays, and restores the prior visibility and `ScreenUpdating` state. A
+  viewport scroll and range repaint, copies unscaled body and heading tiles,
+  validates the body before adding optional grid overlays, and restores the
+  prior view, visibility, and `ScreenUpdating` state. A
   populated range that remains implausibly blank fails with
   `render_content_mismatch`; exhausted native capture fails with
   `screenshot_capture_failed`. Both retain bounded per-attempt evidence.
+- Native gridlines preserve the worksheet's view by default. Forced/custom
+  overlays and off mode temporarily hide the target sheet's native gridlines,
+  then restore its original setting even if capture fails. Explicit cell
+  borders remain part of Excel's native bitmap.
 
 ## Acceptance
 

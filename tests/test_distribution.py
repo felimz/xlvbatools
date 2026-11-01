@@ -57,13 +57,14 @@ def test_built_wheel_exposes_public_wrapper_api(tmp_path):
     code = (
         "import importlib.resources, json, pathlib, sys; "
         "import xlvbatools; "
-        "from xlvbatools import (MacroStep, Operation, OperationRequest, OperationResult, "
+        "from xlvbatools import (GridlineOptions, MacroStep, Operation, OperationRequest, OperationResult, "
         "Project, VBAIssue, WORKFLOW_SCHEMA_VERSION, WorkflowOutput); "
         "from xlvbatools.core.protocol import WORKER_PROTOCOL_VERSION; "
         "print(json.dumps({'module': xlvbatools.__file__, 'version': xlvbatools.__version__, "
         "'exports': [item.__name__ for item in "
         "(Project, Operation, OperationRequest, OperationResult, VBAIssue, MacroStep, "
-        "WorkflowOutput)], "
+        "WorkflowOutput, GridlineOptions)], "
+        "'gridlines': GridlineOptions(mode='custom', opacity=0.25).to_dict(), "
         "'worker_protocol': WORKER_PROTOCOL_VERSION, "
         "'workflow_schema': WORKFLOW_SCHEMA_VERSION, "
         "'agent_template': importlib.resources.files('xlvbatools')"
@@ -82,8 +83,10 @@ def test_built_wheel_exposes_public_wrapper_api(tmp_path):
     assert payload["version"] == __version__
     assert payload["exports"] == [
         "Project", "Operation", "OperationRequest", "OperationResult", "VBAIssue",
-        "MacroStep", "WorkflowOutput",
+        "MacroStep", "WorkflowOutput", "GridlineOptions",
     ]
+    assert payload["gridlines"]["mode"] == "custom"
+    assert payload["gridlines"]["opacity"] == 0.25
     assert payload["worker_protocol"] == "2.2"
     assert payload["workflow_schema"] == "1.0"
     assert payload["agent_template"] is True

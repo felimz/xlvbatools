@@ -120,45 +120,50 @@ def test_excel_session_safe_defaults():
 @pytest.mark.unit
 def test_renderer_does_not_copy_worksheet_source():
     import inspect
-    from xlvbatools.workbook import dumper
+    from xlvbatools.workbook import dumper, _native_capture
 
-    source = (
-        inspect.getsource(dumper.export_screenshots)
-        + inspect.getsource(dumper._capture_native_range)
-        + inspect.getsource(dumper._try_copy_range_picture)
+    source = inspect.getsource(dumper.export_screenshots) + inspect.getsource(
+        _native_capture.capture_native_sheet,
     )
     assert "sheet.Copy(" not in source
-    assert "export_range.CopyPicture" in source
     assert "excel.Workbooks.Add()" in source
+    assert "PrintWindow" in inspect.getsource(_native_capture._window_pixels)
 
 
 @pytest.mark.unit
-def test_copy_picture_falls_back_from_vector_to_bitmap_with_evidence(monkeypatch):
-    from xlvbatools.workbook import dumper
+def test_native_capture_validates_body_before_headings_and_retains_attempts(monkeypatch, tmp_path):
+    from PIL import Image, ImageDraw
+    from xlvbatools import GridlineOptions
+    from xlvbatools.workbook import dumper, _native_capture
 
-    class Range:
-        def __init__(self):
-            self.formats = []
+    calls = []
+    def capture(*args, **kwargs):
+        body = Image.new("RGB", (240, 120), "white")
+        if calls:
+            ImageDraw.Draw(body).rectangle((20, 20, 80, 50), fill="black")
+        calls.append(True)
+        return _native_capture.NativePixels(
+            body, Image.new("RGB", (240, 29), "black"),
+            Image.new("RGB", (40, 120), "black"), Image.new("RGB", (40, 29), "black"),
+            [0, 120, 240], [0, 60, 120], "#E0E0E0", 1,
+            {"capture_backend": "excel_window"},
+        )
 
-        def CopyPicture(self, *, Appearance, Format):
-            assert Appearance == 1
-            self.formats.append(Format)
-            if Format == -4147:
-                raise RuntimeError("vector unavailable")
-
-    target = Range()
-    monkeypatch.setattr(dumper, "_clipboard_formats", lambda: ["CF_BITMAP"])
-    monkeypatch.setattr(dumper.time, "sleep", lambda _: None)
-
-    copied_format, attempts = dumper._try_copy_range_picture(
-        target, max_com_attempts=2,
+    monkeypatch.setattr(_native_capture, "capture_native_sheet", capture)
+    target = SimpleNamespace(Address="$B$2:$C$3")
+    path = tmp_path / "native.png"
+    result = dumper._capture_native_range(
+        object(), SimpleNamespace(Name="book"), SimpleNamespace(Name="Input"),
+        target, str(path), range_width=120, range_height=60,
+        expected_visible_items=3, gridlines=GridlineOptions(), include_headers=True,
     )
-
-    assert copied_format == "xlBitmap"
-    assert target.formats == [-4147, -4147, 2]
-    assert [attempt["success"] for attempt in attempts] == [False, False, True]
-    assert attempts[-1]["clipboard_formats_before"] == ["CF_BITMAP"]
-    assert attempts[-1]["clipboard_formats_after"] == ["CF_BITMAP"]
+    assert len(calls) == 2
+    assert len(result["attempts"]) == 2
+    assert result["attempts"][0]["metrics"]["meaningful_pixel_count"] == 0
+    assert result["attempts"][1]["metrics"]["meaningful_pixel_count"] > 64
+    assert result["capture_backend"] == "excel_window"
+    assert path.is_file()
+    assert list(tmp_path.glob("*.capture-*.png")) == []
 
 
 @pytest.mark.unit
@@ -219,55 +224,29 @@ def test_structured_content_count_uses_visible_cell_values():
 
 
 @pytest.mark.unit
-def test_scaled_boundaries_are_exact_and_support_hidden_cells():
-    from xlvbatools.workbook.dumper import _scaled_boundaries
-
-    boundaries = _scaled_boundaries([10, 0, 20], 101)
-
+def test_native_ruler_uses_exact_edges_for_unequal_and_hidden_cells():
+    from xlvbatools.workbook._native_capture import _axis_bounds
+    white, gray = (255, 255, 255), (224, 224, 224)
+    pixels = [white] * 101
+    for edge in (33, 100):
+        pixels[edge] = gray
+    end, boundaries = _axis_bounds(pixels, 27, [10, 0, 20], gray, 1)
+    assert end == 29
     assert boundaries == [0, 34, 34, 101]
-    assert boundaries[-1] == 101
 
 
 @pytest.mark.unit
-def test_overlay_geometry_and_atomic_output(tmp_path):
+def test_grid_only_does_not_resize_native_pixels():
     from PIL import Image
-    from xlvbatools.workbook.dumper import _apply_headers_and_grid_overlay
+    from xlvbatools import GridlineOptions
+    from xlvbatools.rendering import _paint_gridlines
 
-    path = tmp_path / "render.png"
-    Image.new("RGB", (101, 61), (12, 34, 56)).save(path)
-
-    _apply_headers_and_grid_overlay(
-        str(path), [10, 0, 20], [5, 10], first_column=27, first_row=999,
-    )
-
-    with Image.open(path) as rendered:
-        # Font metrics vary by host, but the body retains its exact native
-        # dimensions and every boundary is relative to the computed header.
-        pad_left = rendered.width - 101
-        pad_top = rendered.height - 61
-        assert pad_left >= 32
-        assert pad_top >= 20
-        assert rendered.getpixel((pad_left + 1, pad_top + 1)) == (12, 34, 56)
-        assert rendered.getpixel((pad_left + 34, pad_top + 10)) == (210, 210, 210)
-        assert rendered.getpixel((pad_left + 48, pad_top + 20)) == (210, 210, 210)
-    assert not (tmp_path / "render.png.overlay.tmp").exists()
-
-
-@pytest.mark.unit
-def test_grid_only_does_not_resize_native_image(tmp_path):
-    from PIL import Image
-    from xlvbatools.workbook.dumper import _apply_headers_and_grid_overlay
-
-    path = tmp_path / "grid.png"
-    Image.new("RGB", (100, 50), "white").save(path)
-    _apply_headers_and_grid_overlay(
-        str(path), [1, 1], [1, 1], 1, 1,
-        include_headers=False, include_grid_overlay=True,
-    )
-
-    with Image.open(path) as rendered:
-        assert rendered.size == (100, 50)
-        assert rendered.getpixel((50, 10)) == (210, 210, 210)
+    image = Image.new("RGB", (100, 50), "white")
+    _paint_gridlines(image, [0, 50, 100], [0, 25, 50],
+                     GridlineOptions(mode="forced"), "#E0E0E0", 1)
+    assert image.size == (100, 50)
+    assert image.getpixel((49, 10)) == (224, 224, 224)
+    assert image.getpixel((50, 10)) == (255, 255, 255)
 
 
 @pytest.mark.unit
@@ -455,7 +434,7 @@ def test_combined_range_data_and_screenshot_share_one_clean_session(
     screenshot = result["data"]["screenshots"]["Sheet1"]
     assert os.path.isfile(screenshot), result
     capture = result["data"]["screenshot_diagnostics"]["Sheet1"]
-    assert capture["copied_format"] in {"xlPicture", "xlBitmap"}
+    assert capture["capture_backend"] == "excel_window"
     assert capture["attempts"][-1]["window"]["target_range"] == "$A$1:$B$2"
     assert capture["attempts"][-1]["metrics"]["meaningful_pixel_count"] > 64
     assert output_json.is_file()

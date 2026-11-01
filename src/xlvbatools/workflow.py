@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence, TypeAlias
 
 from xlvbatools.outputs import FrozenJsonValue, MacroOutput
+from xlvbatools.rendering import GridlineOptions, _coerce_gridlines
 from xlvbatools.results import Artifact, ErrorInfo, InspectionOutput
 
 
@@ -196,6 +197,8 @@ class InspectStep:
     continue_on_render_error: bool = False
     include_hidden_sheets: bool = False
     include_rich_text: bool = False
+    gridlines: GridlineOptions | str = "native"
+    include_headers: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _validate_step_id(self.id))
@@ -205,6 +208,7 @@ class InspectStep:
             "include_data", "include_screenshots", "continue_on_render_error",
             "include_hidden_sheets",
             "include_rich_text",
+            "include_headers",
         ):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be boolean")
@@ -240,6 +244,7 @@ class InspectStep:
         object.__setattr__(self, "sheets", sheets)
         object.__setattr__(self, "output_dir", self.output_dir.strip())
         object.__setattr__(self, "cell_range", cell_range)
+        object.__setattr__(self, "gridlines", _coerce_gridlines(self.gridlines))
 
 
 WorkflowStep: TypeAlias = MacroStep | ModifyStep | InspectStep
@@ -450,6 +455,8 @@ def _steps_to_worker(steps: Sequence[WorkflowStep]) -> list[dict[str, Any]]:
                 "continue_on_render_error": step.continue_on_render_error,
                 "include_hidden_sheets": step.include_hidden_sheets,
                 "include_rich_text": step.include_rich_text,
+                "gridlines": _coerce_gridlines(step.gridlines).to_dict(),
+                "include_headers": step.include_headers,
             })
     return payload
 
@@ -505,6 +512,7 @@ def _steps_from_payload(value: Any) -> tuple[WorkflowStep, ...]:
                     "output_markdown", "continue_on_render_error",
                     "include_hidden_sheets",
                     "include_rich_text",
+                    "gridlines", "include_headers",
                 },
                 index=index,
             )
@@ -525,6 +533,8 @@ def _steps_from_payload(value: Any) -> tuple[WorkflowStep, ...]:
                 continue_on_render_error=item.get("continue_on_render_error", False),
                 include_hidden_sheets=item.get("include_hidden_sheets", False),
                 include_rich_text=item.get("include_rich_text", False),
+                gridlines=_coerce_gridlines(item.get("gridlines", "native")),
+                include_headers=item.get("include_headers", True),
             ))
         else:
             raise ValueError(

@@ -107,7 +107,7 @@ def test_screenshot_repaints_after_macro_and_restores_screen_updating(
     assert screenshot.is_file()
     assert _native_image_metrics(str(screenshot))["meaningful_pixel_count"] > 64
     capture = inspection.screenshot_diagnostics["Sheet1"]
-    assert capture["copied_format"] in {"xlPicture", "xlBitmap"}
+    assert capture["capture_backend"] == "excel_window"
     assert capture["attempts"][-1]["window"]["target_range"] == "$A$1:$B$2"
     assert workflow.step("verify-state").status == "succeeded"
     assert result.require_clean_shutdown().still_running is False
