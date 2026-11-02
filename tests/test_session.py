@@ -529,8 +529,8 @@ class TestSessionCOM:
             assert session.wb is not None
             assert session.excel_pid is not None
             assert not session.had_errors
-        assert session.cleanup_result["exited_gracefully"] is True
-        assert session.cleanup_result["force_terminated"] is False
+        assert session.cleanup_result["exited_gracefully"] is True, session.cleanup_result
+        assert session.cleanup_result["force_terminated"] is False, session.cleanup_result
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
     def test_multiline_runtime_error_is_captured(self, runtime_error_workbook):

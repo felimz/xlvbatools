@@ -332,10 +332,12 @@ class ExcelSession:
         gc.collect()
         gc.collect()
 
-        close_error = None
-        save_error = None
+        # Keep error text, not exception objects: their traceback frames can
+        # retain Application/Workbook proxies and prevent Excel from exiting.
+        close_error: Optional[str] = None
+        save_error: Optional[str] = None
         shutdown_workbook = None
-        sentinel_error = None
+        sentinel_error: Optional[str] = None
         # Keep one blank workbook open while releasing the target and top-level
         # pywin32 proxies. Otherwise closing the last workbook can terminate a
         # clean automation instance before those proxies finalize.
@@ -346,7 +348,8 @@ class ExcelSession:
                 shutdown_workbook = self.excel.Workbooks.Add()
                 shutdown_workbook.Saved = True
             except Exception as error:
-                sentinel_error = error
+                sentinel_error = f"{type(error).__name__}: {error}"
+                logger.warning(f"Error preparing Excel shutdown workbook: {sentinel_error}")
                 shutdown_workbook = None
         try:
             if self.wb is not None:
@@ -355,13 +358,13 @@ class ExcelSession:
                         self.wb.Save()
                         logger.info("Workbook saved")
                     except Exception as e:
-                        save_error = e
+                        save_error = str(e)
                         logger.error(f"Error saving workbook: {e}")
                 self.wb.Close(False)
                 pid_suffix = f" (PID: {self.excel_pid})" if self.excel_pid else ""
                 logger.info(f"Workbook closed{pid_suffix}")
         except Exception as e:
-            close_error = e
+            close_error = str(e)
             logger.warning(f"Error closing workbook: {e}")
         finally:
             self.wb = None
@@ -405,9 +408,7 @@ class ExcelSession:
 
         if sentinel_error is not None:
             details = self.cleanup_result.setdefault("details", {})
-            details["shutdown_sentinel_error"] = (
-                f"{type(sentinel_error).__name__}: {sentinel_error}"
-            )
+            details["shutdown_sentinel_error"] = sentinel_error
         elif shutdown_method is not None:
             details = self.cleanup_result.setdefault("details", {})
             details["shutdown_method"] = shutdown_method
@@ -452,10 +453,10 @@ class ExcelSession:
                 logger.info(f"Watchdog captured {len(events)} dialog(s) during session:")
                 for event in events:
                     logger.info(f"  {event}")
-        if close_error:
-            self.cleanup_result["workbook_close_error"] = str(close_error)
-        if save_error:
-            self.cleanup_result["workbook_save_error"] = str(save_error)
+        if close_error is not None:
+            self.cleanup_result["workbook_close_error"] = close_error
+        if save_error is not None:
+            self.cleanup_result["workbook_save_error"] = save_error
         return False  # Don't suppress exceptions
 
     def save(self) -> None:

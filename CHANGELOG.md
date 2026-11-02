@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the
 [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [1.4.1] - 2026-11-01
+
+### Fixed
+
+- Release exception traceback references before quitting Excel when shutdown
+  preparation, workbook saving, or workbook closing fails. Preserve error text
+  in cleanup diagnostics without retaining the COM proxies in those frames.
+  Report shutdown-workbook preparation errors in the log as well as diagnostics.
+
 ## [1.4.0] - 2026-10-31
 
 ### Added
